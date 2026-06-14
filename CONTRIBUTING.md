@@ -1,127 +1,123 @@
-# Contributing to momapeer
+# 参与 momapeer 开发贡献
 
-Thank you for your interest in contributing to momapeer! This guide covers
-everything you need to get started.
+感谢您对参与 momapeer 贡献感兴趣！本指南涵盖了您开始贡献所需了解的一切。
 
-See [momapeer.md](./momapeer.md) for the full architecture overview
-and naming conventions.
+有关完整的架构概述和命名规范，请参阅 [momapeer.md](./momapeer.md)。
 
-## Prerequisites
+## 前置要求
 
-- **Go 1.25+** (toolchain go1.26.4) — the project targets the latest stable Go release
-- **Git** — for version control
-- **Node.js** (optional) — only if you work on the desktop app (`desktop/`)
+- **Go 1.25+** (工具链 go1.26.4) — 项目使用最新的 Go 稳定版本
+- **Git** — 用于版本控制
+- **Node.js** (可选) — 仅当您需要开发桌面客户端 (`desktop/`) 时才需要
 
-## Getting started
+## 快速开始
 
 ```bash
 git clone https://github.com/zzycxz/momapeer.git
 cd momapeer
-make build    # builds the CLI binary
-make test     # runs the full test suite
+make build    # 编译 CLI 二进制文件
+make test     # 运行完整的测试套件
 ```
 
-## Project structure
+## 项目结构
 
-| Directory | Purpose |
+| 目录 | 用途 |
 |-----------|---------|
-| `cmd/momapeer` | CLI entry point (minimal — delegates to `internal/cli`) |
-| `cmd/momapeer-plugin-example` | Reference MCP stdio plugin |
-| `cmd/e2ebench` | End-to-end benchmark harness |
-| `internal/agent` | Agent loop, session, coordinator, compaction, storm breaker |
-| `internal/cli` | TUI, subcommands, setup wizard, markdown rendering |
-| `internal/control` | Transport-agnostic controller (single orchestration layer) |
-| `internal/config` | TOML configuration loading (flag > project > user > defaults) |
-| `internal/provider` | Provider interface + registry (kind → factory) |
-| `internal/provider/openai` | OpenAI-compatible provider (MoMA, etc.) |
-| `internal/provider/anthropic` | Anthropic Messages API with extended thinking |
-| `internal/tool` | Tool interface + Registry |
-| `internal/tool/builtin` | 20+ built-in tools (bash, read/write/edit, glob, grep, etc.) |
-| `internal/plugin` | MCP client (stdio + Streamable HTTP) |
-| `internal/event` | Typed event stream (Sink interface) |
-| `internal/hook` | Shell hooks (PreToolUse, PostToolUse, UserPromptSubmit, Stop) |
-| `internal/memory` | momapeer.md hierarchy + auto-memory store |
-| `internal/skill` | Skill discovery from Markdown + built-in skills |
-| `internal/sandbox` | OS-level sandboxing (Seatbelt on macOS) |
-| `internal/permission` | Per-call policy: allow/ask/deny rules |
-| `internal/checkpoint` | Snapshot-based rewind |
-| `internal/bot` | Multi-channel IM bot gateway (QQ, Feishu, WeChat) |
-| `internal/acp` | Agent Control Protocol server |
-| `internal/lsp` | LSP client integration |
-| `internal/billing` | Token cost/balance tracking |
-| `internal/codegraph` | CodeGraph integration (tree-sitter code intelligence) |
-| `internal/i18n` | Internationalization (en + zh) |
-| `internal/evidence` | Tool receipt ledger for final-answer readiness |
-| `internal/fileref` | File reference search (@path) |
-| `internal/serve` | HTTP/SSE server frontend |
-| `internal/notify` | OS notification sender (platform-specific) |
-| `internal/command` | Custom slash commands from Markdown |
-| `internal/diff` | Diff computation for file edits |
-| `internal/doctor` | Diagnostics/reporting |
-| `internal/boot` | Bootstrap/assembly from config |
-| `internal/jobs` | Background job manager |
-| `internal/instruction` | Project instructions + verify checks |
-| `internal/installsource` | Plugin/skill installation from URLs |
-| `internal/fileutil` | Atomic writes, encoding detection |
-| `internal/frontmatter` | Frontmatter parsing for skills/commands |
-| `internal/inspect` | Model response inspection |
-| `internal/mcpdiag` | MCP auth diagnostics |
-| `internal/netclient` | HTTP client abstraction |
-| `internal/nilutil` | Nil-interface guard |
-| `internal/outputstyle` | Output style/persona configuration |
-| `internal/proc` | Process management (platform-specific) |
-| `internal/sysproxy` | System proxy detection |
-| `desktop/` | Wails-based desktop app (separate Go module) |
-| `npm/` | npm distribution wrapper |
-| `site/` | Astro-based project website |
-| `workers/crash-report/` | Cloudflare Worker for crash reporting |
-| `docs/` | Engineering spec, guides, migration docs |
-| `benchmarks/` | E2E benchmark task suites |
+| `cmd/momapeer` | CLI 入口点 (极简 — 委托给 `internal/cli` 处理) |
+| `cmd/momapeer-plugin-example` | 参考 MCP stdio 插件示例 |
+| `cmd/e2ebench` | 端到端基准测试套件 |
+| `internal/agent` | Agent 循环、会话、协调器、压缩机制、风暴拦截 |
+| `internal/cli` | TUI、子命令、配置向导、Markdown 渲染 |
+| `internal/control` | 协议无关的控制器 (单层编排) |
+| `internal/config` | TOML 配置加载 (命令行参数 > 项目 > 用户 > 默认值) |
+| `internal/provider` | Provider 接口 + 注册表 (kind → factory) |
+| `internal/provider/openai` | 兼容 OpenAI 格式的 provider (MoMA 等) |
+| `internal/provider/anthropic` | Anthropic Messages API 及其扩展思维支持 |
+| `internal/tool` | Tool 接口 + 注册表 |
+| `internal/tool/builtin` | 20+ 内置工具 (bash, read/write/edit, glob, grep 等) |
+| `internal/plugin` | MCP 客户端 (stdio + Streamable HTTP) |
+| `internal/event` | 类型化的事件流 (Sink 接口) |
+| `internal/hook` | 钩子拦截 (PreToolUse, PostToolUse, UserPromptSubmit, Stop) |
+| `internal/memory` | momapeer.md 知识分层 + 自动记忆存储 |
+| `internal/skill` | Markdown 技能发现机制 + 内置技能 |
+| `internal/sandbox` | 操作系统级沙盒 (macOS 的 Seatbelt) |
+| `internal/permission` | 每次调用的权限策略: 允许/询问/拒绝 规则 |
+| `internal/checkpoint` | 基于快照的时光倒流功能 |
+| `internal/bot` | 多通道 IM 机器人网关 (QQ, 飞书, 微信) |
+| `internal/acp` | 代理控制协议服务器 (Agent Control Protocol) |
+| `internal/lsp` | LSP 客户端集成 |
+| `internal/billing` | Token 消耗/余额追踪 |
+| `internal/codegraph` | CodeGraph 集成 (基于 tree-sitter 的代码智能) |
+| `internal/i18n` | 国际化 (en + zh) |
+| `internal/evidence` | 最终答案生成前的工具回执账本 |
+| `internal/fileref` | 文件引用搜索 (@path) |
+| `internal/serve` | HTTP/SSE 服务器前端 |
+| `internal/notify` | OS 系统通知发送 (平台特有) |
+| `internal/command` | 从 Markdown 加载自定义斜杠命令 |
+| `internal/diff` | 文件编辑差异计算 |
+| `internal/doctor` | 环境诊断/报告 |
+| `internal/boot` | 根据配置进行引导加载/组装 |
+| `internal/jobs` | 后台任务管理器 |
+| `internal/instruction` | 项目指令 + 验证检查 |
+| `internal/installsource` | 从 URL 安装插件/技能 |
+| `internal/fileutil` | 原子写入、编码检测 |
+| `internal/frontmatter` | 技能/命令的 Frontmatter 解析 |
+| `internal/inspect` | 模型响应结果审查 |
+| `internal/mcpdiag` | MCP 鉴权诊断 |
+| `internal/netclient` | HTTP 客户端抽象层 |
+| `internal/nilutil` | 接口 nil 防御 |
+| `internal/outputstyle` | 输出风格/角色人设配置 |
+| `internal/proc` | 进程管理 (平台特有) |
+| `internal/sysproxy` | 系统代理检测 |
+| `desktop/` | 基于 Wails 的桌面应用 (独立的 Go 模块) |
+| `npm/` | npm 分发包装器 |
+| `site/` | 基于 Astro 的项目网站 |
+| `workers/crash-report/` | 用于崩溃报告的 Cloudflare Worker |
+| `docs/` | 工程规范、指南、迁移文档 |
+| `benchmarks/` | 端到端基准测试任务集 |
 
-### Dependency direction
+### 依赖方向
 
 ```
 cli → {agent, plugin, config} → {tool, provider}
 ```
 
-Built-in subpackages import their parent to self-register via `init()`.
-Parents never import children.
+内置的子包通过 `init()` 引入其父包以完成自我注册。
+父包绝对不能导入子包。
 
-## Development workflow
+## 开发工作流
 
-### Building
+### 编译构建
 
 ```bash
-make build          # go build — outputs to bin/
+make build          # go build — 输出到 bin/ 目录
 make test           # go test ./...
 make vet            # go vet ./...
 make fmt            # gofmt -w .
-make hooks          # install git hooks (pre-push: go vet)
-make cross          # cross-compile for all 6 targets
+make hooks          # 安装 git hooks (pre-push: go vet)
+make cross          # 交叉编译到 6 个不同的目标平台
 ```
 
-### Running tests
+### 运行测试
 
 ```bash
-go test ./...                           # all tests
-go test ./internal/agent/ -v            # verbose, one package
-go test ./internal/tool/builtin/ -run TestGrep  # one test
+go test ./...                           # 运行所有测试
+go test ./internal/agent/ -v            # 详细输出，运行单个包
+go test ./internal/tool/builtin/ -run TestGrep  # 运行单个特定测试
 ```
 
-### Code style
+### 代码风格
 
-- `gofmt` is enforced by CI — format before committing
-- Follow existing patterns: wrap errors with `fmt.Errorf("...: %w", err)`
-- Library code never calls `os.Exit` or prints to stdout/stderr
-- Only `cli/` and `main/` decide exit codes and user-facing messages
-- Exported identifiers must have doc comments
-- English is the primary language for all code — comments, user-facing strings,
-  tool descriptions, system prompts. Chinese is allowed in i18n message files
-  (`messages_zh.go`) and example config comments only.
+- CI 将强制执行 `gofmt` — 请在提交前格式化代码
+- 遵循现有模式：使用 `fmt.Errorf("...: %w", err)` 包装错误
+- 库级别的代码绝对不能调用 `os.Exit` 或向 stdout/stderr 打印日志
+- 只有 `cli/` 和 `main/` 层负责决定退出码和面向用户的信息
+- 导出的标识符必须包含文档注释
+- **代码中主要使用英语** — 包括注释、面向用户的字符串、工具描述、系统 prompt 等。中文仅允许出现在国际化 (i18n) 消息文件 (`messages_zh.go`) 以及配置文件的示例注释中。
 
-### Commit messages
+### 提交信息规范
 
-Follow [Conventional Commits](https://www.conventionalcommits.org/):
+请遵循 [Conventional Commits (约定式提交)](https://www.conventionalcommits.org/):
 
 ```
 feat(glob): add ** recursive pattern support
@@ -131,54 +127,53 @@ docs: add CONTRIBUTING.md
 ci: add golangci-lint and govulncheck
 ```
 
-## Adding a new built-in tool
+## 添加新的内置工具
 
-1. Create `internal/tool/builtin/mytool.go`
-2. Implement the `tool.Tool` interface: `Name()`, `Description()`, `Schema()`, `ReadOnly()`, `Execute()`
-3. Register via `func init() { tool.RegisterBuiltin(myTool{}) }`
-4. Add tests in `internal/tool/builtin/mytool_test.go`
-5. The tool is automatically available — `main` blank-imports `builtin`
+1. 创建 `internal/tool/builtin/mytool.go`
+2. 实现 `tool.Tool` 接口: `Name()`, `Description()`, `Schema()`, `ReadOnly()`, `Execute()`
+3. 通过 `func init() { tool.RegisterBuiltin(myTool{}) }` 注册
+4. 在 `internal/tool/builtin/mytool_test.go` 中添加测试
+5. 该工具将自动可用 — `main` 会使用空白导入 (`_`) 引入 `builtin` 包
 
-## Adding a new model provider
+## 添加新的模型 Provider
 
-(For MCP tool servers see `internal/plugin` instead — that's a different layer.)
+(对于 MCP 工具服务器请参考 `internal/plugin` — 这是不同的抽象层。)
 
-1. Create `internal/provider/myprovider/`
-2. Implement `provider.Provider`: `Name()`, `Stream()`
-3. Register via `func init() { provider.Register("mykind", New) }`
-4. The provider is available from config with `kind = "mykind"`
+1. 创建 `internal/provider/myprovider/`
+2. 实现 `provider.Provider`: `Name()`, `Stream()`
+3. 通过 `func init() { provider.Register("mykind", New) }` 注册
+4. 该 Provider 将可通过配置项 `kind = "mykind"` 使用
 
-## Adding i18n strings
+## 添加国际化 (i18n) 字符串
 
-1. Add the field to `internal/i18n/i18n.go` (`Messages` struct)
-2. Add the value in `internal/i18n/messages_en.go` and `messages_zh.go`
-3. The `TestCatalogsComplete` test will fail if you miss a locale
+1. 在 `internal/i18n/i18n.go` (`Messages` 结构体) 中添加字段
+2. 在 `internal/i18n/messages_en.go` 和 `messages_zh.go` 中提供具体的文案
+3. 如果您漏掉了某个语言环境，`TestCatalogsComplete` 测试将会报错
 
-## Adding a bot channel
+## 添加机器人频道 (Bot Channel)
 
-1. Create `internal/bot/mychannel/` with channel-specific adapter
-2. Register in `internal/bot/gateway.go`
-3. Add config section in `momapeer.example.toml`
-4. Add i18n strings for channel-specific messages
+1. 在 `internal/bot/mychannel/` 中创建频道专属适配器
+2. 在 `internal/bot/gateway.go` 中注册
+3. 在 `momapeer.example.toml` 中添加配置说明
+4. 为频道特有的消息添加 i18n 字符串
 
-## Submitting changes
+## 提交更改
 
-1. Fork the repository
-2. Create a feature branch from `main`
-3. Make your changes with tests
-4. Ensure `go test ./...` passes
-5. Ensure `gofmt -l .` shows no changes
-6. Submit a pull request to `main`
+1. Fork 本代码库
+2. 基于 `main` 分支创建一个特性 (feature) 分支
+3. 编写代码并补充相应的测试
+4. 确保 `go test ./...` 能够全部通过
+5. 确保执行 `gofmt -l .` 后没有格式差异
+6. 提交 Pull Request 至 `main` 分支
 
-## Reporting issues
+## 提交 Issue 报告
 
-Open an issue on GitHub with:
-- Steps to reproduce
-- Expected vs actual behavior
-- Go version and OS
-- Relevant logs or error messages
+在 GitHub 上提出 Issue 时，请包含：
+- 复现步骤
+- 预期行为 vs 实际行为
+- Go 版本和操作系统类型
+- 相关的日志或错误信息
 
-## License
+## 许可协议
 
-By contributing, you agree that your contributions will be licensed under the
-same MIT license as the project.
+一旦您参与贡献，即表示您同意您的所有贡献代码都将采用与本项目相同的 MIT 许可证发布。
