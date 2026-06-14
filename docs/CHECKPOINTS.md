@@ -1,9 +1,9 @@
 # Design: Checkpoints & Rewind
 
 Status: **Phase 1 + 2 implemented** — snapshot store, capture seam, the Esc-Esc /
-`/rewind` CLI picker, and the desktop hover-rewind, with the full Claude Code menu:
+`/rewind` CLI picker, and the desktop hover-rewind, with a comprehensive menu:
 restore code / conversation / both, fork-from-here, and summarize from / up to
-here. Snapshot-based and aligned with Claude Code. An optional git-backed mode is
+here. Snapshot-based and aligned with standard practices. An optional git-backed mode is
 the remaining (lower-priority) follow-up. Tracks the most requested missing
 capability from v1 — an edit safety net / undo.
 
@@ -11,7 +11,7 @@ capability from v1 — an edit safety net / undo.
 
 Let a user rewind a session to a previous point and restore **code**,
 **conversation**, or **both** — without touching their git history. Aligned with
-Claude Code's rewind (Esc-Esc / `/rewind`), driven identically from the CLI and
+The rewind feature (Esc-Esc / `/rewind`), driven identically from the CLI and
 the desktop.
 
 ## Mechanism: file snapshots, not git
@@ -23,7 +23,7 @@ independent of git:
   non-git directory.
 - **Tracks only edit-tool changes** — `write_file` / `edit_file` / `multi_edit`.
   `bash` side effects are **not** tracked (no way to know what a shell command
-  touched), exactly as Claude Code. Risky bash is already permission-gated.
+  touched), by design. Risky bash is already permission-gated.
 - Full pre-edit content snapshots (simple; storage bounded by retention, below).
 
 An optional **git-backed mode** (v1's `auto-git-rollback`) is a possible Phase 2
@@ -68,7 +68,7 @@ type Checkpoint struct {
   corrupt snapshot only loses itself). Kept separate from the message JSONL
   (`agent.Session.Save`) so the session format is unchanged.
 - **Persists across sessions** — resuming a session re-loads its checkpoints, so
-  rewind works after a restart (Claude Code parity).
+  rewind works after a restart (Standard behavior).
 - **Retention**: prune with the session (default ~30 days, configurable), to bound
   disk from full-content snapshots.
 
@@ -92,13 +92,13 @@ func (c *Controller) Rewind(turn int, scope RewindScope) error
 - **Conversation**: truncate `Session.Messages` to just before turn `turn`'s user
   message, re-`Save`, and emit the truncated history as events so the frontend
   re-renders. The turn's prompt is restored into the composer for re-send/edit
-  (Claude Code behavior).
+  (Standard behavior).
 - **Both**: code + conversation.
 
 A `Rewound` event (or reuse of a history-replace event) lets every frontend
 re-render uniformly.
 
-## CLI UX (aligned with Claude Code)
+## CLI UX (aligned with standard practices)
 
 - **`Esc Esc`** with an empty composer, or **`/rewind`**, opens a picker listing
   each user turn (time + which files it changed). `chat_tui` already tracks the
@@ -118,7 +118,7 @@ re-render uniformly.
 ## Non-goals & edge cases
 
 - **bash / external side effects** (`rm`, `mv`, DB writes, deploys) are not
-  tracked — rewind cannot undo them (Claude Code parity).
+  tracked — rewind cannot undo them (Standard behavior).
 - **External edits between turns**: a snapshot holds the file's turn-start
   content, so restoring overwrites edits made outside momapeer in the meantime.
 - **Deletions**: an edit-tool deletion is restorable (snapshot has the content); a

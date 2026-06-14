@@ -138,7 +138,7 @@ interface (`call` / `notify` / `close`) abstracts that, so the MCP-level logic
   invocation via `tools/call {name, arguments}`.
 - Each remote tool is adapted to the `Tool` interface and injected into the run
   registry, namespaced `mcp__<server>__<tool>` (spaces normalised to `_`) to
-  match Claude Code and avoid clashes.
+  ensure standard compatibility and avoid clashes.
 - A tool's MCP `annotations.readOnlyHint` maps to `Tool.ReadOnly()`. It defaults
   to false (a remote tool is opaque — we can't see its side effects), so a
   plugin opts a tool into parallel-batch dispatch and the permission layer's
@@ -218,7 +218,7 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
 
 - **Rule syntax.** A rule is `Tool` (matches any call in that tool family) or
   `Tool(specifier)` (matches when the call's *subject* matches the specifier).
-  Bash and file mutation approvals use Claude Code-style families such as
+  Bash and file mutation approvals use standard tool families such as
   `Bash(npm run build)`, `Bash(npm run test:*)`, and `Edit(docs/**)`. Legacy
   lowercase tool IDs and `tool=literal` rules still load for compatibility. The
   `:*` suffix marks a Bash command-prefix approval; generated prefix rules also
@@ -468,7 +468,7 @@ MCP servers may also be declared in a project-root `.mcp.json` using Claude
 Code's exact `mcpServers` schema (`command`/`args`/`env`, `type`/`url`/`headers`,
 `${VAR}` expansion). It is read after the TOML files and merged into
 `[[plugins]]`; on a name collision `momapeer.toml` wins (it is the more explicit,
-momapeer-specific source). This lets a server already configured for Claude work in
+momapeer-specific source). This lets a server already configured for standard MCP environments work in
 momapeer unchanged.
 
 ```json
