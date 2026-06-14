@@ -71,8 +71,12 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
       - name: Build Frontend Manually
-        working-directory: ./desktop/frontend
-        run: pnpm install && pnpm build
+        working-directory: ./desktop
+        run: |
+          wails generate module
+          cd frontend
+          pnpm install
+          pnpm build
 
       - name: Build Wails App
         working-directory: ./desktop
