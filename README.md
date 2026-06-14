@@ -151,7 +151,7 @@ api_key_env = "JIUTIAN_API_KEY"
 | `moma/jiutian/jiutian-code-8b` | 极速响应，代码专精 | 代码片段补全、快速重构、单元测试生成 |
 | `moma/jiutian/jiutian-lan-8b` | 成本与速度最优解 | 文档翻译、简单文本处理、快速指令路由 |
 
-> 完整模型列表请登录 [九天平台控制台](https://jiutian.10086.cn) 查看。只需修改 `model` 字段即可无缝热切换，零代码侵入。
+> 完整模型列表请登录 [九天平台控制台](https://jiutian.10086.cn/largemodel/llmstudio/#/modelHub) 查看。只需修改 `model` 字段即可无缝热切换，零代码侵入。
 
 ## 文档指引
 

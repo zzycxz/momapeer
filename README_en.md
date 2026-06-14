@@ -150,7 +150,7 @@ In the `model` field, you can flexibly switch using the `provider/vendor/model-n
 | `moma/jiutian/jiutian-code-8b` | Extremely fast response, code-specialized | Code snippet completion, quick refactoring, unit tests |
 | `moma/jiutian/jiutian-lan-8b` | Optimal balance of cost and speed | Documentation translation, simple text processing, routing |
 
-> For the full list of available models, visit the [Jiutian Platform Console](https://jiutian.10086.cn). Switch models seamlessly by changing the `model` field — zero code changes required.
+> For the full list of available models, visit the [Jiutian Platform Console](https://jiutian.10086.cn/largemodel/llmstudio/#/modelHub). Switch models seamlessly by changing the `model` field — zero code changes required.
 
 ## Documentation Reference
 
