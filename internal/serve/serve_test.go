@@ -23,7 +23,10 @@ import (
 // observable signal.
 type fakeRunner struct{ got chan string }
 
-func (f fakeRunner) Run(_ context.Context, input any) error { f.got <- provider.ContentString(input); return nil }
+func (f fakeRunner) Run(_ context.Context, input any) error {
+	f.got <- provider.ContentString(input)
+	return nil
+}
 
 func TestServeSubmitRunsAndBroadcastsTurnDone(t *testing.T) {
 	bc := NewBroadcaster()

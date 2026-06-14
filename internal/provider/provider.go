@@ -28,7 +28,7 @@ const (
 // Message is a single conversation message.
 type Message struct {
 	Role             Role   `json:"role"`
-	Content          any    `json:"content,omitempty"` // string or []ContentPart (multimodal)
+	Content          any    `json:"content,omitempty"`           // string or []ContentPart (multimodal)
 	ReasoningContent string `json:"reasoning_content,omitempty"` // assistant: thinking-mode chain-of-thought, round-tripped on multi-turn
 	// ReasoningSignature is an opaque, provider-issued proof that ReasoningContent
 	// is genuine model output. Anthropic requires the signed thinking block be
@@ -43,7 +43,7 @@ type Message struct {
 
 // ContentPart is one block in a multimodal message (OpenAI content parts format).
 type ContentPart struct {
-	Type     string    `json:"type"`               // "text" or "image_url"
+	Type     string    `json:"type"`                // "text" or "image_url"
 	Text     string    `json:"text,omitempty"`      // for Type == "text"
 	ImageURL *ImageURL `json:"image_url,omitempty"` // for Type == "image_url"
 }

@@ -2,7 +2,6 @@ package config
 
 import "testing"
 
-
 func TestNormalizeLegacyProviderModelsRepairsOfficialProvider(t *testing.T) {
 	c := &Config{Providers: []ProviderEntry{{
 		Name:      "moma",

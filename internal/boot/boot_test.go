@@ -905,7 +905,7 @@ func TestBuildMigratesLegacyConfigEndToEnd(t *testing.T) {
 	t.Setenv("USERPROFILE", home)                               // os.UserHomeDir on Windows
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config")) // os.UserConfigDir on Linux
 	t.Setenv("AppData", filepath.Join(home, "AppData"))         // os.UserConfigDir on Windows
-	t.Setenv("JIUTIAN_API_KEY", "")                            // track for cleanup; migration os.Setenv's it live
+	t.Setenv("JIUTIAN_API_KEY", "")                             // track for cleanup; migration os.Setenv's it live
 
 	proj := robustTempDir(t)
 	t.Chdir(proj)

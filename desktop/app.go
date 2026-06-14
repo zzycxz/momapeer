@@ -1903,7 +1903,6 @@ func (a *App) SetAutoApproveTools(on bool) {
 	a.SetToolApprovalModeForTab("", control.ToolApprovalAsk)
 }
 
-
 // SetBypass is the legacy Wails binding for SetAutoApproveTools.
 func (a *App) SetBypass(on bool) {
 	a.SetAutoApproveTools(on)
@@ -3519,7 +3518,6 @@ func (a *App) activeWorkspaceBase() (string, error) {
 	return filepath.Clean(root), nil
 }
 
-
 func (a *App) workspacePath(rel string) (string, bool, error) {
 	base, err := a.activeWorkspaceBase()
 	if err != nil {
@@ -3527,7 +3525,6 @@ func (a *App) workspacePath(rel string) (string, bool, error) {
 	}
 	return workspacePathForBase(base, rel)
 }
-
 
 func workspacePathForBase(base, rel string) (string, bool, error) {
 	base = filepath.Clean(base)
@@ -3735,14 +3732,12 @@ func revealPath(path string) error {
 	}
 }
 
-
 func (a *App) noticeForTab(tabID, text string) {
 	tab := a.tabByID(tabID)
 	if tab != nil && tab.sink != nil {
 		tab.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: text})
 	}
 }
-
 
 func (a *App) runEffortCommandForTab(tabID, input string) {
 	entry, err := a.currentProviderEntryForTab(tabID)
@@ -3779,7 +3774,6 @@ func (a *App) runEffortCommandForTab(tabID, input string) {
 	}
 	a.noticeForTab(tabID, fmt.Sprintf("effort for %s set to %s", entry.Name, display))
 }
-
 
 func (a *App) currentProviderEntryForTab(tabID string) (*config.ProviderEntry, error) {
 	a.mu.RLock()

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/text/encoding/simplifiedchinese"
 	"github.com/zzycxz/momapeer/internal/config"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 // --- workspaceStatePath ---

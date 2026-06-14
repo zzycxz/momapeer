@@ -1640,7 +1640,6 @@ func removeProject(root string) error {
 	return saveProjectsFile(f)
 }
 
-
 // --- topic helpers ----------------------------------------------------------
 
 const (
@@ -1816,7 +1815,6 @@ func setTopicTitleWithSource(workspaceRoot, topicID, title, source string) error
 	return saveTopicTitleSources(workspaceRoot, sources)
 }
 
-
 func setTopicCreatedAt(workspaceRoot, topicID string, createdAt int64) error {
 	created := loadTopicCreatedAts(workspaceRoot)
 	topicID = strings.TrimSpace(topicID)
@@ -1876,7 +1874,6 @@ func ensureTopicIndexed(scope, workspaceRoot, topicID, title, source string) err
 	f.Projects = append(f.Projects, desktopProject{Root: workspaceRoot, Topics: []string{topicID}})
 	return saveProjectsFile(f)
 }
-
 
 func saveTelemetry(path string, snapshot tabTelemetrySnapshot) error {
 	if snapshot.Version == 0 {

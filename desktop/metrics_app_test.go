@@ -54,7 +54,7 @@ func TestObserveReadsNoMessageText(t *testing.T) {
 
 func TestErrorClass(t *testing.T) {
 	cases := map[string]string{
-		"MoMA: status 400: bad":           "http_400",
+		"MoMA: status 400: bad":               "http_400",
 		"status 401 unauthorized":             "http_401",
 		"status 403 forbidden":                "http_401",
 		"status 429 too many":                 "http_429",

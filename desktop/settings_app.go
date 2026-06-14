@@ -320,9 +320,9 @@ func (a *App) Settings() SettingsView {
 				Ask:   []string{},
 				Deny:  []string{},
 			},
-			Sandbox:           SandboxView{Bash: "enforce", AllowWrite: []string{}},
-			Agent:             AgentView{PlannerMaxSteps: 12},
-			Bot:               botSettingsView(config.BotConfig{}),
+			Sandbox: SandboxView{Bash: "enforce", AllowWrite: []string{}},
+			Agent:   AgentView{PlannerMaxSteps: 12},
+			Bot:     botSettingsView(config.BotConfig{}),
 			WebSearch: WebSearchView{
 				BraveKeySet:  os.Getenv("BRAVE_API_KEY") != "" || os.Getenv("BRAVE_SEARCH_API_KEY") != "",
 				ExaKeySet:    os.Getenv("EXA_API_KEY") != "",
@@ -374,8 +374,8 @@ func (a *App) Settings() SettingsView {
 				Password: cfg.Network.Proxy.Password,
 			},
 		},
-		Agent:             AgentView{Temperature: cfg.Agent.Temperature, MaxSteps: cfg.Agent.MaxSteps, PlannerMaxSteps: cfg.Agent.PlannerMaxSteps, SystemPrompt: cfg.Agent.SystemPrompt},
-		Bot:               botSettingsView(cfg.Bot),
+		Agent: AgentView{Temperature: cfg.Agent.Temperature, MaxSteps: cfg.Agent.MaxSteps, PlannerMaxSteps: cfg.Agent.PlannerMaxSteps, SystemPrompt: cfg.Agent.SystemPrompt},
+		Bot:   botSettingsView(cfg.Bot),
 		WebSearch: WebSearchView{
 			BraveKeySet:  os.Getenv("BRAVE_API_KEY") != "" || os.Getenv("BRAVE_SEARCH_API_KEY") != "",
 			ExaKeySet:    os.Getenv("EXA_API_KEY") != "",

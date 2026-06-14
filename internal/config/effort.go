@@ -8,10 +8,10 @@ import (
 )
 
 const (
-	ReasoningProtocolAuto     = "auto"
-	ReasoningProtocolMoMA     = "moma"
-	ReasoningProtocolOpenAI   = "openai"
-	ReasoningProtocolNone     = "none"
+	ReasoningProtocolAuto   = "auto"
+	ReasoningProtocolMoMA   = "moma"
+	ReasoningProtocolOpenAI = "openai"
+	ReasoningProtocolNone   = "none"
 )
 
 // EffortCapability describes the abstract effort levels a provider/model can set
@@ -271,7 +271,6 @@ func isMoMAEntry(e *ProviderEntry) bool {
 func isMiniMaxEntry(e *ProviderEntry) bool {
 	return e != nil && e.Kind == "openai" && openai.IsMiniMax(e.BaseURL)
 }
-
 
 func resolvedModelReasoningCapability(e *ProviderEntry) (modelReasoningCapability, bool) {
 	if e == nil || e.Kind != "openai" {

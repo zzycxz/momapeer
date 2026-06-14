@@ -3791,7 +3791,7 @@ func replaySectionsFor(history []provider.Message, width int, renderer *mdRender
 func renderTUIBanner(label, missing string, width int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %s  %s\n", accent("◆"), bold("momapeer chat"), dim("· "+label))
-	b.WriteString(dim("  "+i18n.M.ChatTip))
+	b.WriteString(dim("  " + i18n.M.ChatTip))
 	b.WriteString("\n")
 	if missing != "" {
 		b.WriteString(wrapForViewport("  ! "+missing, width, activeCLITheme.warn))
