@@ -85,6 +85,15 @@ brew install zzycxz/momapeer/momapeer    # macOS 用户
 
 您也可以在 [GitHub Releases](https://github.com/zzycxz/momapeer/releases) 获取预编译归档文件（支持 `darwin|linux|windows × amd64|arm64`）。
 
+> **⚠️ macOS 桌面版安装必读：**
+> 如果您下载了 `.zip` 格式的 macOS 桌面端应用，由于这是开源项目未进行 Apple 开发者签名，解压后双击运行可能会提示 **"App is damaged and can't be opened"（文件已损坏，请移至废纸篓）**。
+> 
+> **解决办法：** 打开终端，运行以下命令解除隔离保护（假设 App 在下载目录）：
+> ```sh
+> xattr -cr ~/Downloads/momapeer.app
+> ```
+> 然后即可正常双击运行。
+
 ### 从源码编译
 
 ```sh

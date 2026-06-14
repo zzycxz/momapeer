@@ -35,7 +35,7 @@ momapeer (v0.1.0) is an enterprise-grade AI coding agent designed specifically f
 
 The agent can run in your **terminal** (TUI), as a **native desktop app** (Wails), as an **HTTP/SSE server**, or as a **multi-channel IM bot** (WeCom / Feishu) — all powered by a single, high-performance, transport-agnostic engine.
 
-> **Open Source Attribution:** This project is deeply optimized and architecturally expanded for the China Mobile Jiutian platform and enterprise scenarios.
+> **Open Source Attribution:** This project is a secondary development and refactoring based on [deepseek-reasonix](https://github.com/esengine/DeepSeek-Reasonix), deeply optimized and architecturally expanded for the China Mobile Jiutian platform and enterprise scenarios.
 
 ## Core Features
 
@@ -83,6 +83,15 @@ brew install zzycxz/momapeer/momapeer    # macOS users
 ```
 
 You can also download prebuilt archives (`darwin|linux|windows × amd64|arm64`) directly from [GitHub Releases](https://github.com/zzycxz/momapeer/releases).
+
+> **⚠️ macOS Desktop Installation Guide:**
+> If you downloaded the `.zip` archive for the macOS desktop app, because this is an open-source project without Apple developer signing, extracting and running the app might trigger an **"App is damaged and can't be opened"** warning.
+> 
+> **Solution:** Open your terminal and run the following command to remove the quarantine attribute (assuming the app is in your Downloads folder):
+> ```sh
+> xattr -cr ~/Downloads/momapeer.app
+> ```
+> After running this, you can double-click and open the app normally.
 
 ### Build from source
 

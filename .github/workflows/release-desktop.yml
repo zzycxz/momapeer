@@ -67,16 +67,19 @@ jobs:
         if: runner.os == 'Windows'
         uses: softprops/action-gh-release@v2
         with:
+          generate_release_notes: true
           files: ./desktop/build/bin/momapeer.exe
 
       - name: Upload macOS Artifact
         if: runner.os == 'macOS'
         uses: softprops/action-gh-release@v2
         with:
+          generate_release_notes: true
           files: ./desktop/build/bin/momapeer-macos-universal.zip
 
       - name: Upload Linux Artifact
         if: runner.os == 'Linux'
         uses: softprops/action-gh-release@v2
         with:
+          generate_release_notes: true
           files: ./desktop/build/bin/momapeer
