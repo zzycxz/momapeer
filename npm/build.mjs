@@ -109,11 +109,16 @@ const distTag = version.includes("-canary.")
   : version.startsWith("0.") && !version.includes("-")
     ? "latest"
     : "next";
-const publishArgs = ["publish", "--access", "public", "--tag", distTag];
+const publishArgs = ["publish", "--access", "public", "--tag", distTag, "--registry", "https://registry.npmjs.org/"];
+
+const otpIndex = process.argv.indexOf("--otp");
+if (otpIndex !== -1 && process.argv.length > otpIndex + 1) {
+  publishArgs.push("--otp", process.argv[otpIndex + 1]);
+}
 
 for (const sub of subPackages) {
   console.log(`publish ${sub.name}@${version} (${distTag})`);
-  execFileSync("npm", publishArgs, { cwd: sub.dir, stdio: "inherit" });
+  execFileSync("npm", publishArgs, { cwd: sub.dir, stdio: "inherit", shell: true });
 }
 console.log(`publish momapeer@${version} (${distTag})`);
-execFileSync("npm", publishArgs, { cwd: mainDir, stdio: "inherit" });
+execFileSync("npm", publishArgs, { cwd: mainDir, stdio: "inherit", shell: true });
