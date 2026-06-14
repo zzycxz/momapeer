@@ -17,8 +17,8 @@ jobs:
         include:
           - os: windows-latest
             platform: windows/amd64
-            args: -nsis
-            artifact: momapeer-amd64-installer.exe
+            args: ''
+            artifact: momapeer.exe
           - os: macos-latest
             platform: darwin/universal
             args: ''
@@ -67,7 +67,7 @@ jobs:
         if: runner.os == 'Windows'
         uses: softprops/action-gh-release@v2
         with:
-          files: ./desktop/build/bin/momapeer-amd64-installer.exe
+          files: ./desktop/build/bin/momapeer.exe
 
       - name: Upload macOS Artifact
         if: runner.os == 'macOS'
