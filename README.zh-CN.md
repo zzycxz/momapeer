@@ -178,21 +178,7 @@ Developer → CLI / Desktop / HTTP / Bot / ACP
 项目包含 40 余个严格解耦的 Internal 包，依赖图谱遵循严格的无环单向流动：
 `cli → {agent, plugin, config} → {tool, provider}`
 
-## 致谢
 
-本项目的发展离不开开源社区与早期贡献者的支持（按字母顺序排列）：
-
-- [**ctharvey**](https://github.com/ctharvey)
-- [**dimasd-angga**](https://github.com/dimasd-angga)
-- [**Evan-Pycraft**](https://github.com/Evan-Pycraft)
-- [**ForeverYoungPp**](https://github.com/ForeverYoungPp)
-- [**GTC2080**](https://github.com/GTC2080) (TaoMu)
-- [**kabaka9527**](https://github.com/kabaka9527)
-- [**lisniuse**](https://github.com/lisniuse) (Richie)
-- [**wade19990814-hue**](https://github.com/wade19990814-hue)
-- [**wviana**](https://github.com/wviana)
-
-特别感谢 [**Bernardxu123**](https://github.com/Bernardxu123) 提供项目 Logo 视觉设计。
 
 ---
 

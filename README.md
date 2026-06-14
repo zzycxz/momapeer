@@ -177,21 +177,7 @@ Developer → CLI / Desktop / HTTP / Bot / ACP
 The project contains over 40 strictly decoupled internal packages. The dependency graph follows a strict, acyclic, one-way flow:
 `cli → {agent, plugin, config} → {tool, provider}`
 
-## Acknowledgments
 
-The development of this project relies heavily on the support of the open-source community and early contributors (listed alphabetically):
-
-- [**ctharvey**](https://github.com/ctharvey)
-- [**dimasd-angga**](https://github.com/dimasd-angga)
-- [**Evan-Pycraft**](https://github.com/Evan-Pycraft)
-- [**ForeverYoungPp**](https://github.com/ForeverYoungPp)
-- [**GTC2080**](https://github.com/GTC2080) (TaoMu)
-- [**kabaka9527**](https://github.com/kabaka9527)
-- [**lisniuse**](https://github.com/lisniuse) (Richie)
-- [**wade19990814-hue**](https://github.com/wade19990814-hue)
-- [**wviana**](https://github.com/wviana)
-
-Special thanks to [**Bernardxu123**](https://github.com/Bernardxu123) for designing the project's visual logo.
 
 ---
 
