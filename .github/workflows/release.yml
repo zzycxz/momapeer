@@ -12,6 +12,9 @@ name: Release
 # repository (zzycxz/homebrew-momapeer) and the HOMEBREW_TAP_TOKEN secret exist.
 # Until then this only runs on manual dispatch (Actions tab → Run workflow).
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch: {}
 
 permissions:
