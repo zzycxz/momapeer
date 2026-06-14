@@ -35,7 +35,7 @@ momapeer (v0.1.0) is an enterprise-grade AI coding agent designed specifically f
 
 The agent can run in your **terminal** (TUI), as a **native desktop app** (Wails), as an **HTTP/SSE server**, or as a **multi-channel IM bot** (WeCom / Feishu) — all powered by a single, high-performance, transport-agnostic engine.
 
-> **Open Source Attribution:** This project is a secondary development and refactoring based on [deepseek-reasonix](https://github.com/esengine/DeepSeek-Reasonix), deeply optimized and architecturally expanded for the China Mobile Jiutian platform and enterprise scenarios.
+> **Open Source Attribution:** This project is deeply optimized and architecturally expanded for the China Mobile Jiutian platform and enterprise scenarios.
 
 ## Core Features
 

@@ -10,7 +10,7 @@ momapeer 最初是个人研究与学习项目，探索 Go 语言 AI agent 的工
 
 - **MoMA provider preset**: 新增中国移动九天 MoMA 聚合模型平台作为默认 provider，
   支持 DeepSeek、Qwen、GLM 等 300+ 模型一键接入。
-- **Configuration branding**: 配置文件从 `deepseek-reasonix.toml` 迁移至 `momapeer.toml`，
+- **Configuration branding**: 配置文件迁移至 `momapeer.toml`，
   环境变量前缀统一为 `MOMAPEER_*`。
 - **Multi-model adaptation**: 适配 MoMA 平台多模型体系，支持 reasoning（-Pro /
   -Pro）与 fast（-Flash / -Flash）双档位自动切换；统一了不同模型
