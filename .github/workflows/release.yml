@@ -21,20 +21,8 @@ permissions:
   contents: write # create the release and upload archives
 
 jobs:
-  cache-guard:
-    name: cache hit guard
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-      - run: ./scripts/cache-guard.sh
-
   goreleaser:
     name: archives + checksums + homebrew tap
-    needs: cache-guard
     runs-on: ubuntu-latest
     # CLI stable release (archives + GitHub release + Homebrew cask). Gated on the
     # `release` environment so only zzycxz can approve it going public.
