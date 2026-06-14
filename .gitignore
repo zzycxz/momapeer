@@ -1,0 +1,60 @@
+# Build artifacts
+/bin/
+/dist/
+/stage/
+/npm/.stage/
+/momapeer
+/momapeer.exe
+
+# Website (Astro) — not part of the CLI distribution; kept local only
+/site/
+
+# Go test/build scratch
+*.test
+*.out
+*.coverprofile
+coverage.out
+cpu.prof
+mem.prof
+
+# Wails desktop artifacts
+/desktop/build/bin/
+/desktop/build/obj/
+/desktop/desktop
+/desktop/frontend/dist/*
+!/desktop/frontend/dist/.gitkeep
+/desktop/frontend/wailsjs/
+/desktop/frontend/package.json.md5
+
+# Environment / local config (momapeer.example.toml is the shared template)
+.env
+.env.local
+*.local
+/momapeer.toml
+/desktop/.env
+/desktop/momapeer.toml
+
+# Node / frontend dependencies and caches
+node_modules/
+.pnpm-store/
+.npm/
+
+# Project-local momapeer state; keep the checked-in review command.
+/.momapeer/*
+!/.momapeer/commands/
+!/.momapeer/commands/review.md
+
+# CodeGraph per-project index (rebuilt locally; never committed)
+.codegraph/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+benchmarks/context-maintenance-e2e/run/
+
+# Local test / migration artifacts
+/tests/
+/updateFile/

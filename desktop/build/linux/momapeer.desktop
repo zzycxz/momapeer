@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=momapeer
+Comment=momapeer desktop — a Wails shell around the Go kernel
+Exec=momapeer-desktop
+Icon=momapeer-desktop
+Categories=Development;Utility;
+Terminal=false
+StartupWMClass=momapeer-desktop

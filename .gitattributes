@@ -1,0 +1,9 @@
+# Go sources: force LF so Windows checkouts stay gofmt-clean locally (CI runs
+# gofmt on Linux; without this, Windows devs see every file flagged by `gofmt -l`
+# due to CRLF, which ci.yml works around by skipping the step on Windows).
+*.go    text eol=lf
+*.mod   text eol=lf
+*.sum   text eol=lf
+
+.githooks/** text eol=lf
+benchmarks/**/*.sh text eol=lf
