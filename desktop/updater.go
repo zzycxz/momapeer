@@ -39,6 +39,11 @@ const (
 
 // manifestEndpoints returns the manifest URLs for the running build's channel.
 func manifestEndpoints() []string {
+	if channel == "canary" {
+		return []string{
+			ghReleasesBase + "/download/canary/latest.json",
+		}
+	}
 	return []string{
 		ghReleasesBase + "/latest/download/latest.json",
 	}
@@ -47,6 +52,9 @@ func manifestEndpoints() []string {
 // downloadPage is the human-facing releases page shown when self-update is
 // unavailable (macOS) or the manifest omits its own link.
 func downloadPage() string {
+	if channel == "canary" {
+		return ghReleasesBase + "/tag/canary"
+	}
 	return ghReleasesBase + "/latest"
 }
 

@@ -98,12 +98,12 @@ func TestEffortForTabUsesKnownModelRegistry(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
-	configBody := `default_model = "project-provider/qwen3.6-35b"
+	configBody := `default_model = "project-provider/qwen/qwen3.6-35b"
 [[providers]]
 name = "project-provider"
 kind = "openai"
 base_url = "https://proxy.example.com/v1"
-model = "qwen3.6-35b"
+model = "qwen/qwen3.6-35b"
 api_key_env = "PROJECT_API_KEY"
 `
 	if err := os.WriteFile(filepath.Join(projectRoot, "momapeer.toml"), []byte(configBody), 0o644); err != nil {
@@ -112,7 +112,7 @@ api_key_env = "PROJECT_API_KEY"
 
 	app := NewApp()
 	tab := testTab("project", projectRoot)
-	tab.model = "project-provider/qwen3.6-35b"
+	tab.model = "project-provider/qwen/qwen3.6-35b"
 	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
 	app.activeTabID = tab.ID
 	defer tab.Ctrl.Close()
@@ -139,7 +139,7 @@ func TestSaveTabsPersistsModelAndEffort(t *testing.T) {
 	app := NewApp()
 	tab := testTab("a", t.TempDir())
 	tab.effort = &effort
-	tab.model = "MoMA/qwen3.6-27b"
+	tab.model = "moma/qwen3.6-27b"
 	tab.mode = "plan"
 	tab.Ctrl.SetPlanMode(true)
 	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}

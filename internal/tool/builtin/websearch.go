@@ -126,11 +126,11 @@ Render:
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Search results for %q (via %s):\n\n", p.Query, engineUsed))
+	fmt.Fprintf(&sb, "Search results for %q (via %s):\n\n", p.Query, engineUsed)
 	for i, r := range results {
-		sb.WriteString(fmt.Sprintf("### %d. [%s](%s)\n", i+1, r.Title, r.URL))
+		fmt.Fprintf(&sb, "### %d. [%s](%s)\n", i+1, r.Title, r.URL)
 		if r.Snippet != "" {
-			sb.WriteString(fmt.Sprintf("> %s\n", strings.ReplaceAll(strings.TrimSpace(r.Snippet), "\n", "\n> ")))
+			fmt.Fprintf(&sb, "> %s\n", strings.ReplaceAll(strings.TrimSpace(r.Snippet), "\n", "\n> "))
 		}
 		sb.WriteString("\n")
 	}

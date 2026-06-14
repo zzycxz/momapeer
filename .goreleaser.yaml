@@ -45,7 +45,7 @@ homebrew_casks:
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: "https://github.com/zzycxz/momapeer"
-    description: "A MoMA (九天) AI coding agent for the terminal."
+    description: "A MoMA (---) AI coding agent for the terminal."
     commit_author:
       name: momapeer
       email: momapeer@users.noreply.github.com
@@ -59,3 +59,4 @@ homebrew_casks:
 release:
   prerelease: auto
   name_template: "momapeer CLI {{ .Tag }}"
+

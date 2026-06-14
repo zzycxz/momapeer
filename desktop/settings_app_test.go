@@ -101,7 +101,7 @@ func TestSaveProviderFiltersNonChatModels(t *testing.T) {
 
 	app := NewApp()
 	if err := app.SaveProvider(ProviderView{
-		Name:      "moma",
+		Name:      "custom-moma",
 		Kind:      "openai",
 		BaseURL:   "https://api.jiutian.10086.cn/v1",
 		Models:    []string{"jiutian-lan.5-asr", "jiutian-lan-35b", "jiutian-lan.5-tts"},
@@ -112,7 +112,7 @@ func TestSaveProviderFiltersNonChatModels(t *testing.T) {
 	}
 
 	cfg := config.LoadForEdit(config.UserConfigPath())
-	got, ok := cfg.Provider("moma")
+	got, ok := cfg.Provider("custom-moma")
 	if !ok {
 		t.Fatal("saved provider not found")
 	}

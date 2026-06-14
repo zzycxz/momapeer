@@ -84,7 +84,7 @@ func TestChannelSelectsDistinctPointers(t *testing.T) {
 			t.Errorf("stable endpoint leaks into canary: %q", u)
 		}
 	}
-	if !strings.Contains(stable[0], "/latest/latest.json") {
+	if !strings.Contains(stable[0], "/latest/download/latest.json") {
 		t.Errorf("stable primary = %q, want the latest/ pointer", stable[0])
 	}
 	for _, u := range canary {
@@ -92,7 +92,7 @@ func TestChannelSelectsDistinctPointers(t *testing.T) {
 			t.Errorf("canary endpoint hits the stable latest/ pointer: %q", u)
 		}
 	}
-	if !strings.Contains(canary[0], "/canary/latest.json") {
+	if !strings.Contains(canary[0], "/download/canary/latest.json") {
 		t.Errorf("canary primary = %q, want the canary/ pointer", canary[0])
 	}
 	if downloadPage() == (ghReleasesBase + "/latest") {
