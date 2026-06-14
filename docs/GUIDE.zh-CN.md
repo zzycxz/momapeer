@@ -1,6 +1,6 @@
 # momapeer 使用指南
 
-<a href="../README.zh-CN.md">README</a>
+<a href="../README.md">README</a>
 &nbsp;·&nbsp;
 <a href="./GUIDE.md">English</a>
 &nbsp;·&nbsp;

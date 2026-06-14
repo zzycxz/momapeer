@@ -1,6 +1,6 @@
 # momapeer Guide
 
-<a href="../README.md">README</a>
+<a href="../README_en.md">README</a>
 &nbsp;·&nbsp;
 <a href="./GUIDE.zh-CN.md">简体中文</a>
 &nbsp;·&nbsp;

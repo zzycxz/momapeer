@@ -3,13 +3,13 @@
 </p>
 
 <p align="center">
-  <strong>English</strong>
+  <a href="./README_en.md">English</a>
   &nbsp;·&nbsp;
-  <a href="./README.zh-CN.md">简体中文</a>
+  <strong>简体中文</strong>
   &nbsp;·&nbsp;
-  <a href="./docs/GUIDE.md">Guide</a>
+  <a href="./docs/GUIDE.zh-CN.md">使用指南</a>
   &nbsp;·&nbsp;
-  <a href="./docs/SPEC.md">Spec</a>
+  <a href="./docs/SPEC.md">架构规范</a>
 </p>
 
 <p align="center">
@@ -21,106 +21,107 @@
 
 <br/>
 
-<h3 align="center">China Mobile MoMA-native AI coding agent for your terminal, desktop, and server.</h3>
+<h3 align="center">中国移动九天原生的企业级全场景 AI 编程助手。</h3>
 <p align="center">
-  Built exclusively for the China Mobile MoMA (九天) aggregated model platform.<br/>
-  A single static Go binary. Zero runtime dependencies. Cross-platform distribution.
+  基于中国移动 MoMA（九天）大模型平台深度打造，提供极致的编码智能与终端体验。<br/>
+  单一静态 Go 二进制，零运行时依赖，多平台无缝覆盖。
 </p>
 
 <br/>
 
-## What is momapeer?
+## momapeer 是什么？
 
-momapeer (v0.1.0) is an enterprise-grade AI coding agent designed specifically for the China Mobile Jiutian (MoMA) ecosystem. Driven by a highly configurable core and Model Context Protocol (MCP) plugins, momapeer natively integrates with powerful MoMA models (like `jiutian-lan-35b`) to provide autonomous, natural-language-driven programming capabilities.
+momapeer (v0.1.0) 是一款专为中国移动九天 (MoMA) 平台生态打造的 AI 智能编程助手，以高度可配置化和 MCP 插件体系为核心驱动力。
+它不仅提供强大的本地代码理解能力，更能深度接入九天大模型（如 `jiutian-lan-35b`）实现自然语言驱动的自主编程。
 
-The agent can run in your **terminal** (TUI), as a **native desktop app** (Wails), as an **HTTP/SSE server**, or as a **multi-channel IM bot** (WeCom / Feishu) — all powered by a single, high-performance, transport-agnostic engine.
+Agent 可以在 **终端**（TUI）、**桌面客户端**（基于 Wails）、**HTTP/SSE 服务器** 或 **多通道 IM 机器人**（企业微信 / 飞书）等全场景中运行——所有前端均由同一个高性能、传输无关的核心引擎驱动。
 
-## Core Features
+## 核心特性
 
-### Architecture & Ecosystem
+### 工程化与生态
 
-- **MoMA-Native Architecture** — Seamlessly connects to the China Mobile MoMA platform. Fully configuration-driven (`momapeer.toml`) with zero intrusive hardcoded logic.
-- **Dual-Model Coordination** — Supports advanced dual-model orchestration (e.g., a logic-driven Planner + a code-generation Executor) to drastically reduce hallucination.
-- **MCP Plugin Ecosystem** — Full support for the Model Context Protocol (MCP). External tools run as subprocesses over stdio JSON-RPC, providing infinite extensibility.
-- **Zero-Friction Distribution** — Packaged as a `CGO_ENABLED=0` single binary. Cross-compiled for 6 major OS/Architecture targets for instant deployment.
+- **九天原生架构** — 深度优化对接 MoMA 平台，通过 `momapeer.toml` 完全配置驱动，无侵入性。
+- **双模型协作引擎** — 支持双端模型协作（例如：逻辑推演规划器 + 代码生成执行器），大幅降低幻觉。
+- **MCP 插件生态** — 全面支持 Model Context Protocol (MCP)，外部工具以子进程形式通过 stdio JSON-RPC 运行，无限扩展 Agent 能力。
+- **极速轻量分发** — `CGO_ENABLED=0` 单二进制打包，极简部署，支持交叉编译 6 大操作系统架构。
 
-### Built-in Intelligent Tools (20+)
+### 内置智能工具箱（20+）
 
-Native integration of a full IDE-grade toolchain: `bash` · `read_file` · `write_file` · `edit_file` · `multi_edit` · `glob` · `grep` · `ls` ·
+原生集成全套 IDE 级工具链：`bash` · `read_file` · `write_file` · `edit_file` · `multi_edit` · `glob` · `grep` · `ls` ·
 `web_fetch` · `todo_write` · `complete_step` · `notebook_edit` · `workspace` · `preview` · `gitignore` ·
-`codegraph_*` (Tree-sitter based project-wide symbol and call-graph semantic search).
+`codegraph_*`（基于 tree-sitter 的项目级符号与调用图谱精准搜索）。
 
-### Exclusive Code Intelligence
+### 独家代码智能
 
-- **CodeGraph Engine** — A lightweight, local code graph built on Tree-sitter + SQLite. Zero API cost, background silent indexing, enabling precise method invocation and symbol tracking.
-- **Full-Stack LSP Integration** — Deep binding with mainstream language servers for diagnostics, go-to-definition, and cross-references.
+- **CodeGraph 引擎** — 基于 tree-sitter + SQLite 构建本地化轻量级代码图谱。零 API 调用开销，后台静默建立 AST 索引，实现精准的方法调用与符号追踪。
+- **全栈 LSP 集成** — 与主流语言服务器深度绑定，提供诊断、跳转定义与交叉引用能力。
 
-### Automation & Security
+### 自动化与安全
 
-- **Plan Mode** — Automatically intercepts high-risk operations. The Agent must submit an "execution plan" and wait for human sign-off before modifying files or executing sensitive shell commands.
-- **Hierarchical Memory** — Multi-tiered knowledge base (Project / Personal / Global) with automatic memory storage. The model learns your codebase over time.
-- **Checkpoints & Rewind** — Snapshot-based safety net for code modifications. Supports `/rewind` for instant undo, providing maximum fault tolerance.
+- **规划驱动模式 (Plan Mode)** — 自动拦截高危操作，Agent 在执行文件修改或敏感 Shell 命令前需提交“执行规划”并等待人工签核。
+- **记忆化沉淀** — 分层知识库（项目级/个人/全局）与自动记忆存储，模型越用越懂你的代码库。
+- **检查点与时光倒流** — 引入代码修改快照系统，支持 `/rewind` 一键撤销，提供极致的容错安全网。
 
-## Frontend Channels
+## 全场景接入
 
-| Frontend | Command | Description |
+| 前端形态 | 启动命令 | 场景说明 |
 |------|------|------|
-| **Terminal TUI** | `momapeer chat` | For geeks: Immersive terminal UI (Charm Bubble Tea) |
-| **API Server** | `momapeer serve` | Open capabilities: Standard HTTP/SSE programmatic interface |
-| **Desktop App** | Wails Launcher | UI interaction: Native macOS / Windows / Linux experience |
-| **Enterprise Bot** | `momapeer bot start` | Team collaboration: WeCom / Feishu IM gateway integration |
-| **ACP Server** | `momapeer acp` | Protocol bridge: Agent Control Protocol remote execution layer |
+| **终端 TUI** | `momapeer chat` | 极客首选：沉浸式终端界面（基于 Charm Bubble Tea） |
+| **API 服务** | `momapeer serve` | 开放能力：提供标准 HTTP/SSE 编程接入接口 |
+| **桌面客户端** | Wails 图标启动 | UI 交互：提供原生 macOS / Windows / Linux 体验 |
+| **企业机器人** | `momapeer bot start` | 团队协作：企业微信 / 飞书等 IM 网关接入 |
+| **ACP 服务** | `momapeer acp` | 协议桥接：Agent Control Protocol 远程控制层 |
 
-## Install
+## 安装指南
 
-Current Release: **v0.1.0**
-
-```sh
-npm i -g momapeer                        # Any OS — pulls the prebuilt native binary
-brew install zzycxz/momapeer/momapeer    # macOS users
-```
-
-You can also download prebuilt archives (`darwin|linux|windows × amd64|arm64`) directly from [GitHub Releases](https://github.com/zzycxz/momapeer/releases).
-
-### Build from source
+当前版本：**v0.1.0**
 
 ```sh
-make build    # Output to bin/ directory
-make cross    # Cross-compile for 6 target platforms to dist/
+npm i -g momapeer                        # 任意系统——自动拉取对应平台的原生二进制
+brew install zzycxz/momapeer/momapeer    # macOS 用户
 ```
-*(Requires Go 1.25+)*
 
-## Quick Start & Configuration
+您也可以在 [GitHub Releases](https://github.com/zzycxz/momapeer/releases) 获取预编译归档文件（支持 `darwin|linux|windows × amd64|arm64`）。
+
+### 从源码编译
 
 ```sh
-momapeer setup                        # Configuration wizard → generates ./momapeer.toml
-export JIUTIAN_API_KEY=your-key-here  # Set your Jiutian platform API key (or add to .env)
-momapeer chat                         # Enter the interactive TUI, type /init to generate project context
-momapeer run "implement all TODOs in main.go"
-momapeer run --model moma/jiutian/jiutian-code-8b "add unit tests"
-echo "explain this code block" | momapeer run
+make build    # 编译到 bin/ 目录
+make cross    # 交叉编译至 dist/（生成 6 个目标平台二进制）
+```
+*(需安装 Go 1.25+)*
+
+## 快速上手与配置
+
+```sh
+momapeer setup                        # 启动配置向导 → 生成 ./momapeer.toml
+export JIUTIAN_API_KEY=your-key-here  # 设置九天平台密钥 (或写入 .env)
+momapeer chat                         # 进入交互终端，输入 /init 生成项目上下文
+momapeer run "实现 main.go 里的所有 TODO"
+momapeer run --model moma/jiutian/jiutian-code-8b "补充单元测试"
+echo "解释这段代码" | momapeer run
 ```
 
-## Connecting to China Mobile MoMA (九天)
+## 接入中国移动 MoMA（九天平台）
 
-[MoMA](https://jiutian.10086.cn) is China Mobile's enterprise-grade aggregated model platform, fully compatible with standard API protocols.
+[MoMA 平台](https://jiutian.10086.cn) 是中国移动打造的企业级聚合模型平台，全面兼容标准协议。
 
-### Step 1: Obtain an API Key
-1. Go to the [Jiutian Official Platform](https://jiutian.10086.cn) to register and log in.
-2. Navigate to **Key Management** (密钥管理) and create a new authentication key.
-3. Copy this key to use as your `JIUTIAN_API_KEY`.
+### 第一步：获取平台 API Key
+1. 前往 [九天官方平台](https://jiutian.10086.cn) 注册并登录。
+2. 进入 **密钥管理** 页面，创建您的专属鉴权密钥。
+3. 复制该密钥，作为环境变量 `JIUTIAN_API_KEY` 使用。
 
-### Step 2: Set the Environment Variable
+### 第二步：配置环境变量
 ```sh
 # Linux / macOS
-export JIUTIAN_API_KEY="your-real-api-key"
+export JIUTIAN_API_KEY="您的真实密钥"
 
 # Windows (PowerShell)
-$env:JIUTIAN_API_KEY = "your-real-api-key"
+$env:JIUTIAN_API_KEY = "您的真实密钥"
 ```
 
-### Step 3: Configure the Provider (`momapeer.toml`)
-Create or modify `momapeer.toml` in your project root:
+### 第三步：配置 Provider (`momapeer.toml`)
+在项目根目录创建或修改 `momapeer.toml`：
 
 ```toml
 default_model = "moma"
@@ -133,48 +134,48 @@ model       = "moma/jiutian/jiutian-lan-35b"
 api_key_env = "JIUTIAN_API_KEY"
 ```
 
-Once configured, simply run `momapeer chat` to experience the intelligent programming power of Jiutian models.
+完成配置后，只需执行 `momapeer chat`，即可开始体验九天大模型的智能编程赋能。
 
-> **💡 Pro Tip: Customizing AI Identity & Rules**
-> If you want the AI to better understand your team's development standards, you can create or modify `momapeer.md` in your project root to write down your specific rules and identity declarations. The AI will automatically read and follow these instructions in every conversation.
+> **💡 进阶技巧：定制 AI 身份与规范**
+> 如果你想让 AI 更懂你们团队的开发规范，可以在项目根目录创建或修改 `momapeer.md`，写上你的专属规则和身份声明。AI 会在每次对话时自动读取并遵循这些设定。
 
-### Recommended MoMA Models
+### MoMA 推荐模型
 
-In the `model` field, you can flexibly switch using the `provider/vendor/model-name` format. Recommended Jiutian models:
+在 `model` 字段中，支持使用 `provider/厂商/模型名` 灵活切换。九天平台专属推荐：
 
-| Model ID | Core Advantage | Best For |
+| 模型 ID | 核心优势 | 适用场景 |
 |---------|------|------|
-| `moma/jiutian/jiutian-lan-35b` | Strong comprehensive capability, rigorous logic | Core architecture design, complex analysis, primary coding |
-| `moma/jiutian/jiutian-code-8b` | Extremely fast response, code-specialized | Code snippet completion, quick refactoring, unit tests |
-| `moma/jiutian/jiutian-lan-8b` | Optimal balance of cost and speed | Documentation translation, simple text processing, routing |
+| `moma/jiutian/jiutian-lan-35b` | 综合能力强大，逻辑严密 | 核心架构设计、复杂需求分析、主力编码 |
+| `moma/jiutian/jiutian-code-8b` | 极速响应，代码专精 | 代码片段补全、快速重构、单元测试生成 |
+| `moma/jiutian/jiutian-lan-8b` | 成本与速度最优解 | 文档翻译、简单文本处理、快速指令路由 |
 
-> For the full list of available models, visit the [Jiutian Platform Console](https://jiutian.10086.cn). Switch models seamlessly by changing the `model` field — zero code changes required.
+> 完整模型列表请登录 [九天平台控制台](https://jiutian.10086.cn) 查看。只需修改 `model` 字段即可无缝热切换，零代码侵入。
 
-## Documentation Reference
+## 文档指引
 
-| Document | Contents |
+| 参考文档 | 涵盖内容 |
 |------|------|
-| **[Guide](./docs/GUIDE.md)** | Permissions, sandbox execution, MCP plugins, slash commands, `@` refs, dual-model setup |
-| **[Specification](./docs/SPEC.md)** | Engineering contract: architecture, registry mechanism, data types, and roadmap |
-| **[Checkpoints](./docs/CHECKPOINTS.md)** | Snapshot-based safety net for code modifications |
-| **[Session Architecture](./docs/SESSION_REFERENCE_ARCHITECTURE.md)** | Session lifecycle management, persistence, and seamless resumption |
-| **[Contributing](./CONTRIBUTING.md)** | Developer guide: Adding new tools, Providers, and custom bot channels |
-| **[Changelog](./CHANGELOG.md)** | Historical release records and feature iterations |
+| **[使用指南](./docs/GUIDE.zh-CN.md)** | 权限控制、沙盒运行、MCP 插件、终端斜杠命令、`@` 语法、双模型配置 |
+| **[架构规格](./docs/SPEC.md)** | 工程契约：系统架构、Registry 机制、数据类型约束与长期路线图 |
+| **[快照机制](./docs/CHECKPOINTS.md)** | 基于文件快照的代码修改安全网设计 |
+| **[Session 架构](./docs/SESSION_REFERENCE_ARCHITECTURE.md)** | 会话生命周期管理、状态持久化与无缝恢复机制 |
+| **[贡献指南](./CONTRIBUTING.md)** | 开发者必读：如何添加新工具、新 Provider 以及定制机器人通道 |
+| **[更新日志](./CHANGELOG.md)** | 历史发版记录与功能迭代 |
 
-## Core Architecture
+## 核心架构图
 
 ```
 Developer → CLI / Desktop / HTTP / Bot / ACP
              ↓
-             control.Controller  (Transport-agnostic session driver)
+             control.Controller  (传输协议无关的会话驱动层)
              ↓
-             agent.Agent         (ReAct loop core: think stream → tool dispatch → parse → …)
+             agent.Agent         (ReAct 循环核心: 思考流 → 工具调度 → 结果解析 → …)
              ↓
-             provider.Provider   (Connects to Jiutian LLMs via standard interfaces)
-             tool.Registry       (Execution sandbox: Native tools + MCP external plugins)
+             provider.Provider   (对接九天大模型等标准接口)
+             tool.Registry       (执行器沙盒：内置 Native 工具 + MCP 外挂插件)
 ```
 
-The project contains over 40 strictly decoupled internal packages. The dependency graph follows a strict, acyclic, one-way flow:
+项目包含 40 余个严格解耦的 Internal 包，依赖图谱遵循严格的无环单向流动：
 `cli → {agent, plugin, config} → {tool, provider}`
 
 
@@ -182,5 +183,5 @@ The project contains over 40 strictly decoupled internal packages. The dependenc
 ---
 
 <p align="center">
-  <sub>MIT License — see the <a href="./LICENSE">LICENSE</a> file for details.</sub>
+  <sub>MIT License —— 详情参见 <a href="./LICENSE">LICENSE</a> 文件。</sub>
 </p>
