@@ -10,23 +10,36 @@ permissions:
 
 jobs:
   build:
-    name: Build Desktop App
+    name: Build (${{ matrix.os }}, ${{ matrix.platform }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
-            platform: windows/amd64
-            args: ''
-            artifact: momapeer.exe
           - os: macos-latest
             platform: darwin/universal
-            args: ''
-            artifact: momapeer.app
+            artifact: momapeer-macos-universal.zip
+            binary_name: momapeer.app
+
+          - os: windows-latest
+            platform: windows/amd64
+            artifact: momapeer-windows-amd64.exe
+            binary_name: momapeer.exe
+
+          - os: windows-latest
+            platform: windows/arm64
+            artifact: momapeer-windows-arm64.exe
+            binary_name: momapeer.exe
+
           - os: ubuntu-22.04
             platform: linux/amd64
-            args: ''
-            artifact: momapeer
+            artifact: momapeer-linux-amd64
+            binary_name: momapeer
+
+          - os: ubuntu-24.04-arm
+            platform: linux/arm64
+            artifact: momapeer-linux-arm64
+            binary_name: momapeer
+
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -39,17 +52,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'pnpm'
-          cache-dependency-path: './desktop/frontend/pnpm-lock.yaml'
+
+      - name: Install pnpm
+        run: npm i -g pnpm
 
       - name: Install Linux Dependencies
         if: runner.os == 'Linux'
@@ -60,35 +69,25 @@ jobs:
 
       - name: Build Wails App
         working-directory: ./desktop
-        run: wails build -platform ${{ matrix.platform }} -clean ${{ matrix.args }}
-
-      - name: Rename Linux Artifact
-        if: runner.os == 'Linux'
-        working-directory: ./desktop/build/bin
-        run: mv momapeer momapeer-linux-amd64
+        run: wails build -platform ${{ matrix.platform }} -clean
 
       - name: Compress macOS app
         if: runner.os == 'macOS'
         working-directory: ./desktop/build/bin
-        run: zip -r momapeer-macos-universal.zip momapeer.app
+        run: zip -r ${{ matrix.artifact }} ${{ matrix.binary_name }}
 
-      - name: Upload Windows Artifact
-        if: runner.os == 'Windows'
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: ./desktop/build/bin/momapeer.exe
-
-      - name: Upload macOS Artifact
-        if: runner.os == 'macOS'
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: ./desktop/build/bin/momapeer-macos-universal.zip
-
-      - name: Upload Linux Artifact
+      - name: Rename Artifact (Linux)
         if: runner.os == 'Linux'
+        working-directory: ./desktop/build/bin
+        run: mv ${{ matrix.binary_name }} ${{ matrix.artifact }}
+
+      - name: Rename Artifact (Windows)
+        if: runner.os == 'Windows'
+        working-directory: ./desktop/build/bin
+        run: Rename-Item -Path "${{ matrix.binary_name }}" -NewName "${{ matrix.artifact }}"
+
+      - name: Upload Artifact
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: ./desktop/build/bin/momapeer-linux-amd64
+          files: ./desktop/build/bin/${{ matrix.artifact }}
