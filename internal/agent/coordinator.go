@@ -43,7 +43,8 @@ func PlannerPromptWithContext(context string) string {
 // Coordinator runs two models in separate sessions to keep each one's prompt
 // prefix cache-stable: a low-frequency planner proposes an approach, then the
 // executor (a full tool-using Agent) carries it out. The sessions never mix, so
-// neither model's prefix is disturbed by the other's turns.
+// neither model's prefix is disturbed by the other's turns. (MoMA currently does
+// not report cache tokens; the prefix stability still reduces token transmission.)
 type Coordinator struct {
 	planner        provider.Provider
 	plannerSess    *Session

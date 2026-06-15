@@ -56,11 +56,11 @@ function formatRate(hit: number, denom: number): string | null {
 }
 
 // nowRate is the SINGLE-TURN prompt cache-hit % (latest turn) — the higher,
-// steeper number on a non-compacting MoMA session. null when nothing yet.
+// steeper number on a non-compacting session. null when the provider does not
+// report cache tokens (e.g. MoMA currently omits these fields).
 function nowRate(u?: WireUsage): string | null {
   if (!u) return null;
-  let denom = u.cacheHitTokens + u.cacheMissTokens;
-  if (denom === 0) denom = u.promptTokens;
+  const denom = u.cacheHitTokens + u.cacheMissTokens;
   return formatRate(u.cacheHitTokens, denom);
 }
 
@@ -162,18 +162,22 @@ export function StatusBar({
         </Tooltip>
       </div>
       <div className="statusbar__group statusbar__group--primary">
+        {nowPct !== null && (
         <Tooltip label={t("status.cacheTitle")} className="statusbar__metric statusbar__metric--cache">
           <span className="stat statusbar__cache">
             <span className="stat__label stat__label--icon" aria-hidden="true"><Percent size={12} /></span>
-            <b className={rateValueClass(nowPct) || undefined}>{nowPct !== null ? `${nowPct}%` : "-"}</b>
+            <b className={rateValueClass(nowPct) || undefined}>{nowPct}%</b>
           </span>
         </Tooltip>
+        )}
+        {avgPct !== null && (
         <Tooltip label={t("status.cacheAvgTitle")} className="statusbar__metric statusbar__metric--avg">
           <span className="stat statusbar__avg">
             <span className="stat__label stat__label--icon" aria-hidden="true"><Activity size={12} /></span>
-            <b className={rateValueClass(avgPct) || undefined}>{avgPct !== null ? `${avgPct}%` : "-"}</b>
+            <b className={rateValueClass(avgPct) || undefined}>{avgPct}%</b>
           </span>
         </Tooltip>
+        )}
         <Tooltip label={t("status.sessionTokensTitle")} className="statusbar__metric statusbar__metric--tokens">
           <span className="stat statusbar__tokens">
             <span className="stat__label stat__label--icon" aria-hidden="true"><Database size={12} /></span>

@@ -4,22 +4,39 @@
 package builtinmcp
 
 import (
+	"os"
 	"os/exec"
 
 	"github.com/zzycxz/momapeer/internal/config"
 )
 
 const (
+	TimeName     = "time"
 	Context7Name = "context7"
 )
 
 // lookPath is indirected so tests can inject a fake PATH lookup.
 var lookPath = exec.LookPath
 
+// executablePath is indirected so tests can inject a fake executable path.
+var executablePath = func() string {
+	if path, err := os.Executable(); err == nil && path != "" {
+		return path
+	}
+	return "momapeer"
+}
+
 // Entries returns the built-in MCP servers that are always available. They use
 // the lazy tier so startup never blocks on package installation or network.
 func Entries() []config.PluginEntry {
 	return []config.PluginEntry{
+		{
+			Name:    TimeName,
+			Type:    "stdio",
+			Command: executablePath(),
+			Args:    []string{"builtin-mcp", TimeName},
+			Tier:    "lazy",
+		},
 		context7Entry(),
 	}
 }

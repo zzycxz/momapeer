@@ -4,7 +4,9 @@ import "context"
 
 // Queue receives a one-line note about a memory change a tool just made, so the
 // controller can fold it into the current turn — taking effect this session
-// without touching the cache-stable system prefix. The remember/forget tools
+// without touching the cache-stable system prefix. (MoMA currently does not
+// report cache tokens; the prefix stability still reduces token transmission.)
+// The remember/forget tools
 // read it from their call context the same way background tools read the job
 // manager.
 type Queue interface{ QueueMemory(note string) }

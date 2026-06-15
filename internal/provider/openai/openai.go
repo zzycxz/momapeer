@@ -502,6 +502,8 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 // top of usage; OpenAI and MoMA put it nested under prompt_tokens_details.
 // Whichever side reports non-zero wins; miss is derived when only hit is given.
 // Reasoning tokens land in completion_tokens_details on thinking-mode models.
+// Note: MoMA currently does not report cache tokens (both fields are 0); the
+// normalisation logic is kept for future cache support and for other providers.
 func normaliseUsage(u *wireUsage) *provider.Usage {
 	hit := u.PromptCacheHitTokens
 	miss := u.PromptCacheMissTokens

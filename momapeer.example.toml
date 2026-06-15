@@ -52,7 +52,7 @@ models      = ["qwen/qwen3.6-35b", "qwen/qwen3.6-27b"]
 default     = "qwen/qwen3.6-35b"   # optional; defaults to the first of `models`
 api_key_env = "JIUTIAN_API_KEY"
 context_window = 200000
-price       = { cache_hit = 0.02, input = 1, output = 2, currency = "¥" }   # per 1M tokens
+price       = { cache_hit = 0, input = 1, output = 2, currency = "¥" }   # per 1M tokens (MoMA does not report cache tokens)
 # MoMA thinking is always on; effort: high | max. Omit for auto (provider default).
 effort      = "high"
 

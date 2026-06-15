@@ -247,8 +247,9 @@ func TestStreamRepairsDanglingToolCalls(t *testing.T) {
 	}
 }
 
-// TestNormaliseUsageMoMAShape covers MoMA's top-level cache fields.
-func TestNormaliseUsageMoMAShape(t *testing.T) {
+// TestNormaliseUsageTopLevelCacheShape covers top-level cache_hit/miss_tokens
+// fields used by some OpenAI-compatible providers (e.g. DeepSeek).
+func TestNormaliseUsageTopLevelCacheShape(t *testing.T) {
 	u := normaliseUsage(&wireUsage{
 		PromptTokens:          1000,
 		CompletionTokens:      200,
@@ -257,11 +258,25 @@ func TestNormaliseUsageMoMAShape(t *testing.T) {
 		PromptCacheMissTokens: 100,
 	})
 	if u.CacheHitTokens != 900 || u.CacheMissTokens != 100 {
-		t.Errorf("MoMA-shape cache fields lost: hit=%d miss=%d", u.CacheHitTokens, u.CacheMissTokens)
+		t.Errorf("top-level cache fields lost: hit=%d miss=%d", u.CacheHitTokens, u.CacheMissTokens)
 	}
 }
 
-// TestNormaliseUsageMoMAShape covers the nested prompt_tokens_details /
+// TestNormaliseUsageMoMANoCacheFields covers MoMA's current wire shape where no
+// cache token fields are present — hit and miss must remain zero.
+func TestNormaliseUsageMoMANoCacheFields(t *testing.T) {
+	u := normaliseUsage(&wireUsage{
+		PromptTokens:     1000,
+		CompletionTokens: 200,
+		TotalTokens:      1200,
+	})
+	if u.CacheHitTokens != 0 || u.CacheMissTokens != 0 {
+		t.Errorf("MoMA without cache fields should leave cache split zero: hit=%d miss=%d",
+			u.CacheHitTokens, u.CacheMissTokens)
+	}
+}
+
+// TestNormaliseUsageNestedCacheShape covers the nested prompt_tokens_details /
 // completion_tokens_details path used by OpenAI and MoMA. Miss is derived
 // from prompt - hit when only hit is provided.
 

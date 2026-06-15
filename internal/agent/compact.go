@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,8 +16,9 @@ import (
 )
 
 // Compaction is a low-frequency cache-reset point: the prompt grows append-only
-// (high cache hits) until a turn nears compactRatio of the window, then it is
-// compacted down to a tail budget. The budget is a fixed token count, not a
+// until a turn nears compactRatio of the window, then it is compacted down to a
+// tail budget. (MoMA currently does not report cache tokens; the prefix stability
+// still reduces token transmission and prepares for future cache support.) The budget is a fixed token count, not a
 // fraction of the window, so a huge window still compacts rarely while a small
 // one still lands below the trigger (which is what stops the re-compaction loop).
 const (
@@ -237,10 +239,14 @@ func (a *Agent) compact(ctx context.Context, trigger, instructions string, force
 	// so its structured "user facts & constraints" section consolidates what the
 	// user said into one tidy view — redundant with the verbatim turns by design,
 	// so a weak summarizer dropping a fact here loses nothing.
-	summary, err := a.summarize(ctx, region, instructions)
+	summary, err := a.summarizeWithRetry(ctx, region, instructions)
 	if err != nil {
-		a.emitCompactionAborted(trigger)
-		return err
+		// Summarizer unreachable after retry — use a mechanical fold digest
+		// instead of aborting. The region is already archived, so context is
+		// freed either way; the digest just won't be as useful.
+		summary = mechanicalFoldDigest(len(fold), archived)
+		a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
+			Text: fmt.Sprintf("compaction: summarizer failed (%v); using mechanical fold", err)})
 	}
 
 	compacted := make([]provider.Message, 0, head+len(kept)+1+len(msgs)-start)
@@ -373,12 +379,15 @@ func (a *Agent) pinnableUserTurn(m provider.Message) bool {
 	return int(float64(msgChars(m))*a.tokPerChar()) <= budget
 }
 
-// partitionFold splits a compaction region into the small user turns kept verbatim
-// (the deterministic floor — a fact the user stated is never summarized away) and
-// the rest, which folds into the digest. Order within each group is preserved.
+// partitionFold splits a compaction region into messages kept verbatim and the
+// rest, which folds into the digest. Kept messages are: small user turns (the
+// deterministic floor — a fact the user stated is never summarized away) and
+// prior compaction summaries (so a later fold never re-summarizes an earlier
+// digest, preventing the information-drift that silently dropped user-stated
+// facts after the second compaction). Order within each group is preserved.
 func (a *Agent) partitionFold(region []provider.Message) (kept, fold []provider.Message) {
 	for _, m := range region {
-		if m.Role == provider.RoleUser && !isCompactionSummary(m) && a.pinnableUserTurn(m) {
+		if isCompactionSummary(m) || (m.Role == provider.RoleUser && a.pinnableUserTurn(m)) {
 			kept = append(kept, m)
 		} else {
 			fold = append(fold, m)
@@ -519,6 +528,29 @@ func (a *Agent) summarize(ctx context.Context, region []provider.Message, instru
 		return "", fmt.Errorf("summarizer returned empty output")
 	}
 	return s, nil
+}
+
+// summarizeWithRetry retries the summarizer once on non-terminal errors (network
+// hiccups, transient 5xx) before giving up. Context cancellation and deadline
+// errors are not retried — those are intentional aborts.
+func (a *Agent) summarizeWithRetry(ctx context.Context, fold []provider.Message, instructions string) (string, error) {
+	summary, err := a.summarize(ctx, fold, instructions)
+	if err == nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return summary, err
+	}
+	return a.summarize(ctx, fold, instructions)
+}
+
+// mechanicalFoldDigest is the deterministic stand-in used when the summarizer is
+// unreachable after retry: the foldable region is already archived, so the
+// digest just notes the gap and points the model at the user for anything it
+// needs from before it.
+func mechanicalFoldDigest(n int, archive string) string {
+	where := "."
+	if archive != "" {
+		where = " (archived to " + archive + ")."
+	}
+	return fmt.Sprintf("%d earlier message(s) were folded here to free context, but the automatic summary was unavailable%s Ask the user if you need details from before this point.", n, where)
 }
 
 // renderTranscript flattens messages into a readable transcript for summarization.

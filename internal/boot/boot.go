@@ -162,6 +162,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Output style: fold the selected persona/tone block into the base prompt
 	// before language/memory/skills append, so a "replace" style (keep-coding
 	// false) still keeps those. Applied once, into the cache-stable prefix.
+	// (MoMA currently does not report cache tokens; the prefix stability still helps.)
 	if st, ok := outputstyle.Resolve(cfg.Agent.OutputStyle, outputstyle.Dirs()); ok {
 		sysPrompt = outputstyle.Apply(sysPrompt, st)
 	}

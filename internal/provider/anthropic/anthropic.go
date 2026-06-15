@@ -191,7 +191,17 @@ func (c *client) buildRequest(req provider.Request) anthRequest {
 				system = append(system, textBlock{Type: "text", Text: textContent})
 			}
 		case provider.RoleUser:
-			if textContent != "" {
+			// Multimodal: extract image parts from []ContentPart if present.
+			if imgs := provider.ImageParts(m.Content); len(imgs) > 0 {
+				if textContent != "" {
+					appendBlocks("user", contentBlock{Type: "text", Text: textContent})
+				}
+				for _, img := range imgs {
+					if mt, data, ok := provider.ParseImageDataURL(img.ImageURL.URL); ok {
+						appendBlocks("user", contentBlock{Type: "image", Source: &imageSource{Type: "base64", MediaType: mt, Data: data}})
+					}
+				}
+			} else if textContent != "" {
 				appendBlocks("user", contentBlock{Type: "text", Text: textContent})
 			}
 		case provider.RoleTool:
@@ -484,8 +494,8 @@ type anthMessage struct {
 }
 
 // contentBlock is the union of the block kinds we emit in a request: text,
-// tool_use (echoing a prior assistant call), and tool_result. Unused fields are
-// omitted so each block serialises to its canonical shape.
+// tool_use (echoing a prior assistant call), tool_result, and image. Unused
+// fields are omitted so each block serialises to its canonical shape.
 type contentBlock struct {
 	Type         string          `json:"type"`
 	Text         string          `json:"text,omitempty"`        // text
@@ -496,7 +506,14 @@ type contentBlock struct {
 	Input        json.RawMessage `json:"input,omitempty"`       // tool_use
 	ToolUseID    string          `json:"tool_use_id,omitempty"` // tool_result
 	Content      string          `json:"content,omitempty"`     // tool_result
+	Source       *imageSource    `json:"source,omitempty"`      // image
 	CacheControl *cacheControl   `json:"cache_control,omitempty"`
+}
+
+type imageSource struct {
+	Type      string `json:"type"` // "base64"
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
 }
 
 type anthTool struct {

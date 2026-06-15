@@ -163,7 +163,8 @@ type Controller struct {
 	// memory edit) that haven't yet been folded into a turn. Compose drains it
 	// onto the next outgoing turn — never into the cache-stable system prefix — so
 	// a fresh memory takes effect this session without busting the prompt cache;
-	// it joins the prefix naturally on the next session.
+	// it joins the prefix naturally on the next session. (MoMA currently does not
+	// report cache tokens; the prefix stability still reduces token transmission.)
 	pendingMemory []string
 
 	displayRecorder func(content, display string)
@@ -1984,7 +1985,8 @@ func (c *Controller) LastUsage() *provider.Usage {
 
 // SessionCache returns cumulative cache hit/miss prompt tokens for the session,
 // so a frontend can render the aggregate (session-wide) cache-hit rate — steadier
-// than the single-turn rate and unaffected by compaction.
+// than the single-turn rate and unaffected by compaction. MoMA currently does not
+// report cache tokens, so this returns zeros for MoMA providers.
 func (c *Controller) SessionCache() (hit, miss int) {
 	if c.executor == nil {
 		return 0, 0

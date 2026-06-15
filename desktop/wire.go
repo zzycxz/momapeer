@@ -83,6 +83,7 @@ type wireUsage struct {
 	CacheDiagnostics *wireCacheDiagnostics `json:"cacheDiagnostics,omitempty"`
 	// Session-cumulative cache tokens — the status line shows the aggregate
 	// hit-rate Σhit/Σ(hit+miss), steadier than the single-turn CacheHitTokens.
+	// MoMA currently does not report cache tokens, so these stay at 0.
 	SessionCacheHitTokens  int     `json:"sessionCacheHitTokens"`
 	SessionCacheMissTokens int     `json:"sessionCacheMissTokens"`
 	Cost                   float64 `json:"cost,omitempty"`

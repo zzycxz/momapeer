@@ -124,6 +124,43 @@ func ImageContent(text string, imageURLs ...string) any {
 	return parts
 }
 
+// ParseImageDataURL splits a "data:image/png;base64,AAAA..." data URL into its
+// MIME type and raw base64 payload. Returns ("", "", false) when the prefix is
+// not a valid data URL.
+func ParseImageDataURL(dataURL string) (mediaType, base64Data string, ok bool) {
+	const prefix = "data:"
+	if !strings.HasPrefix(dataURL, prefix) {
+		return "", "", false
+	}
+	rest := dataURL[len(prefix):]
+	idx := strings.Index(rest, ";base64,")
+	if idx < 0 {
+		return "", "", false
+	}
+	mediaType = rest[:idx]
+	base64Data = rest[idx+len(";base64,"):]
+	if mediaType == "" || base64Data == "" {
+		return "", "", false
+	}
+	return mediaType, base64Data, true
+}
+
+// ImageParts extracts image ContentParts from a multimodal Content value.
+// Returns nil when Content is a plain string or contains no images.
+func ImageParts(content any) []ContentPart {
+	parts, ok := content.([]ContentPart)
+	if !ok {
+		return nil
+	}
+	var imgs []ContentPart
+	for _, p := range parts {
+		if p.Type == "image_url" && p.ImageURL != nil && p.ImageURL.URL != "" {
+			imgs = append(imgs, p)
+		}
+	}
+	return imgs
+}
+
 // ToolCall is a tool invocation requested by the model. Arguments is raw JSON.
 type ToolCall struct {
 	ID        string `json:"id"`
@@ -332,7 +369,9 @@ const (
 // Usage reports token accounting for a completion. Cache hit/miss come from
 // either MoMA's top-level prompt_cache_{hit,miss}_tokens or the OpenAI/MoMA
 // standard prompt_tokens_details.cached_tokens — the openai provider normalises
-// both shapes into these fields. ReasoningTokens is the thinking-mode subset of
+// both shapes into these fields. Note: MoMA currently does not report cache
+// tokens (both fields stay 0); the normalisation is kept for future support.
+// ReasoningTokens is the thinking-mode subset of
 // CompletionTokens reported by thinking-capable models. FinishReason carries
 // the model's last reported choices[0].finish_reason so the agent can surface
 // abnormal terminations ("length", "content_filter", "repetition_truncation").
@@ -360,9 +399,14 @@ func (p *Pricing) Cost(u *Usage) float64 {
 	if p == nil || u == nil {
 		return 0
 	}
-	return (float64(u.CacheHitTokens)*p.CacheHit +
-		float64(u.CacheMissTokens)*p.Input +
-		float64(u.CompletionTokens)*p.Output) / 1e6
+	promptCost := float64(u.CacheHitTokens)*p.CacheHit + float64(u.CacheMissTokens)*p.Input
+	// When the provider reports no cache split (both zero), treat all prompt
+	// tokens as full-price input — the cost is non-zero even when caching is
+	// unavailable or unreported (e.g. MoMA currently omits cache fields).
+	if promptCost == 0 && u.PromptTokens > 0 {
+		promptCost = float64(u.PromptTokens) * p.Input
+	}
+	return (promptCost + float64(u.CompletionTokens)*p.Output) / 1e6
 }
 
 // Symbol returns the currency display symbol, defaulting to "¥".

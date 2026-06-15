@@ -29,6 +29,7 @@ type probeResult struct {
 //
 // Run with:  set -a; source .env; set +a; go test ./internal/provider/openai/ -run TestRealMoMACacheProbe -v -count=1
 func TestRealMoMACacheProbe(t *testing.T) {
+	t.Skip("MoMA does not report prompt cache tokens — cache probe is meaningless")
 	key := os.Getenv("JIUTIAN_API_KEY")
 	if key == "" {
 		t.Skip("JIUTIAN_API_KEY not set — skipping live probe")

@@ -62,7 +62,8 @@ func (m *metricsAggregator) inc(signal, bucket string) {
 }
 
 // observe maps one event to counter increments, reading only enumerated facts
-// (finish reason, error class, cache-hit bucket) — never message text.
+// (finish reason, error class, cache-hit bucket) — never message text. MoMA
+// currently does not report cache tokens, so cache buckets stay at "0_0".
 func (m *metricsAggregator) observe(e event.Event) {
 	switch e.Kind {
 	case event.Usage:

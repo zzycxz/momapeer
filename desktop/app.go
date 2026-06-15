@@ -28,6 +28,7 @@ import (
 
 	"github.com/zzycxz/momapeer/internal/agent"
 	"github.com/zzycxz/momapeer/internal/billing"
+	"github.com/zzycxz/momapeer/internal/builtinmcp"
 	"github.com/zzycxz/momapeer/internal/boot"
 	"github.com/zzycxz/momapeer/internal/config"
 	"github.com/zzycxz/momapeer/internal/control"
@@ -2224,6 +2225,25 @@ func (a *App) Capabilities() CapabilitiesView {
 			}
 			seen["codegraph"] = true
 		}
+		for _, p := range builtinmcp.Entries() {
+			if configured[p.Name].Name != "" || seen[p.Name] {
+				continue
+			}
+			enabled := builtInMCPEnabled(loadedCfg, p.Name)
+			if s, ok := disabled[p.Name]; ok {
+				s.Status = "disabled"
+				s = withBuiltInMCPConfig(s, p, enabled)
+				s.Error = ""
+				out.Servers = append(out.Servers, s)
+				retainedDisabled[p.Name] = s
+				delete(disabled, p.Name)
+			} else if enabled {
+				out.Servers = append(out.Servers, withBuiltInMCPConfig(ServerView{Name: p.Name, Status: "deferred"}, p, true))
+			} else {
+				out.Servers = append(out.Servers, withBuiltInMCPConfig(ServerView{Name: p.Name, Status: "disabled"}, p, false))
+			}
+			seen[p.Name] = true
+		}
 	}
 	out.Servers = orderServerViews(out.Servers, order)
 
@@ -2281,6 +2301,20 @@ func withCodegraphConfig(v ServerView, c config.CodegraphConfig) ServerView {
 	v.Tier = c.ResolvedTier()
 	v.AuthStatus = mcpdiag.AuthNone
 	return v
+}
+
+func withBuiltInMCPConfig(v ServerView, p config.PluginEntry, enabled bool) ServerView {
+	v = withPluginConfig(v, p)
+	v.Name = p.Name
+	v.BuiltIn = true
+	v.Configured = true
+	v.AutoStart = enabled
+	v.AuthStatus = mcpdiag.AuthNone
+	return v
+}
+
+func builtInMCPEnabled(cfg *config.Config, name string) bool {
+	return cfg != nil && cfg.BuiltInMCP.Enabled(name)
 }
 
 func skillRootsView() []SkillRootView {
@@ -2671,6 +2705,14 @@ func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
 	if name == "codegraph" {
 		return a.setCodegraphEnabled(enabled)
 	}
+	configuredEntry, hasConfiguredEntry, err := a.desktopMCPServerForEdit(name)
+	if err != nil {
+		return err
+	}
+	if builtinmcp.IsBuiltIn(name) && !hasConfiguredEntry {
+		return a.setBuiltinMCPEnabled(name, enabled)
+	}
+	_ = configuredEntry
 	if enabled {
 		_, err := a.connectConfiguredMCPServerForTab(tab, name)
 		if err == nil {
@@ -2789,6 +2831,74 @@ func (a *App) setCodegraphEnabled(enabled bool) error {
 	tab.mcpOrder = mergeServerOrder(tab.mcpOrder, []ServerView{s})
 	a.mu.Unlock()
 	return nil
+}
+
+// setBuiltinMCPEnabled toggles a built-in MCP server (e.g. context7) on or off.
+// It persists the change to the user config and connects/disconnects for the
+// current session, following the same pattern as setCodegraphEnabled.
+func (a *App) setBuiltinMCPEnabled(name string, enabled bool) error {
+	entry, ok := builtinmcp.Entry(name)
+	if !ok {
+		return fmt.Errorf("no built-in MCP server named %q", name)
+	}
+	cfg, path, err := a.loadDesktopUserConfigForEdit()
+	if err != nil {
+		return err
+	}
+	if !cfg.BuiltInMCP.SetEnabled(name, enabled) {
+		return fmt.Errorf("no built-in MCP server named %q", name)
+	}
+	tab := a.activeTab()
+	if tab == nil || tab.Ctrl == nil {
+		return fmt.Errorf("no active session")
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		return err
+	}
+	if err := a.syncProjectBuiltInMCPOverride(cfg.BuiltInMCP); err != nil {
+		return err
+	}
+	if enabled {
+		a.mu.Lock()
+		delete(tab.disabledMCP, name)
+		a.mu.Unlock()
+		_, err := tab.Ctrl.ConnectMCPServer(entry)
+		if err != nil {
+			recordMCPFailure(tab.Ctrl, entry, err)
+			return nil
+		}
+		return nil
+	}
+	if h := tab.Ctrl.Host(); h != nil {
+		h.ClearFailure(name)
+	}
+	tab.Ctrl.DisconnectMCPServer(name)
+	s := withBuiltInMCPConfig(ServerView{Name: name, Status: "disabled"}, entry, false)
+	a.mu.Lock()
+	if tab.disabledMCP == nil {
+		tab.disabledMCP = map[string]ServerView{}
+	}
+	tab.disabledMCP[name] = s
+	tab.mcpOrder = mergeServerOrder(tab.mcpOrder, []ServerView{s})
+	a.mu.Unlock()
+	return nil
+}
+
+func (a *App) syncProjectBuiltInMCPOverride(c config.BuiltInMCPConfig) error {
+	path := projectConfigPathForRoot(a.activeWorkspaceRoot())
+	userPath := config.UserConfigPath()
+	if path == "" || sameConfigPath(path, userPath) {
+		return nil
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	cfg := config.LoadForEdit(path)
+	cfg.BuiltInMCP = c
+	return cfg.SaveTo(path)
 }
 
 func (a *App) setCodegraphTier(_ string) error {

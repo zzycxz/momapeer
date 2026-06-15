@@ -87,7 +87,7 @@ type chatTUI struct {
 
 	// planMode mirrors the agent's read-only gate (Shift+Tab toggles it). The
 	// marker rides in outgoing user messages so the cache-stable prompt prefix is
-	// left untouched.
+	// left untouched. (MoMA currently does not report cache tokens.)
 	planMode bool
 	// yoloRestoreToolApprovalMode remembers the Ask/Auto base mode that Ctrl+Y
 	// should restore after a desktop-style YOLO toggle.

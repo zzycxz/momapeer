@@ -21,10 +21,16 @@ mem.prof
 /desktop/build/bin/
 /desktop/build/obj/
 /desktop/desktop
+/desktop/desktop.exe
+/desktop/keys/
 /desktop/frontend/dist/*
 !/desktop/frontend/dist/.gitkeep
 /desktop/frontend/wailsjs/
 /desktop/frontend/package.json.md5
+
+# Local test / benchmark outputs
+jobs_latest.json
+runs_latest.json
 
 # Environment / local config (momapeer.example.toml is the shared template)
 .env

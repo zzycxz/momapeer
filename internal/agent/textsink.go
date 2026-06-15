@@ -195,7 +195,11 @@ func FormatUsageLine(u *provider.Usage, p *provider.Pricing, d *event.CacheDiagn
 				fresh = d
 			}
 		}
-		cacheCol = fmt.Sprintf(" (%d cached / %d new)", cached, fresh)
+		// Only show cache column when the provider actually reports cache
+		// tokens — MoMA currently omits these fields, so both are 0.
+		if cached > 0 || fresh > 0 {
+			cacheCol = fmt.Sprintf(" (%d cached / %d new)", cached, fresh)
+		}
 	}
 	reasoning := ""
 	if u.ReasoningTokens > 0 {

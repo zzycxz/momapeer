@@ -55,6 +55,7 @@ export interface WireUsage {
   reasoningTokens?: number;
   // Session-cumulative cache tokens — the status bar shows the aggregate
   // hit-rate (Σhit/Σ(hit+miss)), steadier than the single-turn cacheHitTokens.
+  // MoMA currently does not report these fields, so they remain 0.
   sessionCacheHitTokens: number;
   sessionCacheMissTokens: number;
   cost?: number;

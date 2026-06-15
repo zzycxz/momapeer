@@ -6,7 +6,8 @@ import (
 )
 
 // IndexMaxChars caps the pinned skills-index block so it can't bloat the
-// cache-stable system-prompt prefix; bodies never enter the prefix.
+// cache-stable system-prompt prefix; bodies never enter the prefix. (MoMA
+// currently does not report cache tokens; the prefix stability still helps.)
 const IndexMaxChars = 4000
 
 const missingDescPlaceholder = `(no description — frontmatter is missing a "description:" line; tell the user to add one)`

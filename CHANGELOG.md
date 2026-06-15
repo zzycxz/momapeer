@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.1.5] — 2026-06-15
+
+### Added
+
+- **Time MCP server**：新增内置时间查询 MCP server（纯 Go 实现，零外部依赖），
+  提供 `get_current_time` 和 `convert_time` 两个工具，支持 IANA 时区查询与转换。
+  默认启用，通过 `momapeer builtin-mcp time` 子命令以 stdio 方式运行。
+- **Built-in MCP toggle 支持**：Desktop MCP 面板现在正确展示所有 built-in MCP server
+  （time、Context7），并支持通过 toggle 开关启用/禁用，变更同步持久化到用户配置。
+
+### Fixed
+
+- **计费缺失修复**：MoMA 不返回 `prompt_cache_hit/miss_tokens` 时，prompt token
+  成本从 0 恢复为按全价 (`Input`) 计费，修复了 MoMA 场景下会话费用始终为 0 的 bug。
+- **CLI usage line 误导修复**：MoMA 下不再显示无意义的 `(0 cached / N new)`，
+  当 provider 不报告 cache split 时隐藏该列。
+- **Desktop StatusBar 误导修复**：MoMA 下 cache hit rate 从错误的 `0.00%` 改为正确的 `-`。
+- **grep 工具 goroutine 泄漏修复**：非 UTF-8 文件 grep 在达到匹配上限时，
+  `io.Pipe` 读端未关闭导致 writer goroutine 永久阻塞，现已加 `defer pr.Close()`。
+- **Context7 MCP 前端不显示修复**：`Capabilities()` 方法缺少 built-in MCP entries
+  遍历逻辑，导致 Context7 即使在配置中启用也不会出现在 Desktop MCP 面板中。
+  现对齐 DeepSeek-Reasonix 实现，遍历 `builtinmcp.Entries()` 展示所有 built-in server。
+
+### Changed
+
+- **Dead code 清理**：删除未使用的 `internal/inspect/` 包（CLI 和 desktop 各有独立的
+  能力投影逻辑，该包从未被引用）和未使用的前端组件 `InlineDiff.tsx`。
+- **Cache token 报告降级为 optional**：移除 "MoMA 一定会返回 cache token" 的假设，
+  prefix 稳定性架构保留（减少 token 传输、为未来 cache 做准备）。
+- **计费公式统一**：`run_metrics.go` 内联公式改为调用 `p.Cost(u)`，消除重复代码。
+- **Cache e2e 测试降级**：`cachehit_e2e_test.go` 和 `realcache_test.go` 改为 opt-in，
+  MoMA 下自动 skip。
+- **配置文件修正**：`momapeer.example.toml` 中 MoMA 的 `cache_hit` 从 `0.02` 改为 `0`。
+- **前端 mock 数据对齐**：browser dev mock 的 cache token 改为 0，贴近 MoMA 现实。
+- **前端 locale 文案更新**：cache 相关 tooltip 明确标注 "Provider 返回时" / "when reported by the provider"。
+- **源码注释更新**：~20 个文件的 cache 相关注释补充 MoMA 说明，便于后续维护者理解设计意图。
+
 ## [0.1.0] — 2026-06-14
 
 **momapeer 初始化版本** — 对中国移动 MoMA（九天）聚合模型平台进行适配，启动二次开发。

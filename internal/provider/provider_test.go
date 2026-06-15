@@ -168,6 +168,24 @@ func TestPricingCostCalculation(t *testing.T) {
 	}
 }
 
+func TestPricingCostNoCacheInfo(t *testing.T) {
+	// MoMA currently does not report cache tokens (both fields are 0).
+	// Prompt tokens must still be billed at Input price.
+	p := &Pricing{CacheHit: 0.02, Input: 1.0, Output: 2.0}
+	u := &Usage{
+		PromptTokens:     1000,
+		CompletionTokens: 200,
+		CacheHitTokens:   0,
+		CacheMissTokens:  0,
+	}
+	// Expected: (1000 * 1.0 + 200 * 2.0) / 1M = 0.0014
+	got := p.Cost(u)
+	want := (1000*1.0 + 200*2.0) / 1e6
+	if got != want {
+		t.Errorf("Cost = %f, want %f", got, want)
+	}
+}
+
 func TestPricingCostZeroTokens(t *testing.T) {
 	p := &Pricing{Input: 2.0, Output: 10.0}
 	u := &Usage{}
@@ -361,5 +379,78 @@ func TestMockProviderImplementsInterface(t *testing.T) {
 	got := <-ch
 	if got.Type != ChunkDone {
 		t.Errorf("Chunk.Type = %d, want ChunkDone", got.Type)
+	}
+}
+
+// --- ParseImageDataURL ---
+
+func TestParseImageDataURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		url       string
+		wantMT    string
+		wantData  string
+		wantOK    bool
+	}{
+		{"png", "data:image/png;base64,iVBORw0KGgo=", "image/png", "iVBORw0KGgo=", true},
+		{"jpeg", "data:image/jpeg;base64,/9j/4AAQ=", "image/jpeg", "/9j/4AAQ=", true},
+		{"gif", "data:image/gif;base64,R0lGODlhAQAB=", "image/gif", "R0lGODlhAQAB=", true},
+		{"webp", "data:image/webp;base64,UklGRkA=", "image/webp", "UklGRkA=", true},
+		{"empty data", "data:image/png;base64,", "", "", false},
+		{"no base64", "data:image/png;utf8,hello", "", "", false},
+		{"not data url", "https://example.com/img.png", "", "", false},
+		{"empty string", "", "", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mt, data, ok := ParseImageDataURL(tt.url)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if mt != tt.wantMT {
+				t.Errorf("mediaType = %q, want %q", mt, tt.wantMT)
+			}
+			if data != tt.wantData {
+				t.Errorf("data = %q, want %q", data, tt.wantData)
+			}
+		})
+	}
+}
+
+// --- ImageParts ---
+
+func TestImagePartsExtractsMultipleImages(t *testing.T) {
+	content := ImageContent("看看这三张图",
+		"data:image/png;base64,aaa=",
+		"data:image/jpeg;base64,bbb=",
+		"data:image/gif;base64,ccc=",
+	)
+	imgs := ImageParts(content)
+	if len(imgs) != 3 {
+		t.Fatalf("ImageParts returned %d images, want 3", len(imgs))
+	}
+	wantMT := []string{"image/png", "image/jpeg", "image/gif"}
+	for i, img := range imgs {
+		mt, _, ok := ParseImageDataURL(img.ImageURL.URL)
+		if !ok {
+			t.Errorf("image %d: ParseImageDataURL failed", i)
+		}
+		if mt != wantMT[i] {
+			t.Errorf("image %d: mediaType = %q, want %q", i, mt, wantMT[i])
+		}
+	}
+}
+
+func TestImagePartsTextOnly(t *testing.T) {
+	imgs := ImageParts("just text")
+	if len(imgs) != 0 {
+		t.Errorf("ImageParts(text) returned %d images, want 0", len(imgs))
+	}
+}
+
+func TestImagePartsNil(t *testing.T) {
+	imgs := ImageParts(nil)
+	if len(imgs) != 0 {
+		t.Errorf("ImageParts(nil) returned %d images, want 0", len(imgs))
 	}
 }

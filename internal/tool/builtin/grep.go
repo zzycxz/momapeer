@@ -118,6 +118,8 @@ func (g grepTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 			dec := fileenc.Decoder(enc)
 			if dec != nil {
 				pr, pw := io.Pipe()
+				defer pr.Close() // close read end when the caller stops reading
+				// (e.g. grepMaxMatches reached); this unblocks the writer goroutine.
 				go func() {
 					_, _ = pw.Write(peek)
 					io.Copy(pw, f) //nolint:errcheck
