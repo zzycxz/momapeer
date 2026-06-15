@@ -16,8 +16,15 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            platform: darwin/universal
-            artifact: momapeer-macos-universal.zip
+            platform: darwin/amd64
+            artifact: momapeer-macos-intel.zip
+            binary_name: momapeer.app
+            apt_deps: ''
+            build_args: ''
+
+          - os: macos-latest
+            platform: darwin/arm64
+            artifact: momapeer-macos-silicon.zip
             binary_name: momapeer.app
             apt_deps: ''
             build_args: ''
@@ -49,6 +56,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup MSYS2 (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+          update: true
+
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
@@ -61,7 +76,7 @@ jobs:
           node-version: 22
 
       - name: Install pnpm
-        run: npm i -g pnpm
+        run: npm i -g pnpm@9
 
       - name: Install Linux Dependencies
         if: startsWith(matrix.os, 'ubuntu')
@@ -70,17 +85,9 @@ jobs:
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
-      - name: Build Frontend Manually
-        working-directory: ./desktop
-        run: |
-          wails generate module
-          cd frontend
-          pnpm install
-          pnpm build
-
       - name: Build Wails App
         working-directory: ./desktop
-        run: wails build -platform ${{ matrix.platform }} -clean -skip-frontend ${{ matrix.build_args }}
+        run: wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }}
 
       - name: Compress macOS app
         if: runner.os == 'macOS'
