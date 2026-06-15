@@ -63,13 +63,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup MSYS2 (Windows)
-        if: runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          install: mingw-w64-x86_64-gcc
-          update: true
+
 
       - name: Setup LLVM-MinGW (Windows ARM64)
         if: matrix.platform == 'windows/arm64'
@@ -106,12 +100,12 @@ jobs:
         env:
           CC: aarch64-w64-mingw32-gcc
           CXX: aarch64-w64-mingw32-g++
-        run: wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }}
+        run: wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }} -v 2
 
       - name: Build Wails App (Others)
         if: matrix.platform != 'windows/arm64'
         working-directory: ./desktop
-        run: wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }}
+        run: wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }} -v 2
 
       - name: Compress macOS app
         if: runner.os == 'macOS'
