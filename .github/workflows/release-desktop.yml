@@ -143,3 +143,47 @@ jobs:
           name: momapeer ${{ github.ref_name }}
           generate_release_notes: ${{ matrix.platform == 'linux/amd64' }}
           files: ./desktop/build/bin/${{ matrix.artifact }}
+
+  manifest:
+    name: Generate Auto-Updater Manifest
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download all artifacts from the release
+        run: |
+          mkdir -p release-assets
+          gh release download ${{ github.ref_name }} --dir release-assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign artifacts
+        env:
+          MINISIGN_PRIVATE_KEY: ${{ secrets.MINISIGN_PRIVATE_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          if [ -z "$MINISIGN_PRIVATE_KEY" ] || [ -z "$MINISIGN_PASSWORD" ]; then
+            echo "Error: MINISIGN_PRIVATE_KEY or MINISIGN_PASSWORD secret is missing in repository settings!"
+            exit 1
+          fi
+          go run ./desktop/cmd/sign sign release-assets/*
+
+      - name: Generate Manifest
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#desktop-}"
+          go run ./desktop/cmd/sign manifest release-assets "$VERSION" "${{ github.ref_name }}"
+
+      - name: Upload Manifest and Signatures
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-assets/latest.json
+            release-assets/*.minisig
