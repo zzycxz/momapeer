@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/zzycxz/momapeer/internal/agent"
+	"github.com/zzycxz/momapeer/internal/builtinmcp"
 	"github.com/zzycxz/momapeer/internal/codegraph"
 	"github.com/zzycxz/momapeer/internal/command"
 	"github.com/zzycxz/momapeer/internal/config"
@@ -210,7 +211,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Partition configured plugins by tier so eager/lazy/background can each
 	// take the path that fits them. User entries default to background: the
 	// session starts immediately while enabled MCP servers warm up.
-	eagerEntries, lazyEntries, bgEntries := partitionByTier(cfg.AutoStartPlugins())
+	autoStartEntries := builtinmcp.AppendEnabled(
+		cfg.AutoStartPlugins(),
+		cfg.Plugins,
+		cfg.BuiltInMCP.EnabledNames(),
+		pluginSpecNames(opts.ExtraPlugins)...,
+	)
+	eagerEntries, lazyEntries, bgEntries := partitionByTier(autoStartEntries)
 
 	// Auto-demote: any eager plugin that has been chronically slow (recent
 	// samples repeatedly hit the blocking startup budget) drops to lazy
@@ -1073,6 +1080,17 @@ func partitionByTier(entries []config.PluginEntry) (eager, lazy, bg []config.Plu
 		}
 	}
 	return eager, lazy, bg
+}
+
+// pluginSpecNames extracts the Name from each plugin.Spec. Used to mark
+// session-scoped extra plugins as "reserved" so built-in entries don't
+// duplicate them.
+func pluginSpecNames(specs []plugin.Spec) []string {
+	names := make([]string, len(specs))
+	for i, s := range specs {
+		names[i] = s.Name
+	}
+	return names
 }
 
 // PluginSpecs maps configured plugin entries to plugin.Spec, expanding ${VAR}

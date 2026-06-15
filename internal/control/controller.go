@@ -30,6 +30,7 @@ import (
 
 	"github.com/zzycxz/momapeer/internal/agent"
 	"github.com/zzycxz/momapeer/internal/billing"
+	"github.com/zzycxz/momapeer/internal/builtinmcp"
 	"github.com/zzycxz/momapeer/internal/checkpoint"
 	"github.com/zzycxz/momapeer/internal/codegraph"
 	"github.com/zzycxz/momapeer/internal/command"
@@ -2232,6 +2233,9 @@ func (c *Controller) ConnectConfiguredMCPServer(name string) (int, error) {
 		if p.Name == name {
 			return c.connectMCPServer(p)
 		}
+	}
+	if p, ok := builtinmcp.Entry(name); ok {
+		return c.connectMCPServer(p)
 	}
 	if name == "codegraph" {
 		return c.connectCodegraphMCPServer(cfg)
