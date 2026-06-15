@@ -173,13 +173,15 @@ jobs:
             echo "Error: MINISIGN_PRIVATE_KEY or MINISIGN_PASSWORD secret is missing in repository settings!"
             exit 1
           fi
-          go run ./desktop/cmd/sign sign release-assets/*
+          cd desktop
+          go run ./cmd/sign sign ../release-assets/*
 
       - name: Generate Manifest
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#desktop-}"
-          go run ./desktop/cmd/sign manifest release-assets "$VERSION" "${{ github.ref_name }}"
+          cd desktop
+          go run ./cmd/sign manifest ../release-assets "$VERSION" "${{ github.ref_name }}"
 
       - name: Upload Manifest and Signatures
         uses: softprops/action-gh-release@v2
