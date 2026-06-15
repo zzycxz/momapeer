@@ -36,6 +36,13 @@ jobs:
             apt_deps: ''
             build_args: ''
 
+          - os: windows-latest
+            platform: windows/arm64
+            artifact: momapeer-windows-arm64.exe
+            binary_name: momapeer.exe
+            apt_deps: ''
+            build_args: ''
+
           - os: ubuntu-22.04
             platform: linux/amd64
             artifact: momapeer-linux-amd64
@@ -61,7 +68,7 @@ jobs:
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
-          install: mingw-w64-x86_64-gcc
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-aarch64-w64-mingw32-gcc
           update: true
 
       - name: Setup Go
