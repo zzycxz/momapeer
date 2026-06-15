@@ -141,5 +141,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: momapeer ${{ github.ref_name }}
-          generate_release_notes: true
+          generate_release_notes: ${{ matrix.platform == 'linux/amd64' }}
           files: ./desktop/build/bin/${{ matrix.artifact }}
