@@ -54,6 +54,7 @@ type Config struct {
 	Plugins       []PluginEntry       `toml:"plugins"`
 	Skills        SkillsConfig        `toml:"skills"`
 	Codegraph     CodegraphConfig     `toml:"codegraph"`
+	BuiltInMCP    BuiltInMCPConfig    `toml:"builtin_mcp"`
 	Statusline    StatuslineConfig    `toml:"statusline"`
 	LSP           LSPConfig           `toml:"lsp"`
 	Bot           BotConfig           `toml:"bot"`
@@ -289,6 +290,44 @@ func (c CodegraphConfig) ShouldAutoStart() bool {
 
 func (c CodegraphConfig) ResolvedTier() string {
 	return "background"
+}
+
+// BuiltInMCPConfig controls which built-in MCP servers are enabled. Each
+// server has a corresponding *_enabled boolean. Default is off for servers
+// that require external dependencies (e.g. npx for Context7).
+type BuiltInMCPConfig struct {
+	Context7Enabled bool `toml:"context7_enabled"`
+}
+
+// Enabled reports whether the named built-in MCP server is enabled.
+func (c BuiltInMCPConfig) Enabled(name string) bool {
+	switch name {
+	case "context7":
+		return c.Context7Enabled
+	default:
+		return false
+	}
+}
+
+// SetEnabled sets the enabled flag for the named built-in MCP server.
+// Returns false if the name is unknown.
+func (c *BuiltInMCPConfig) SetEnabled(name string, enabled bool) bool {
+	switch name {
+	case "context7":
+		c.Context7Enabled = enabled
+		return true
+	default:
+		return false
+	}
+}
+
+// EnabledNames returns the names of all enabled built-in MCP servers.
+func (c BuiltInMCPConfig) EnabledNames() []string {
+	var out []string
+	if c.Context7Enabled {
+		out = append(out, "context7")
+	}
+	return out
 }
 
 // BotConfig 控制多渠道 IM bot 消息网关。

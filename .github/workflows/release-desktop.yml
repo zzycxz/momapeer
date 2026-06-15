@@ -83,7 +83,7 @@ jobs:
           node-version: 22
 
       - name: Install pnpm
-        run: npm i -g pnpm@9
+        run: npm i -g pnpm
 
       - name: Install Linux Dependencies
         if: startsWith(matrix.os, 'ubuntu')
