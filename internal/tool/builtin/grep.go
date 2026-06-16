@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"golang.org/x/text/transform"
 
@@ -20,7 +21,23 @@ import (
 	"github.com/zzycxz/momapeer/internal/tool"
 )
 
-const grepMaxMatches = 200
+const (
+	grepMaxMatches    = 200
+	grepDefaultTimeout = 30 * time.Second
+	grepMaxTimeout     = 300 * time.Second
+)
+
+// grepTimeout clamps a caller-supplied second count to a sane bound; 0 (omitted)
+// falls back to grepDefaultTimeout.
+func grepTimeout(sec int) time.Duration {
+	if sec <= 0 {
+		return grepDefaultTimeout
+	}
+	if time.Duration(sec)*time.Second > grepMaxTimeout {
+		return grepMaxTimeout
+	}
+	return time.Duration(sec) * time.Second
+}
 
 func init() { tool.RegisterBuiltin(grepTool{}) }
 
@@ -42,15 +59,16 @@ func (g grepTool) Description() string {
 }
 
 func (grepTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string","description":"Regular expression (RE2 syntax)"},"path":{"type":"string","description":"File or directory to search (default \".\")"}},"required":["pattern"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string","description":"Regular expression (RE2 syntax)"},"path":{"type":"string","description":"File or directory to search (default \".\")"},"timeout_seconds":{"type":"integer","description":"Abort and return partial matches after this many seconds (default 30, max 300). Raise it for a large tree; lower it for a quick probe.","minimum":1}},"required":["pattern"]}`)
 }
 
 func (grepTool) ReadOnly() bool { return true }
 
 func (g grepTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct {
-		Pattern string `json:"pattern"`
-		Path    string `json:"path"`
+		Pattern        string `json:"pattern"`
+		Path           string `json:"path"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
@@ -62,8 +80,13 @@ func (g grepTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 		p.Path = "."
 	}
 	p.Path = resolveIn(g.workDir, p.Path)
+
+	to := grepTimeout(p.TimeoutSeconds)
+	ctx, cancel := context.WithTimeout(ctx, to)
+	defer cancel()
+
 	if g.rg != "" {
-		return g.runRipgrep(ctx, p.Pattern, p.Path)
+		return g.runRipgrep(ctx, p.Pattern, p.Path, to)
 	}
 	re, err := regexp.Compile(p.Pattern)
 	if err != nil {
@@ -186,11 +209,17 @@ func (g grepTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 	}
 
 	if len(out) == 0 {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Sprintf("(no matches; timed out after %s — narrow the path/pattern or raise timeout_seconds)", to), nil
+		}
 		return "(no matches)", nil
 	}
 	res := strings.Join(out, "\n")
 	if truncated {
 		res += fmt.Sprintf("\n... (truncated at %d matches)", grepMaxMatches)
+	}
+	if ctx.Err() == context.DeadlineExceeded {
+		res += fmt.Sprintf("\n... (timed out after %s; results incomplete — narrow the path/pattern or raise timeout_seconds)", to)
 	}
 	return res, nil
 }
@@ -198,7 +227,7 @@ func (g grepTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 // runRipgrep delegates the search to ripgrep, which already emits
 // path:line:text with these flags and honors .gitignore. Output is streamed and
 // capped at grepMaxMatches so a flood of hits can't blow up memory.
-func (g grepTool) runRipgrep(ctx context.Context, pattern, path string) (string, error) {
+func (g grepTool) runRipgrep(ctx context.Context, pattern, path string, to time.Duration) (string, error) {
 	cmd := exec.CommandContext(ctx, g.rg,
 		"--no-heading", "--line-number", "--with-filename", "--color", "never",
 		"--regexp", pattern, "--", path)
@@ -236,11 +265,17 @@ func (g grepTool) runRipgrep(ctx context.Context, pattern, path string) (string,
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
 			return "", fmt.Errorf("ripgrep: %s", msg)
 		}
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Sprintf("(no matches; timed out after %s — narrow the path/pattern or raise timeout_seconds)", to), nil
+		}
 		return "(no matches)", nil
 	}
 	res := strings.Join(out, "\n")
 	if truncated {
 		res += fmt.Sprintf("\n... (truncated at %d matches)", grepMaxMatches)
+	}
+	if ctx.Err() == context.DeadlineExceeded {
+		res += fmt.Sprintf("\n... (timed out after %s; results incomplete — narrow the path/pattern or raise timeout_seconds)", to)
 	}
 	return res, nil
 }

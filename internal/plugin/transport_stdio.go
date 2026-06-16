@@ -97,28 +97,49 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 	return t, nil
 }
 
-var stdioShellPATH = defaultStdioShellPATH
+// cachedShellPATH wraps a probe function, memoizing the first non-empty result
+// since the user's interactive PATH is stable for the process lifetime.
+func cachedShellPATH(probe func(context.Context) string) func(context.Context) string {
+	var (
+		once sync.Once
+		val  string
+	)
+	return func(ctx context.Context) string {
+		once.Do(func() { val = probe(ctx) })
+		return val
+	}
+}
+
+var stdioShellPATH = cachedShellPATH(defaultStdioShellPATH)
+
+// enrichStdioShellPATH unconditionally prepends the cached shell PATH to env,
+// ensuring GUI-launched processes inherit the user's interactive PATH.
+func enrichStdioShellPATH(ctx context.Context, env []string) []string {
+	shellPath := strings.TrimSpace(stdioShellPATH(ctx))
+	if shellPath == "" {
+		return env
+	}
+	currentPath, _ := envValue(env, "PATH")
+	merged := mergePathLists(shellPath, currentPath)
+	if merged == currentPath {
+		return env
+	}
+	return setEnvValue(env, "PATH", merged)
+}
 
 func resolveStdioExecutable(ctx context.Context, s Spec, env []string) (string, []string, error) {
 	if hasPathSeparator(s.Command) {
 		return s.Command, env, nil
 	}
+	// Eagerly enrich PATH with the user's interactive shell PATH so that
+	// GUI-launched processes can find npx, uvx, and similar wrappers.
+	env = enrichStdioShellPATH(ctx, env)
+
 	if exe, ok := lookPathInEnv(s.Command, env); ok {
 		return exe, env, nil
 	}
 
 	currentPath, _ := envValue(env, "PATH")
-	if shellPath := strings.TrimSpace(stdioShellPATH(ctx)); shellPath != "" {
-		fallbackPath := mergePathLists(shellPath, currentPath)
-		if fallbackPath != currentPath {
-			fallbackEnv := setEnvValue(env, "PATH", fallbackPath)
-			if exe, ok := lookPathInEnv(s.Command, fallbackEnv); ok {
-				return exe, fallbackEnv, nil
-			}
-			env = fallbackEnv
-			currentPath = fallbackPath
-		}
-	}
 	if runtime.GOOS == "windows" {
 		fallbackPath := mergePathLists(windowsStdioFallbackPATH(env), currentPath)
 		if fallbackPath != currentPath {

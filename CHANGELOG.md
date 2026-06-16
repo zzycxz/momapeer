@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.1.6] — 2026-06-15
+
+### Fixed
+
+- **Desktop 自动更新修复**：`matchPlatform()` 过滤了非 `-installer.exe` 的 Windows 文件，
+  导致 `latest.json` 缺少 Windows/macOS 平台条目，旧版本无法检测更新。
+  修复后 `latest.json` 包含全部 6 个平台。
+- **版本号注入**：Wails 构建时未通过 `-ldflags` 注入版本号，app 显示 "dev" 且跳过更新检查。
+  CI 现从 tag 自动提取版本号注入 `main.version`。
+- **签名文件分离**：`.minisig` 签名文件从主 release 移至独立的 `-sigs` release，
+  主 release 页面只显示用户需要的安装包。
+- **Windows ARM64 构建修复**：PowerShell 对 `-ldflags` 引号解析有问题，改用 bash shell。
+- **Bot 功能对所有版本可见**：移除 `isDevBuild` 限制，IM bot 设置不再隐藏。
+- **品牌名称修正**：修复 en.ts 15 处 "China Mobile"、zh.ts 9 处产品名混淆、
+  bridge.ts/App.tsx/sessionExport.tsx 中的上游遗留品牌名。
+- **系统提示词身份约束**：添加身份定义，防止模型自称 Claude/Qwen/DeepSeek。
+- **欢迎页图片**：修复 `welcome-hero.jpg.png` 双重后缀导致的构建失败，
+  替换为透明背景 PNG。
+- **推理协议提示修正**：修复 en.ts/zh.ts 中 "moma uses moma reasoning fields" 同义反复。
+
+### Changed
+
+- **CHANGELOG 分类重组**：按 MoMA 平台适配、MCP 与工具、基础设施三个类别组织条目。
+- **CONTRIBUTING.md / RELEASING.md**：分支引用从 `main-v2` 更新为 `main`。
+- **CI：桌面端 release 标记为 Latest**：添加 `make_latest: true`，
+  确保 updater 的 `/releases/latest/` 指向桌面端而非 CLI。
+
+[0.1.6]: https://github.com/zzycxz/momapeer/releases/tag/desktop-v0.1.6
+
 ## [0.1.5] — 2026-06-15
 
 ### Added
@@ -74,4 +103,5 @@ momapeer 最初是个人研究与学习项目，探索 Go 语言 AI agent 的工
   提供结构化的机器间交互协议。
 - **i18n**: 新增中英文双语 UI（`internal/i18n/`），支持 `$LANG` 自动检测。
 
+[0.1.5]: https://github.com/zzycxz/momapeer/releases/tag/desktop-v0.1.5
 [0.1.0]: https://github.com/zzycxz/momapeer/releases/tag/v0.1.0

@@ -611,6 +611,10 @@ func (a *Agent) Run(ctx context.Context, input any) error {
 			if a.steerQueueLen() > 0 {
 				continue
 			}
+			// A final-answer turn otherwise skips compaction, so a large context
+			// carries into the next turn un-folded and can overflow the model window.
+			// No-op below the trigger, so normal turns keep their warm cache.
+			a.maybeCompact(ctx, usage)
 			return nil // model gave a final answer
 		}
 		emptyFinalBlocks = 0
@@ -814,12 +818,12 @@ func (a *Agent) emitTodoState(todos []evidence.TodoItem, itemIndex int) {
 // fresh load or a rewind (the truncated history yields the historical state).
 // Empty after compaction drops the todo_write — no worse than no canonical list.
 func (a *Agent) rebuildTodoState(msgs []provider.Message) {
-	failed := failedToolCallIDs(msgs)
+	successful := successfulToolCallIDs(msgs)
 	var todos []evidence.TodoItem
 	baseIdx := -1
 	for i, msg := range msgs {
 		for _, tc := range msg.ToolCalls {
-			if tc.Name != "todo_write" || failed[tc.ID] {
+			if tc.Name != "todo_write" || !successful[tc.ID] {
 				continue
 			}
 			if rec := evidence.ReceiptFromToolCall(tc.Name, json.RawMessage(tc.Arguments), true, true); len(rec.Todos) > 0 {
@@ -834,7 +838,7 @@ func (a *Agent) rebuildTodoState(msgs []provider.Message) {
 	}
 	for i := baseIdx; i < len(msgs); i++ {
 		for _, tc := range msgs[i].ToolCalls {
-			if tc.Name != "complete_step" || failed[tc.ID] {
+			if tc.Name != "complete_step" || !successful[tc.ID] {
 				continue
 			}
 			rec := evidence.ReceiptFromToolCall(tc.Name, json.RawMessage(tc.Arguments), true, true)
@@ -847,17 +851,25 @@ func (a *Agent) rebuildTodoState(msgs []provider.Message) {
 	a.setTodoState(todos)
 }
 
-func failedToolCallIDs(msgs []provider.Message) map[string]bool {
-	failed := map[string]bool{}
+func successfulToolCallIDs(msgs []provider.Message) map[string]bool {
+	successful := map[string]bool{}
 	for _, msg := range msgs {
 		if msg.Role != provider.RoleTool || msg.ToolCallID == "" {
 			continue
 		}
-		if strings.HasPrefix(provider.ContentString(msg.Content), "error:") || strings.HasPrefix(provider.ContentString(msg.Content), "blocked:") {
-			failed[msg.ToolCallID] = true
+		if !toolResultFailed(provider.ContentString(msg.Content)) {
+			successful[msg.ToolCallID] = true
 		}
 	}
-	return failed
+	return successful
+}
+
+func toolResultFailed(content string) bool {
+	content = strings.TrimSpace(content)
+	return strings.HasPrefix(content, "error:") ||
+		strings.HasPrefix(content, "blocked:") ||
+		strings.HasPrefix(content, "Error:") ||
+		strings.HasPrefix(content, "[error")
 }
 
 func finalReadinessCheckSource(check instruction.VerifyCheck) string {
@@ -1399,7 +1411,7 @@ func repeatSuccessSignature(call provider.ToolCall, t tool.Tool) (string, bool) 
 		return "", false
 	}
 	switch call.Name {
-	case "write_file", "edit_file", "multi_edit", "notebook_edit":
+	case "write_file", "edit_file", "multi_edit", "move_file", "notebook_edit":
 		return call.Name + "\x00" + canonicalToolArgs(call.Arguments), true
 	case "bash":
 		var p struct {

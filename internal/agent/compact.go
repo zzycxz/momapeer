@@ -494,11 +494,18 @@ func charsOfMessages(msgs []provider.Message) int {
 	return n
 }
 
+// summaryTimeout bounds one summarizer call so a stalled stream surfaces a clear
+// error instead of blocking the agent forever.
+const summaryTimeout = 90 * time.Second
+
 // summarize asks the executor's own provider (no tools) to distill the region
 // into a briefing, returning the collected text. instructions, when non-empty,
 // is appended to the system prompt as extra focus guidance (from /compact <focus>
 // and/or a PreCompact hook).
 func (a *Agent) summarize(ctx context.Context, region []provider.Message, instructions string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, summaryTimeout)
+	defer cancel()
+
 	sys := summarySystemPrompt
 	if strings.TrimSpace(instructions) != "" {
 		sys += "\n\nAdditional focus for this compaction (prioritize keeping this):\n" + strings.TrimSpace(instructions)
@@ -515,19 +522,26 @@ func (a *Agent) summarize(ctx context.Context, region []provider.Message, instru
 	}
 
 	var b strings.Builder
-	for chunk := range ch {
-		switch chunk.Type {
-		case provider.ChunkText:
-			b.WriteString(chunk.Text)
-		case provider.ChunkError:
-			return "", chunk.Err
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case chunk, ok := <-ch:
+			if !ok {
+				s := strings.TrimSpace(b.String())
+				if s == "" {
+					return "", fmt.Errorf("summarizer returned empty output")
+				}
+				return s, nil
+			}
+			switch chunk.Type {
+			case provider.ChunkText:
+				b.WriteString(chunk.Text)
+			case provider.ChunkError:
+				return "", chunk.Err
+			}
 		}
 	}
-	s := strings.TrimSpace(b.String())
-	if s == "" {
-		return "", fmt.Errorf("summarizer returned empty output")
-	}
-	return s, nil
 }
 
 // summarizeWithRetry retries the summarizer once on non-terminal errors (network
