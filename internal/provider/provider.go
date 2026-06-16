@@ -410,11 +410,38 @@ func (p *Pricing) Cost(u *Usage) float64 {
 }
 
 // Symbol returns the currency display symbol, defaulting to "¥".
+// Normalizes common ISO codes to their symbol equivalents.
 func (p *Pricing) Symbol() string {
 	if p == nil || p.Currency == "" {
 		return "¥"
 	}
-	return p.Currency
+	return currencySymbol(p.Currency)
+}
+
+// currencySymbol normalizes common ISO 4217 currency codes to display symbols.
+func currencySymbol(code string) string {
+	switch strings.ToUpper(strings.TrimSpace(code)) {
+	case "USD", "US":
+		return "$"
+	case "EUR":
+		return "€"
+	case "GBP":
+		return "£"
+	case "CNY", "RMB":
+		return "¥"
+	case "JPY":
+		return "¥"
+	case "KRW":
+		return "₩"
+	case "₹":
+		return "₹"
+	default:
+		// If the code is already a single Unicode rune (e.g. "€"), pass through.
+		if len([]rune(code)) == 1 {
+			return code
+		}
+		return strings.ToUpper(code)
+	}
 }
 
 // Chunk is a single streamed event. Read the field matching Type.
@@ -482,6 +509,7 @@ type AuthError struct {
 	Provider string // the provider instance name, e.g. "MoMA"
 	KeyEnv   string // the api_key_env the key is read from, when known
 	Status   int    // the HTTP status (401 or 403)
+	HasKey   bool   // a non-empty key was sent vs. no key configured
 }
 
 func (e *AuthError) Error() string {

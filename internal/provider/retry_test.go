@@ -97,7 +97,7 @@ func TestSendWithRetryFailsFastOnClientErrors(t *testing.T) {
 			calls++
 			return statusResp(status, nil), nil
 		})}
-		_, err := SendWithRetry(context.Background(), cl, "p", "KEY", newDummyReq)
+		_, err := SendWithRetry(context.Background(), cl, SendOptions{ProvName: "p", KeyEnv: "KEY"}, newDummyReq)
 		if calls != 1 {
 			t.Errorf("status %d retried (%d calls), should fail fast", status, calls)
 		}
@@ -114,7 +114,7 @@ func TestSendWithRetryAuthError(t *testing.T) {
 		calls++
 		return statusResp(401, nil), nil
 	})}
-	_, err := SendWithRetry(context.Background(), cl, "MoMA", "JIUTIAN_API_KEY", newDummyReq)
+	_, err := SendWithRetry(context.Background(), cl, SendOptions{ProvName: "MoMA", KeyEnv: "JIUTIAN_API_KEY"}, newDummyReq)
 	if calls != 1 {
 		t.Errorf("401 retried (%d calls), should fail fast", calls)
 	}
@@ -136,7 +136,7 @@ func TestSendWithRetryRecoversAndNotifies(t *testing.T) {
 	var infos []RetryInfo
 	ctx := WithRetryNotify(context.Background(), func(i RetryInfo) { infos = append(infos, i) })
 
-	resp, err := SendWithRetry(ctx, cl, "p", "KEY", newDummyReq)
+	resp, err := SendWithRetry(ctx, cl, SendOptions{ProvName: "p", KeyEnv: "KEY"}, newDummyReq)
 	if err != nil {
 		t.Fatalf("should recover after one retry: %v", err)
 	}

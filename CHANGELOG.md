@@ -2,8 +2,40 @@
 
 ## [0.1.6] — 2026-06-15
 
+### Security
+
+- **Checkpoint 路径穿越防护加固**：`safePath` 从 `strings.HasPrefix` 前缀检查改为
+  `filepath.Rel` + `filepath.IsLocal`，显式拒绝 `..`、UNC 路径等平台特定逃逸向量，
+  尤其修复了 Windows 大小写不敏感文件系统上的潜在绕过。
+- **权限系统多 subject 评估**：`Decide()` 改为调用 `DecideSubjects()`，支持
+  `move_file` 等多端点工具同时检查 source 和 destination 路径。
+  此前仅检查第一个匹配的 subject，destination 的 deny 规则会被静默绕过。
+  新增 `Subjects()` 函数提取所有 subject（含 `source_path`、`destination_path`）。
+- **`move_file` 归类为文件变更工具**：`IsFileMutationTool`、`isWriterTool`、`extractPaths`、
+  `repeatSuccessSignature` 均补充 `move_file`，使其受权限规则约束并被证据系统追踪。
+
 ### Fixed
 
+- **Summarizer 超时保护**：`summarize()` 新增 90 秒超时（`context.WithTimeout` +
+  `select` on `ctx.Done()`）。此前 LLM 流式响应卡死时 compaction 会永久阻塞，
+  整个 agent 无法恢复，用户只能杀进程。
+- **Transient 401 重试**：`SendWithRetry` 新增 `SendOptions.RetryAuth` 机制，
+  当 key 首次认证成功后（`authed` 状态追踪），遇到 401/403 最多重试 2 次。
+  修复了九天平台等网关偶发 401 导致的虚假会话失败。
+  `AuthError` 新增 `HasKey` 字段区分"无 key"和"有 key 但认证失败"。
+- **Todo 状态重建错误检测**：`failedToolCallIDs` 替换为 `successfulToolCallIDs` +
+  `toolResultFailed`，错误匹配从仅 `error:`/`blocked:` 扩展为同时覆盖 `Error:`/`[error`。
+  此前大写 `Error:` 和方括号前缀的错误结果被误判为成功，导致会话恢复后 todo 状态不一致。
+- **最终答案压缩**：`Run()` 在 `return nil` 前新增 `maybeCompact(ctx, usage)` 调用。
+  此前最后一轮的大量工具输出不压缩直接带入下一轮，可能导致立即溢出。
+- **Grep 超时**：新增 `timeout_seconds` 参数（默认 30 秒，最大 300 秒），
+  超时后返回部分结果并提示调大参数或缩小搜索范围。修复了大型目录树上 grep 无限挂起的问题。
+- **MCP stdio PATH 缓存**：`stdioShellPATH` 改为 `cachedShellPATH` 包装器
+  （`sync.Once` memoize），`resolveStdioExecutable` 改为急切预置 shell PATH
+  （`enrichStdioShellPATH`）。修复了从 GUI/Dock 启动时找不到 npx/uvx 等命令的问题，
+  并消除了每次插件启动时重复探测 shell PATH 的开销。
+- **Checkpoint List() 进行中路径泄露**：`List()` 对当前进行中 turn 的 paths 置 nil，
+  防止未提交的快照路径参与 CanCode 传播。
 - **Desktop 自动更新修复**：`matchPlatform()` 过滤了非 `-installer.exe` 的 Windows 文件，
   导致 `latest.json` 缺少 Windows/macOS 平台条目，旧版本无法检测更新。
   修复后 `latest.json` 包含全部 6 个平台。
@@ -19,6 +51,15 @@
 - **欢迎页图片**：修复 `welcome-hero.jpg.png` 双重后缀导致的构建失败，
   替换为透明背景 PNG。
 - **推理协议提示修正**：修复 en.ts/zh.ts 中 "moma uses moma reasoning fields" 同义反复。
+
+### Added
+
+- **PermissionRequest hook 事件**：新增 `PermissionRequest` hook 事件类型，
+  支持在权限审批时触发外部策略引擎。`Payload` 新增 `Subject` 字段。
+- **RenameSession API**：`branch.go` 新增 `RenameSession(sessionPath, title)` 方法，
+  支持通过代码重命名会话分支。
+- **货币符号标准化**：`Pricing.Symbol()` 新增 `currencySymbol()` 转换，
+  `currency = "USD"` 显示为 `$`，`"EUR"` 显示为 `€`，而非原始字符串。
 
 ### Changed
 

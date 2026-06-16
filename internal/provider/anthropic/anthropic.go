@@ -151,7 +151,11 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 		httpReq.Header.Set("anthropic-version", anthropicVersion)
 		return httpReq, nil
 	}
-	resp, err := provider.SendWithRetry(ctx, c.http, c.name, c.keyEnv, newReq)
+	resp, err := provider.SendWithRetry(ctx, c.http, provider.SendOptions{
+		ProvName:   c.name,
+		KeyEnv:     c.keyEnv,
+		KeyPresent: c.apiKey != "",
+	}, newReq)
 	if err != nil {
 		return nil, err
 	}

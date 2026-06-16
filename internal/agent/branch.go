@@ -216,3 +216,16 @@ func ListBranches(dir string) ([]BranchInfo, error) {
 	})
 	return out, nil
 }
+
+// RenameSession updates the topic title of the session at sessionPath.
+func RenameSession(sessionPath string, title string) error {
+	if sessionPath == "" {
+		return fmt.Errorf("empty session path")
+	}
+	m, err := EnsureBranchMeta(sessionPath)
+	if err != nil {
+		return err
+	}
+	m.TopicTitle = title
+	return SaveBranchMeta(sessionPath, m)
+}

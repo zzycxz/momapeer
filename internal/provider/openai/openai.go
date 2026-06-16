@@ -141,6 +141,7 @@ type client struct {
 	minimax     bool          // true for api.minimaxi.com — emits MiniMax-M3's thinking knob instead of reasoning_effort
 	effort      string        // reasoning_effort for OpenAI; thinking.type for MiniMax; "" = auto/provider default
 	idleTimeout time.Duration // SSE stall watchdog window; defaultStreamIdleTimeout unless a test overrides
+	authed      atomic.Bool   // true after first successful auth; enables transient 401 retry
 }
 
 func (c *client) Name() string { return c.name }
@@ -208,10 +209,16 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 		httpReq.Header.Set("Accept", "text/event-stream")
 		return httpReq, nil
 	}
-	resp, err := provider.SendWithRetry(ctx, c.http, c.name, c.keyEnv, newReq)
+	resp, err := provider.SendWithRetry(ctx, c.http, provider.SendOptions{
+		ProvName:   c.name,
+		KeyEnv:     c.keyEnv,
+		KeyPresent: c.apiKey != "",
+		RetryAuth:  c.authed.Load(),
+	}, newReq)
 	if err != nil {
 		return nil, err
 	}
+	c.authed.Store(true)
 
 	out := make(chan provider.Chunk)
 	go c.streamWithReconnect(ctx, resp, newReq, out)
@@ -246,7 +253,12 @@ func (c *client) streamWithReconnect(ctx context.Context, resp *http.Response, n
 			out <- provider.Chunk{Type: provider.ChunkError, Err: err}
 			return
 		}
-		next, rerr := provider.SendWithRetry(ctx, c.http, c.name, c.keyEnv, newReq)
+		next, rerr := provider.SendWithRetry(ctx, c.http, provider.SendOptions{
+			ProvName:   c.name,
+			KeyEnv:     c.keyEnv,
+			KeyPresent: c.apiKey != "",
+			RetryAuth:  c.authed.Load(),
+		}, newReq)
 		if rerr != nil {
 			out <- provider.Chunk{Type: provider.ChunkError, Err: rerr}
 			return

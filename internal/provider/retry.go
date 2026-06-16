@@ -18,6 +18,18 @@ import (
 // header phase after the initial try (so up to MaxRetries+1 total attempts).
 const MaxRetries = 10
 
+// maxAuthRetries is the number of times a 401/403 is retried when the key has
+// previously authenticated successfully (transient auth failures under load).
+const maxAuthRetries = 2
+
+// SendOptions configures SendWithRetry's behaviour.
+type SendOptions struct {
+	ProvName string // provider instance name for error messages
+	KeyEnv   string // api_key_env for AuthError
+	KeyPresent bool // a non-empty key was configured
+	RetryAuth  bool // retry 401/403 up to maxAuthRetries (key previously worked)
+}
+
 const maxBackoff = 15 * time.Second
 
 // RetryInfo describes a backoff about to happen: Attempt is the 1-based retry
@@ -133,10 +145,13 @@ func parseRetryAfter(resp *http.Response) time.Duration {
 // non-OK statuses become *APIError. A RetryNotify in ctx fires before each
 // sleep. Retries cover only the header phase — once the body streams, mid-stream
 // failures are not retried (the model has already emitted tokens).
-func SendWithRetry(ctx context.Context, httpClient *http.Client, provName, keyEnv string, newReq func(context.Context) (*http.Request, error)) (*http.Response, error) {
+func SendWithRetry(ctx context.Context, httpClient *http.Client, opts SendOptions, newReq func(context.Context) (*http.Request, error)) (*http.Response, error) {
+	provName := opts.ProvName
+	keyEnv := opts.KeyEnv
 	notify := retryNotifyFromContext(ctx)
 	var lastErr error
 	var retryAfter time.Duration
+	authRetries := 0
 
 	for attempt := 0; attempt <= MaxRetries; attempt++ {
 		if attempt > 0 {
@@ -174,7 +189,15 @@ func SendWithRetry(ctx context.Context, httpClient *http.Client, provName, keyEn
 		resp.Body.Close()
 
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			return nil, &AuthError{Provider: provName, KeyEnv: keyEnv, Status: resp.StatusCode}
+			// Transient auth retry: if the key has previously authenticated
+			// successfully, retry up to maxAuthRetries times before giving up.
+			// Gateways occasionally return transient 401s under load.
+			if opts.RetryAuth && authRetries < maxAuthRetries {
+				authRetries++
+				lastErr = &AuthError{Provider: provName, KeyEnv: keyEnv, Status: resp.StatusCode, HasKey: opts.KeyPresent}
+				continue
+			}
+			return nil, &AuthError{Provider: provName, KeyEnv: keyEnv, Status: resp.StatusCode, HasKey: opts.KeyPresent}
 		}
 		apiErr := &APIError{Provider: provName, Status: resp.StatusCode, Body: strings.TrimSpace(string(msg))}
 		if !RetryableStatus(resp.StatusCode) {
