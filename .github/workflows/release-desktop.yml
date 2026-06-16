@@ -106,12 +106,13 @@ jobs:
       - name: Build Wails App (Windows ARM64)
         if: matrix.platform == 'windows/arm64'
         working-directory: ./desktop
+        shell: bash
         env:
           CC: aarch64-w64-mingw32-gcc
           CXX: aarch64-w64-mingw32-g++
         run: |
           wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }} -ldflags "-X main.version=${{ steps.version.outputs.semver }}" -v 2 > wails_build.log 2>&1
-          if ($LASTEXITCODE -ne 0) { throw "Wails build failed" }
+          if [ $? -ne 0 ]; then echo "Wails build failed"; exit 1; fi
 
       - name: Build Wails App (Others)
         if: matrix.platform != 'windows/arm64'
