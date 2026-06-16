@@ -192,7 +192,8 @@ func genManifest(dir, version, tag string) error {
 			return err
 		}
 		url := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", repo, tag, name)
-		m.Platforms[key] = update.Asset{URL: url, Sig: url + ".minisig", Size: size, SHA256: sum}
+		sigURL := fmt.Sprintf("https://github.com/%s/releases/download/%s-sigs/%s.minisig", repo, tag, name)
+		m.Platforms[key] = update.Asset{URL: url, Sig: sigURL, Size: size, SHA256: sum}
 		fmt.Printf("manifest: %s -> %s (%d bytes)\n", key, name, size)
 	}
 	if len(m.Platforms) == 0 {

@@ -192,9 +192,15 @@ jobs:
           cd desktop
           go run ./cmd/sign manifest ../release-assets "$VERSION" "${{ github.ref_name }}"
 
-      - name: Upload Manifest and Signatures
+      - name: Upload Manifest
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            release-assets/latest.json
-            release-assets/*.minisig
+          files: release-assets/latest.json
+
+      - name: Upload Signatures (separate release)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}-sigs
+          name: ${{ github.ref_name }} signatures
+          prerelease: true
+          files: release-assets/*.minisig

@@ -93,8 +93,9 @@ func TestGenManifest(t *testing.T) {
 	if win.URL != wantURL {
 		t.Fatalf("windows url = %q, want %q", win.URL, wantURL)
 	}
-	if win.Sig != wantURL+".minisig" {
-		t.Fatalf("windows sig = %q, want %q.minisig", win.Sig, wantURL)
+	wantSig := "https://github.com/zzycxz/momapeer/releases/download/desktop-v1.2.0-sigs/momapeer-windows-amd64.exe.minisig"
+	if win.Sig != wantSig {
+		t.Fatalf("windows sig = %q, want %q", win.Sig, wantSig)
 	}
 	if win.SHA256 == "" || win.Size == 0 {
 		t.Fatalf("windows asset missing digest/size: %+v", win)
