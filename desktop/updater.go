@@ -288,7 +288,7 @@ func applyWindows(newExe []byte) error {
 
 	// Write a batch script that waits for the current process to exit, replaces
 	// the binary, cleans up, and relaunches.
- batPath := filepath.Join(filepath.Dir(currentExe), "momapeer-update.bat")
+	batPath := filepath.Join(filepath.Dir(currentExe), "momapeer-update.bat")
 	bat := fmt.Sprintf(`@echo off
 :wait
 timeout /t 1 /nobreak >nul

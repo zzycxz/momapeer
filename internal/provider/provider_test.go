@@ -386,11 +386,11 @@ func TestMockProviderImplementsInterface(t *testing.T) {
 
 func TestParseImageDataURL(t *testing.T) {
 	tests := []struct {
-		name      string
-		url       string
-		wantMT    string
-		wantData  string
-		wantOK    bool
+		name     string
+		url      string
+		wantMT   string
+		wantData string
+		wantOK   bool
 	}{
 		{"png", "data:image/png;base64,iVBORw0KGgo=", "image/png", "iVBORw0KGgo=", true},
 		{"jpeg", "data:image/jpeg;base64,/9j/4AAQ=", "image/jpeg", "/9j/4AAQ=", true},
