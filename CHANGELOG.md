@@ -54,6 +54,12 @@
 
 ### Added
 
+- **Dream / Distill 后台智能体**：新增记忆整合（Dream）和工作流提炼（Distill）两个
+  后台智能体，定期自动运行，将会话中的持久知识提取到项目记忆、将重复工作流沉淀为技能文件。
+- **Goal Judge**：新增目标判断器，在每轮结束时评估用户请求是否已达成，
+  避免 agent 过度循环或提前结束。
+- **Memory 全文检索**：`internal/memory` 新增 FTS（全文搜索）索引，
+  支持对记忆内容的快速模糊搜索。
 - **PermissionRequest hook 事件**：新增 `PermissionRequest` hook 事件类型，
   支持在权限审批时触发外部策略引擎。`Payload` 新增 `Subject` 字段。
 - **RenameSession API**：`branch.go` 新增 `RenameSession(sessionPath, title)` 方法，
@@ -63,6 +69,12 @@
 
 ### Changed
 
+- **模型列表精简**：`BuiltinMoMAModels` 从 32 个精简至 19 个，移除小模型
+  （jiutian-lan-13b/8b、math-8b、code-8b、qwen3.5-4b）、老版本
+  （deepseek-v3/r1、qwen3-235b、minimax-latest、qwen3-next-80b、qwen3.5-27b/9b）
+  和非主流模型（nvidia/nemotron-3-super）。
+- **前端模型分类重组**：ModelSwitcher 新增 DeepSeek、月之暗面独立分类，
+  MoMA auto-router 移入"其他"。
 - **CHANGELOG 分类重组**：按 MoMA 平台适配、MCP 与工具、基础设施三个类别组织条目。
 - **CONTRIBUTING.md / RELEASING.md**：分支引用从 `main-v2` 更新为 `main`。
 - **CI：桌面端 release 标记为 Latest**：添加 `make_latest: true`，
