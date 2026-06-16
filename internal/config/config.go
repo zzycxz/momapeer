@@ -977,23 +977,20 @@ const LanguagePolicy = `Reply in the same language the user is using in their mo
 // prevent drift.
 var BuiltinMoMAModels = []string{
 	// 九天自有
-	"jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-13b", "jiutian/jiutian-lan-8b",
-	"jiutian/jiutian-lan-thinking", "jiutian/jiutian-math-8b", "jiutian/jiutian-code-8b", "jiutian/jiutian-da-35b",
+	"jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b",
+	"jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b",
 	// 通义千问
-	"qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-235b-a22b-2507",
-	"qwen/qwen3-next-80b-a3b-instruct", "qwen/qwen3.5-27b", "qwen/qwen3.5-9b", "qwen/qwen3.5-4b", "qwen/qwen3-coder-next",
+	"qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-coder-next",
 	// DeepSeek
-	"deepseek/deepseek-v4-flash", "deepseek/deepseek-v32", "deepseek/deepseek-v3", "deepseek/deepseek-r1",
+	"deepseek/deepseek-v4-flash", "deepseek/deepseek-v32",
 	// 智谱
 	"z.ai/glm-5.1", "z.ai/glm-5",
 	// MiniMax
-	"minimax/minimax-m2.7", "minimax/minimax-m2.5", "minimax/minimax-latest",
+	"minimax/minimax-m2.7",
 	// 月之暗面
 	"moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking",
 	// 阶跃星辰
 	"stepfun/step-3.5-flash",
-	// NVIDIA
-	"nvidia/nemotron-3-super",
 	// OpenAI
 	"openai/gpt-oss-120b",
 	// 自动路由

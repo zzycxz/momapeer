@@ -75,6 +75,7 @@ type Controller struct {
 	mem           *memory.Set
 	cleanup       func()
 	autoPlan      string
+	goalJudge     func(ctx context.Context, prov provider.Provider, transcript []provider.Message, condition string) agent.GoalVerdict
 	classifier    autoPlanClassifier
 	startedOnce   bool                             // guards the one-shot SessionStart hook on first turn
 	onRemember    func(rule string) RememberResult // set via Options; invoked when user picks "always allow"
@@ -247,6 +248,10 @@ type Options struct {
 	// no confinement). Frontends pass the cwd they launched the session in.
 	WorkspaceRoot string
 	AutoPlan      string
+	// GoalJudge enables the independent goal judge: when the model reports
+	// [goal:complete], a separate LLM call verifies completion based on the
+	// transcript. nil disables the judge (model self-report is trusted).
+	GoalJudge func(ctx context.Context, prov provider.Provider, transcript []provider.Message, condition string) agent.GoalVerdict
 	Classifier    autoPlanClassifier
 	// OnRemember, when set, is invoked with a new allow rule the user chose to
 	// persist to disk (e.g. "Bash(go test:*)"). The callback is wired into the
@@ -287,6 +292,7 @@ func New(opts Options) *Controller {
 		mem:              opts.Memory,
 		cleanup:          opts.Cleanup,
 		autoPlan:         normalizeAutoPlan(opts.AutoPlan),
+		goalJudge:        opts.GoalJudge,
 		classifier:       classifier,
 		onRemember:       opts.OnRemember,
 		balanceURL:       opts.BalanceURL,
@@ -584,7 +590,7 @@ func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input any, raw, 
 		c.approvedPlanAutoApproveTools = false
 		c.mu.Unlock()
 	}()
-	if err := c.runner.Run(ctx, planApprovedMessage); err != nil {
+	if err := c.runner.Run(ctx, c.ComposeSynthetic(planApprovedMessage)); err != nil {
 		return err
 	}
 	c.completePlanTodos(seededTodos)
@@ -619,9 +625,24 @@ func (c *Controller) advanceGoalAfterTurn() bool {
 		c.mu.Unlock()
 		return false
 	}
+	goal := c.goal
 	c.goalTurns++
 	switch status {
 	case GoalStatusComplete:
+		// Independent judge verification: when configured, call a separate
+		// model to confirm the goal is actually complete based on the
+		// transcript evidence. This prevents premature stops.
+		judge := c.goalJudge
+		c.mu.Unlock()
+		if judge != nil && c.executor != nil && c.executor.Provider() != nil {
+			verdict := judge(context.Background(), c.executor.Provider(), c.History(), goal)
+			if !verdict.OK {
+				c.mu.Lock()
+				c.notice("goal judge: " + verdict.Reason)
+				return true // Continue the goal loop.
+			}
+		}
+		c.mu.Lock()
 		c.goal = ""
 		c.goalStatus = GoalStatusComplete
 		c.goalBlocks = 0

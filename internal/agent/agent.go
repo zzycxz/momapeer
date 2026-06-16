@@ -57,18 +57,20 @@ type parentSessionContextKey struct{}
 
 // callContext is the per-call context a tool can read. parentID is the call being
 // executed and sink is the agent's event sink (the `task` tool uses both to nest
-// a sub-agent's events under this call); asker lets the `ask` tool reach the user.
+// a sub-agent's events under this call); asker lets the `ask` tool reach the user;
+// planMode lets tools introspect whether they are running under plan mode.
 type callContext struct {
 	parentID string
 	sink     event.Sink
 	asker    Asker
+	planMode bool
 }
 
-// withCallContext stamps ctx with the executing call's ID, the agent's sink, and
-// the asker. executeOne sets this before every Execute; `task` reads it (via
-// CallContext) to nest sub-agent events, and `ask` reads the asker to prompt.
-func withCallContext(ctx context.Context, parentID string, sink event.Sink, asker Asker) context.Context {
-	return context.WithValue(ctx, callContextKey{}, callContext{parentID: parentID, sink: sink, asker: asker})
+// withCallContext stamps ctx with the executing call's ID, the agent's sink, the
+// asker, and plan mode. executeOne sets this before every Execute; `task` reads
+// it (via CallContext) to nest sub-agent events, and `ask` reads the asker to prompt.
+func withCallContext(ctx context.Context, parentID string, sink event.Sink, asker Asker, planMode bool) context.Context {
+	return context.WithValue(ctx, callContextKey{}, callContext{parentID: parentID, sink: sink, asker: asker, planMode: planMode})
 }
 
 // CallContext returns the executing call's ID, the agent's sink, and the asker,
@@ -80,6 +82,14 @@ func CallContext(ctx context.Context) (parentID string, sink event.Sink, asker A
 		return "", nil, nil, false
 	}
 	return cc.parentID, cc.sink, cc.asker, true
+}
+
+// PlanModeFromContext reports whether the current tool call is executing under
+// plan mode. Tools can use this to adjust their behavior (e.g. suppress
+// writer-only follow-up surfaces during planning).
+func PlanModeFromContext(ctx context.Context) bool {
+	cc, ok := ctx.Value(callContextKey{}).(callContext)
+	return ok && cc.planMode
 }
 
 // WithParentSession stamps the active parent session ID onto a turn context so
@@ -286,6 +296,10 @@ func (a *Agent) SetGate(g Gate) {
 	}
 	a.gate = g
 }
+
+// Provider returns the agent's LLM provider, available for auxiliary calls
+// such as the goal judge.
+func (a *Agent) Provider() provider.Provider { return a.prov }
 
 // SetAsker installs the asker the `ask` tool uses to question the user.
 // Interactive frontends wire one in; headless runs leave it nil.
@@ -1319,7 +1333,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			}
 		}
 	}
-	cctx := withCallContext(ctx, call.ID, a.sink, a.asker)
+	cctx := withCallContext(ctx, call.ID, a.sink, a.asker, a.planMode.Load())
 	if a.evidence != nil {
 		cctx = evidence.WithLedger(cctx, a.evidence)
 		cctx = evidence.WithSessionMessages(cctx, a.session.Snapshot())
