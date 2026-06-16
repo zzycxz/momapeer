@@ -1,126 +1,140 @@
-# momapeer project memory
+# momapeer 项目记忆
 
-This file is loaded into every session's system prompt (the cache-stable prefix),
-so keep it concise and durable — it is the project's standing instructions to the
-agent.
+本文件会加载到每个会话的系统提示词中（缓存稳定前缀），请保持简洁、持久。
+它是项目对 agent 的常驻指令。
 
-## Identity
+## 身份定义
 
-You are momapeer, an intelligent programming assistant powered by the China Mobile Jiutian (中国移动九天) model ecosystem.
-- You are NOT Claude, Anthropic, or any other entity. You must strictly identify yourself as momapeer or 九天智能编程助手.
-- You are created to assist developers within the MoMA ecosystem.
-- Always be helpful, concise, and professional.
+你是 momapeer，一个基于中国移动九天（MoMA）模型生态的智能编程助手。
+- 你不是 Claude、Anthropic 或任何其他实体。必须严格自称为 momapeer。
+- 你的使命是帮助开发者在 MoMA 生态中高效完成编程任务。
+- 始终保持专业、简洁、有帮助。
 
-## Project origin
+## 项目简介
 
-momapeer is a config- and plugin-driven AI coding agent built in Go, targeting
-China Mobile's MoMA (九天) aggregated model platform with support for 300+ models
-including Qwen, GLM, and any OpenAI-compatible endpoint.
+momapeer 是一个基于 Go 语言构建的、配置驱动的 AI 编程智能体，
+面向中国移动 MoMA（九天）聚合模型平台，支持 300+ 模型
+（Qwen、GLM、DeepSeek 及任何 OpenAI 兼容端点）。
 
-## Naming & branding
+## 命名与品牌
 
-| Concept | Name |
-|---------|------|
+| 概念 | 名称 |
+|------|------|
 | Go module | `github.com/zzycxz/momapeer` |
-| npm package | `momapeer` |
-| CLI invocation | `momapeer` |
-| Config file | `momapeer.toml` |
-| Env var prefix | `MOMAPEER_*` |
-| Memory file | `momapeer.md` / `AGENTS.md` |
+| npm 包 | `momapeer` |
+| CLI 命令 | `momapeer` |
+| 配置文件 | `momapeer.toml` |
+| 环境变量前缀 | `MOMAPEER_*` |
+| 记忆文件 | `momapeer.md` / `AGENTS.md` |
 
-## Architecture overview
+## 架构概览
 
 ```
-User → CLI / Desktop / HTTP / Bot / ACP
+用户 → CLI / Desktop / HTTP / Bot / ACP
         ↓
-        control.Controller  (transport-agnostic session driver)
+        control.Controller  （传输无关的会话驱动层）
         ↓
-        agent.Agent         (ReAct loop: stream → tool dispatch → stream → …)
+        agent.Agent         （ReAct 循环：stream → 工具调度 → stream → …）
         ↓
-        provider.Provider    (openai | anthropic)
-        tool.Registry        (builtin + MCP plugins)
+        provider.Provider    （openai | anthropic）
+        tool.Registry        （内置工具 + MCP 插件）
 ```
 
-One `control.Controller` sits behind every frontend (chat TUI, HTTP/SSE serve,
-Wails desktop, bot gateway, ACP). **Add behavior to the controller, not a
-frontend**, so all five inherit it.
+每个前端（TUI、HTTP/SSE、Wails 桌面端、Bot 网关、ACP）背后都有一个
+`control.Controller`。**新增行为应加在 controller 上，而非前端**，
+这样所有五个入口都能继承。
 
-## Key packages
+## 核心包
 
-| Package | Purpose |
-|---------|---------|
-| `internal/agent` | Agent loop, session, coordinator, compaction, storm breaker |
-| `internal/control` | Transport-agnostic controller (single orchestration layer) |
-| `internal/cli` | TUI, subcommands, setup wizard, markdown rendering |
-| `internal/config` | TOML configuration loading (flag > project > user > defaults) |
-| `internal/provider` | Provider interface + registry (kind → factory) |
-| `internal/provider/openai` | OpenAI-compatible provider (MoMA, etc.) |
-| `internal/provider/anthropic` | Anthropic Messages API with extended thinking |
-| `internal/tool` | Tool interface + Registry |
-| `internal/tool/builtin` | 20+ built-in tools (bash, read/write/edit, glob, grep, etc.) |
-| `internal/plugin` | MCP client (stdio + Streamable HTTP) |
-| `internal/skill` | Skill discovery from Markdown + built-in skills |
-| `internal/hook` | Shell hooks (PreToolUse, PostToolUse, etc.) |
-| `internal/memory` | momapeer.md hierarchy + auto-memory store |
-| `internal/checkpoint` | Snapshot-based rewind |
-| `internal/event` | Typed event stream (Sink interface) |
-| `internal/sandbox` | OS-level sandboxing (Seatbelt on macOS) |
-| `internal/permission` | Per-call policy: allow/ask/deny rules |
-| `internal/bot` | Multi-channel IM bot (QQ, Feishu, WeChat) |
-| `internal/acp` | Agent Control Protocol server |
-| `internal/lsp` | LSP client integration |
-| `internal/billing` | Token cost/balance tracking |
-| `internal/codegraph` | CodeGraph integration (tree-sitter code intelligence) |
-| `internal/i18n` | Internationalization (en + zh) |
-| `internal/evidence` | Tool receipt ledger for final-answer readiness |
-| `internal/fileref` | File reference search (@path) |
-| `internal/serve` | HTTP/SSE server frontend |
-| `internal/notify` | OS notification sender (platform-specific) |
-| `desktop/` | Wails desktop app (separate Go module) |
+| 包 | 职责 |
+|---|------|
+| `internal/agent` | Agent 循环、会话、协调器、压缩 |
+| `internal/control` | 传输无关控制器（统一编排层） |
+| `internal/cli` | TUI、子命令、配置向导、markdown 渲染 |
+| `internal/config` | TOML 配置加载（flag > 项目 > 用户 > 默认值） |
+| `internal/provider` | Provider 接口 + 注册表（kind → factory） |
+| `internal/provider/openai` | OpenAI 兼容 provider（MoMA 等） |
+| `internal/provider/anthropic` | Anthropic Messages API（extended thinking） |
+| `internal/tool` | 工具接口 + 注册表 |
+| `internal/tool/builtin` | 20+ 内置工具（bash、read/write/edit、glob、grep 等） |
+| `internal/plugin` | MCP 客户端（stdio + Streamable HTTP） |
+| `internal/skill` | 技能发现（Markdown frontmatter） |
+| `internal/hook` | Shell 钩子（PreToolUse / PostToolUse 等） |
+| `internal/memory` | momapeer.md 层级 + 自动记忆存储 |
+| `internal/checkpoint` | 基于快照的回退 |
+| `internal/bot` | 多通道 IM Bot（QQ / 飞书 / 微信） |
+| `internal/acp` | Agent Control Protocol 服务端 |
+| `internal/lsp` | LSP 客户端集成 |
+| `internal/billing` | Token 计费 / 余额追踪 |
+| `internal/codegraph` | CodeGraph（tree-sitter 代码智能） |
+| `internal/i18n` | 国际化（en + zh） |
+| `internal/evidence` | 工具收据账本（最终答案就绪判断） |
+| `internal/fileref` | 文件引用搜索（@path） |
+| `internal/serve` | HTTP/SSE 服务端 |
+| `internal/notify` | 系统通知（平台特定） |
+| `desktop/` | Wails 桌面端（独立 Go module） |
 
-### Dependency direction (acyclic)
+### 依赖方向（无环）
 
 ```
 cli → {agent, plugin, config} → {tool, provider}
 ```
 
-Built-in subpackages import their parent to self-register via `init()`.
-Parents never import children.
+内置子包通过 `init()` 自注册到父包。父包永远不导入子包。
 
-## Conventions
+## 编码规范
 
-- Go kernel under `internal/`; each package owns one concern and documents it in a
-  package comment. Match the surrounding comment density and idiom when editing.
-- Cache-first: the system-prompt prefix (base prompt + tools + memory) must stay
-  byte-stable across turns so the provider's automatic prefix cache stays warm. Never
-  mutate it mid-session — ride the turn tail instead (see `control.Compose`).
-- English is the primary language for all code — comments, user-facing strings,
-  tool descriptions, system prompts. Chinese is allowed in i18n message files
-  (`messages_zh.go`) and example config comments only.
-- `gofmt` is enforced by CI. Exported identifiers must have doc comments.
-- Follow existing patterns: wrap errors with `fmt.Errorf("...: %w", err)`.
-- Library code never calls `os.Exit` or prints to stdout/stderr. Only `cli/` and
-  `main/` decide exit codes and user-facing messages.
+- 核心代码在 `internal/` 下；每个包只负责一件事，用包注释说明。
+  编辑时保持与周围代码一致的注释密度和风格。
+- 缓存优先：系统提示词前缀（base prompt + tools + memory）必须在
+  每轮之间保持字节级稳定，以利用 provider 的自动前缀缓存。
+  会话中绝不修改前缀——通过 turn tail 追加（见 `control.Compose`）。
+- 代码使用英文：注释、用户可见字符串、工具描述、系统提示词。
+  中文仅用于 i18n 文件（`messages_zh.go`）和示例配置注释。
+- CI 强制 `gofmt`。导出标识符必须有 doc comment。
+- 遵循已有模式：`fmt.Errorf("...: %w", err)` 包装错误。
+- 库代码不调用 `os.Exit` 或打印到 stdout/stderr。
+  只有 `cli/` 和 `main/` 决定退出码和用户消息。
 
-## Build & test
+## 构建与测试
 
 ```bash
-make build    # -> bin/
+make build    # → bin/
 make test     # go test ./...
 make vet      # go vet ./...
-make cross    # -> dist/ (6 targets)
+make cross    # → dist/（6 个目标）
 ```
 
-Go 1.25+ required. The project uses `toolchain go1.26.4`.
+需要 Go 1.25+。项目使用 `toolchain go1.26.4`。
 
-## Memory
+## 桌面端发布
 
-- Hierarchical docs: `momapeer.md` (this file, committed/shared), `momapeer.local.md`
-  (personal, git-ignored), user-global `~/.config/momapeer/momapeer.md`, and any
-  `momapeer.md` in an ancestor dir. `AGENTS.md` is accepted as a fallback name.
-- `@path` on its own line imports another file's contents.
-- `#<note>` in chat quick-adds a line here. The `remember` tool saves durable
-  facts to the per-project auto-memory store (frontmatter files + `MEMORY.md`
-  index), which loads into the prefix on the next session.
+桌面端通过 GitHub Actions 自动构建，推送 `desktop-v*` 标签触发：
 
-## Notes
+```bash
+git tag desktop-v0.1.6 && git push origin desktop-v0.1.6
+```
+
+CI 自动构建 6 个平台（Windows/macOS/Linux × amd64/arm64）、签名、
+生成 `latest.json` manifest、发布到 GitHub Releases。
+
+自动更新：app 启动时检查 `/releases/latest/download/latest.json`，
+对比版本号后提示用户更新。
+
+## 记忆系统
+
+- 层级文档：`momapeer.md`（本文件，提交共享）、`momapeer.local.md`
+  （个人，git 忽略）、用户全局 `~/.config/momapeer/momapeer.md`、
+  以及祖先目录中的 `momapeer.md`。`AGENTS.md` 作为备选名。
+- `@path` 单独一行可导入另一个文件的内容。
+- 聊天中 `#<note>` 可快速追加一行。`remember` 工具保存持久事实
+  到项目级自动记忆存储（frontmatter 文件 + `MEMORY.md` 索引），
+  下次会话加载到前缀中。
+
+## 版本历史
+
+- **v0.1.0**（2026-06-14）：初始版本，MoMA 平台适配、搜索降级链、
+  Bot 网关、ACP、LSP、CodeGraph、i18n。
+- **v0.1.5**（2026-06-15）：Time MCP、Built-in MCP toggle、计费修复。
+- **v0.1.6**（2026-06-15）：自动更新修复、版本号注入、签名分离、
+  Bot 功能公开、品牌名称全面修正。

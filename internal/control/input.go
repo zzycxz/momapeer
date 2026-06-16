@@ -133,6 +133,15 @@ func (c *Controller) Compose(text string) string {
 	return text
 }
 
+// ComposeSynthetic is a lighter compose path for controller-injected messages
+// (e.g. planApprovedMessage after plan approval). Unlike Compose, it does not
+// re-inject plan mode markers, goals, or memory — those are already part of the
+// session context. It applies only transformations that synthetic messages need
+// (currently a no-op; will apply reasoning language when that feature lands).
+func (c *Controller) ComposeSynthetic(text string) string {
+	return text
+}
+
 func activeGoalBlock(goal string) string {
 	goal = strings.TrimSpace(goal)
 	goal = strings.ReplaceAll(goal, activeGoalClose, "<\\/active-goal>")
