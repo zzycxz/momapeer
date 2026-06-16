@@ -151,7 +151,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: momapeer ${{ github.ref_name }}
-          generate_release_notes: ${{ matrix.platform == 'linux/amd64' }}
+          body: |
+            ## MoMAPeer Desktop ${{ github.ref_name }}
+
+            See [CHANGELOG.md](https://github.com/zzycxz/momapeer/blob/main/CHANGELOG.md) for details.
           files: ./desktop/build/bin/${{ matrix.artifact }}
 
   manifest:
