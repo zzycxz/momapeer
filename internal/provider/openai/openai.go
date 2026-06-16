@@ -169,6 +169,7 @@ var MoMAReasoningModels = map[string]bool{
 	"z.ai/glm-5.1":                  true,
 	"z.ai/glm-5":                    true,
 	"minimax/minimax-m2.7":          true,
+	"minimax/minimax-m2.5":          true,
 	"moonshotai/kimi-k2.6":          true,
 	"moonshotai/kimi-k2.5-thinking": true,
 	"stepfun/step-3.5-flash":        true,

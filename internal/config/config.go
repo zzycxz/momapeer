@@ -986,7 +986,7 @@ var BuiltinMoMAModels = []string{
 	// 智谱
 	"z.ai/glm-5.1", "z.ai/glm-5",
 	// MiniMax
-	"minimax/minimax-m2.7",
+	"minimax/minimax-m2.7", "minimax/minimax-m2.5",
 	// 月之暗面
 	"moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking",
 	// 阶跃星辰

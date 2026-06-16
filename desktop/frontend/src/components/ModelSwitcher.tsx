@@ -14,12 +14,13 @@ interface CategoryDef {
 }
 
 const CATEGORIES: CategoryDef[] = [
-  { id: "qwen",     label: "千问",     prefixes: ["qwen/"] },
-  { id: "moma", label: "MoMA", prefixes: ["moma/"] },
-  { id: "jiutian",  label: "九天",     prefixes: ["jiutian/"] },
-  { id: "minimax",  label: "MiniMax",  prefixes: ["minimax/"] },
-  { id: "zai",      label: "智谱",     prefixes: ["z.ai/"] },
-  { id: "other",    label: "其他",     prefixes: ["openai/", "moonshotai/", "MoMA-"] },
+  { id: "qwen",     label: "千问",       prefixes: ["qwen/"] },
+  { id: "jiutian",  label: "九天",       prefixes: ["jiutian/"] },
+  { id: "deepseek", label: "DeepSeek",   prefixes: ["deepseek/"] },
+  { id: "minimax",  label: "MiniMax",    prefixes: ["minimax/"] },
+  { id: "zai",      label: "智谱",       prefixes: ["z.ai/"] },
+  { id: "moonshot", label: "月之暗面",   prefixes: ["moonshotai/"] },
+  { id: "other",    label: "其他",       prefixes: ["openai/", "stepfun/", "nvidia/", "moma/"] },
 ];
 
 function catForModel(modelName: string): string {
@@ -27,11 +28,12 @@ function catForModel(modelName: string): string {
     if (cat.prefixes.some((p) => modelName.startsWith(p))) return cat.id;
   }
   const lower = modelName.toLowerCase();
-  if (lower.includes("qwen"))     return "qwen";
-  if (lower.includes("moma")) return "moma";
-  if (lower.includes("jiutian"))  return "jiutian";
-  if (lower.includes("minimax"))  return "minimax";
+  if (lower.includes("qwen"))      return "qwen";
+  if (lower.includes("jiutian"))   return "jiutian";
+  if (lower.includes("deepseek"))  return "deepseek";
+  if (lower.includes("minimax"))   return "minimax";
   if (lower.includes("z.ai") || lower.includes("glm")) return "zai";
+  if (lower.includes("moonshot") || lower.includes("kimi")) return "moonshot";
   return "other";
 }
 
@@ -192,6 +194,8 @@ function providerLabel(provider: string): string {
     case "minimax":       return "MiniMax";
     case "zai":           return "Z.ai";
     case "jiutian":       return "Jiutian";
+    case "deepseek":      return "DeepSeek";
+    case "moonshot":      return "月之暗面";
     default:              return provider;
   }
 }
