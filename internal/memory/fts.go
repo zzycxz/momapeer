@@ -55,17 +55,15 @@ func (s *FTSStore) Close() error {
 	return s.db.Close()
 }
 
-// Upsert inserts or updates a memory file in the FTS index.
+// Upsert inserts or updates a memory file in the FTS index. FTS5 virtual tables
+// do not support ON CONFLICT, so we delete-then-insert.
 func (s *FTSStore) Upsert(path, scope, typ, body, fingerprint string) error {
+	if _, err := s.db.Exec("DELETE FROM memory_fts WHERE path = ?", path); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(`
 		INSERT INTO memory_fts (path, scope, type, body, fingerprint, last_indexed_at)
 		VALUES (?, ?, ?, ?, ?, datetime('now'))
-		ON CONFLICT(path) DO UPDATE SET
-			scope = excluded.scope,
-			type = excluded.type,
-			body = excluded.body,
-			fingerprint = excluded.fingerprint,
-			last_indexed_at = excluded.last_indexed_at
 	`, path, scope, typ, body, fingerprint)
 	return err
 }
@@ -78,11 +76,11 @@ func (s *FTSStore) Delete(path string) error {
 
 // FTSResult is one search result.
 type FTSResult struct {
-	Path   string
-	Scope  string
-	Type   string
+	Path    string
+	Scope   string
+	Type    string
 	Snippet string
-	Score  float64
+	Score   float64
 }
 
 // Search runs an FTS5 MATCH query with BM25 ranking. Results scoring below

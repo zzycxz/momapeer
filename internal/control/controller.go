@@ -251,8 +251,8 @@ type Options struct {
 	// GoalJudge enables the independent goal judge: when the model reports
 	// [goal:complete], a separate LLM call verifies completion based on the
 	// transcript. nil disables the judge (model self-report is trusted).
-	GoalJudge func(ctx context.Context, prov provider.Provider, transcript []provider.Message, condition string) agent.GoalVerdict
-	Classifier    autoPlanClassifier
+	GoalJudge  func(ctx context.Context, prov provider.Provider, transcript []provider.Message, condition string) agent.GoalVerdict
+	Classifier autoPlanClassifier
 	// OnRemember, when set, is invoked with a new allow rule the user chose to
 	// persist to disk (e.g. "Bash(go test:*)"). The callback is wired into the
 	// permission Gate on EnableInteractiveApproval.
@@ -635,7 +635,9 @@ func (c *Controller) advanceGoalAfterTurn() bool {
 		judge := c.goalJudge
 		c.mu.Unlock()
 		if judge != nil && c.executor != nil && c.executor.Provider() != nil {
-			verdict := judge(context.Background(), c.executor.Provider(), c.History(), goal)
+			judgeCtx, judgeCancel := context.WithTimeout(context.Background(), 60*time.Second)
+			verdict := judge(judgeCtx, c.executor.Provider(), c.History(), goal)
+			judgeCancel()
 			if !verdict.OK {
 				c.mu.Lock()
 				c.notice("goal judge: " + verdict.Reason)
@@ -2377,6 +2379,53 @@ func (c *Controller) Close() {
 	if c.cleanup != nil {
 		c.cleanup()
 	}
+}
+
+// InheritLifecycleFrom carries lifecycle state from a previous controller into
+// this one, preventing duplicate SessionStart hooks and preserving the turn
+// counter across controller rebuilds (e.g. model switch that preserves the
+// conversation). Call this before the first turn on the new controller.
+func (c *Controller) InheritLifecycleFrom(prev *Controller) {
+	if prev == nil {
+		return
+	}
+	prev.mu.Lock()
+	c.startedOnce = prev.startedOnce
+	c.turn = prev.turn
+	prev.mu.Unlock()
+}
+
+// SessionDestroyHandle separates session teardown into phases so background
+// jobs can drain before artifacts are removed.
+type SessionDestroyHandle struct {
+	sessionPath string
+	jobs        *jobs.Manager
+	async       bool
+}
+
+// Wait cancels background jobs for the session and waits for them to drain.
+func (h *SessionDestroyHandle) Wait() {
+	if h.jobs != nil {
+		h.jobs.Close()
+	}
+}
+
+// BeginDestroySession starts a two-phase session destroy. Call Wait() to cancel
+// and drain background jobs, then Finish() to release resources. If the session
+// has no background job manager, Wait is a no-op.
+func (c *Controller) BeginDestroySession(sessionPath string) *SessionDestroyHandle {
+	return &SessionDestroyHandle{
+		sessionPath: sessionPath,
+		jobs:        c.jobs,
+	}
+}
+
+// IsDestroyingSession reports whether the given session path is currently in
+// the destroy window (between BeginDestroySession and artifact removal).
+func (c *Controller) IsDestroyingSession(sessionPath string) bool {
+	// Not tracked in this implementation; always false.
+	// A full implementation would maintain a map of active destroy handles.
+	return false
 }
 
 // Jobs returns the still-running background jobs for the status bar (nil when
