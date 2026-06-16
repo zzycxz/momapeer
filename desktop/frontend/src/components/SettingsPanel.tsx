@@ -128,7 +128,7 @@ export function SettingsPanel({ onClose, onChanged, initialTab }: { onClose: () 
                 {tab === "general" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><GeneralSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
                 {tab === "models" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><ModelsSection s={s} busy={busy} apply={apply} backgroundApply={backgroundApply} /></SettingsPageShell>}
                 {tab === "bots" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><BotsSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
-                {tab === "mcp" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><MCPServersSettingsPage /></SettingsPageShell>}
+                {tab === "mcp" && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy ?? false} apply={apply}><MCPServersSettingsPage />{s && <WebSearchSection s={s} busy={busy} apply={apply} />}</SettingsPageShell>}
                 {tab === "skills" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><SkillsSettingsPage /></SettingsPageShell>}
                 {tab === "memory" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><MemorySettingsPage /></SettingsPageShell>}
                 {tab === "permissions" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><PermissionsSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
@@ -1693,33 +1693,6 @@ function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) 
               />
             </SettingsField>
           </SettingsSection>
-          
-          <SettingsSection title={t("settings.webSearchTitle") || "Web Search Engines (Fallback Chain)"} description={t("settings.webSearchDesc") || "Configure API keys for the native web_search tool. The system iterates through these engines securely."}>
-            <WebSearchKeyField
-              label="Brave Search"
-              apiKeyEnv="BRAVE_API_KEY"
-              keySet={s.webSearch?.braveKeySet}
-              busy={busy}
-              onSave={(env, val) => apply(() => app.SetProviderKey(env, val))}
-              onClear={(env) => apply(() => app.ClearProviderKey(env))}
-            />
-            <WebSearchKeyField
-              label="Exa Search"
-              apiKeyEnv="EXA_API_KEY"
-              keySet={s.webSearch?.exaKeySet}
-              busy={busy}
-              onSave={(env, val) => apply(() => app.SetProviderKey(env, val))}
-              onClear={(env) => apply(() => app.ClearProviderKey(env))}
-            />
-            <WebSearchKeyField
-              label="Linkup Search"
-              apiKeyEnv="LINKUP_API_KEY"
-              keySet={s.webSearch?.linkupKeySet}
-              busy={busy}
-              onSave={(env, val) => apply(() => app.SetProviderKey(env, val))}
-              onClear={(env) => apply(() => app.ClearProviderKey(env))}
-            />
-          </SettingsSection>
         </>
       ) : (
         <ProvidersSection s={s} busy={busy} apply={apply} />
@@ -2008,6 +1981,38 @@ function proxyModeLabel(mode: ProxyMode, t: ReturnType<typeof useT>): string {
     case "off":
       return t("settings.proxyMode.off");
   }
+}
+
+function WebSearchSection({ s, busy, apply }: SectionProps) {
+  const t = useT();
+  return (
+    <SettingsSection title={t("settings.webSearchTitle") || "Web Search Engines (Fallback Chain)"} description={t("settings.webSearchDesc") || "Configure API keys for the native web_search tool. The system iterates through these engines securely."}>
+      <WebSearchKeyField
+        label="Brave Search"
+        apiKeyEnv="BRAVE_API_KEY"
+        keySet={s.webSearch?.braveKeySet}
+        busy={busy}
+        onSave={(env, val) => apply(() => app.SetProviderKey(env, val))}
+        onClear={(env) => apply(() => app.ClearProviderKey(env))}
+      />
+      <WebSearchKeyField
+        label="Exa Search"
+        apiKeyEnv="EXA_API_KEY"
+        keySet={s.webSearch?.exaKeySet}
+        busy={busy}
+        onSave={(env, val) => apply(() => app.SetProviderKey(env, val))}
+        onClear={(env) => apply(() => app.ClearProviderKey(env))}
+      />
+      <WebSearchKeyField
+        label="Linkup Search"
+        apiKeyEnv="LINKUP_API_KEY"
+        keySet={s.webSearch?.linkupKeySet}
+        busy={busy}
+        onSave={(env, val) => apply(() => app.SetProviderKey(env, val))}
+        onClear={(env) => apply(() => app.ClearProviderKey(env))}
+      />
+    </SettingsSection>
+  );
 }
 
 function ProvidersSection({ s, busy, apply }: SectionProps) {

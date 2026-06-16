@@ -2400,7 +2400,6 @@ func (c *Controller) InheritLifecycleFrom(prev *Controller) {
 type SessionDestroyHandle struct {
 	sessionPath string
 	jobs        *jobs.Manager
-	async       bool
 }
 
 // Wait cancels background jobs for the session and waits for them to drain.

@@ -138,7 +138,7 @@ func runMaxJudge(ctx context.Context, prov provider.Provider, candidates []*MaxC
 	var userMsg strings.Builder
 	userMsg.WriteString("## Candidates\n\n")
 	for _, c := range candidates {
-		userMsg.WriteString(fmt.Sprintf("### Candidate %d\n\n", c.Index))
+		fmt.Fprintf(&userMsg, "### Candidate %d\n\n", c.Index)
 		if c.Reasoning != "" {
 			userMsg.WriteString("**Reasoning:** " + c.Reasoning[:min(len(c.Reasoning), 500)] + "\n\n")
 		}
@@ -148,7 +148,7 @@ func runMaxJudge(ctx context.Context, prov provider.Provider, candidates []*MaxC
 		if len(c.ToolCalls) > 0 {
 			userMsg.WriteString("**Proposed tool calls:**\n")
 			for _, tc := range c.ToolCalls {
-				userMsg.WriteString(fmt.Sprintf("- %s(%s)\n", tc.Name, tc.Arguments[:min(len(tc.Arguments), 200)]))
+				fmt.Fprintf(&userMsg, "- %s(%s)\n", tc.Name, tc.Arguments[:min(len(tc.Arguments), 200)])
 			}
 			userMsg.WriteString("\n")
 		}
@@ -204,7 +204,7 @@ func parseMaxJudgeResult(raw string, candidates []*MaxCandidate) *MaxJudgeResult
 func describeToolsForJudge(tools []provider.ToolCall) string {
 	var b strings.Builder
 	for _, tc := range tools {
-		b.WriteString(fmt.Sprintf("- %s: %s\n", tc.Name, tc.Arguments[:min(len(tc.Arguments), 300)]))
+		fmt.Fprintf(&b, "- %s: %s\n", tc.Name, tc.Arguments[:min(len(tc.Arguments), 300)])
 	}
 	return b.String()
 }

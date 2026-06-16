@@ -7,6 +7,8 @@
 - **Checkpoint 路径穿越防护加固**：`safePath` 从 `strings.HasPrefix` 前缀检查改为
   `filepath.Rel` + `filepath.IsLocal`，显式拒绝 `..`、UNC 路径等平台特定逃逸向量，
   尤其修复了 Windows 大小写不敏感文件系统上的潜在绕过。
+- **Memory store 路径穿越防护**：新增 `safeJoin(base, name)` 函数，应用于 `Save`、
+  `Path`、`Delete` 方法，防止通过 `remember` 工具的 name 参数注入 `../../` 等路径穿越。
 - **权限系统多 subject 评估**：`Decide()` 改为调用 `DecideSubjects()`，支持
   `move_file` 等多端点工具同时检查 source 和 destination 路径。
   此前仅检查第一个匹配的 subject，destination 的 deny 规则会被静默绕过。
@@ -36,6 +38,9 @@
   并消除了每次插件启动时重复探测 shell PATH 的开销。
 - **Checkpoint List() 进行中路径泄露**：`List()` 对当前进行中 turn 的 paths 置 nil，
   防止未提交的快照路径参与 CanCode 传播。
+- **FTS5 Upsert 重复行**：`ON CONFLICT` 在 FTS5 虚拟表上不生效（无 UNIQUE 约束），
+  改为 DELETE + INSERT 模式，避免搜索结果重复。
+- **Goal Judge 超时**：独立 judge 调用增加 60 秒超时保护，避免无响应 provider 导致永久阻塞。
 - **Desktop 自动更新修复**：`matchPlatform()` 过滤了非 `-installer.exe` 的 Windows 文件，
   导致 `latest.json` 缺少 Windows/macOS 平台条目，旧版本无法检测更新。
   修复后 `latest.json` 包含全部 6 个平台。
@@ -54,12 +59,32 @@
 
 ### Added
 
-- **Dream / Distill 后台智能体**：新增记忆整合（Dream）和工作流提炼（Distill）两个
-  后台智能体，定期自动运行，将会话中的持久知识提取到项目记忆、将重复工作流沉淀为技能文件。
-- **Goal Judge**：新增目标判断器，在每轮结束时评估用户请求是否已达成，
-  避免 agent 过度循环或提前结束。
-- **Memory 全文检索**：`internal/memory` 新增 FTS（全文搜索）索引，
-  支持对记忆内容的快速模糊搜索。
+- **Memory Archive 软删除**：`Delete()` 改为调用 `Archive()`，记忆文件移至 `.archive/`
+  目录并附加时间戳，而非永久删除。新增 `ListArchived()` 方法浏览归档历史。
+  用户误删记忆可追溯恢复。
+- **GlobalDir 跨项目记忆**：`Store` 新增 `GlobalDir` 字段，`user` 和 `feedback` 类型的记忆
+  路由到全局目录（`~/.config/momapeer/memory/global`），在所有项目间共享。
+  用户偏好和反馈指导不再因切换项目而丢失。
+- **Memory FTS5 全文检索**：新增 SQLite FTS5 索引（`internal/memory/fts.go`），
+  支持 BM25 排序搜索。`SearchService` 提供 `Search(query)` 接口，自动懒调和磁盘文件。
+  记忆从全量注入系统提示改为按需检索，token 开销随记忆数量线性增长而非全量注入。
+- **Goal 独立 Judge**：新增 `GoalJudge` 函数，当模型报告 `[goal:complete]` 时调用独立
+  LLM 模型评估目标是否真正达成（基于 transcript 证据，temperature=0）。
+  通过 `Options.GoalJudge` 配置注入，默认关闭（向后兼容）。防止代理乐观停止。
+- **Max Mode（Best-of-N）**：新增 `RunMaxStep` 函数，运行 N 个并行 propose-only 候选，
+  独立 judge 模型选择最佳候选，胜者的工具调用返回给调用方实际执行。
+  适用于复杂推理任务（架构设计、疑难 bug），可显著提升推理质量。
+- **Dream / Distill 后台智能体**：新增记忆整合（Dream，7 天周期）和工作流提炼（Distill，
+  30 天周期）两个后台智能体任务，将会话中的持久知识提取到项目记忆、将重复工作流沉淀为技能文件。
+  通过 `ShouldAutoDream` / `ShouldAutoDistill` 检查是否触发。
+- **ComposeSynthetic**：新增 `Controller.ComposeSynthetic(text)` 方法，为控制器注入的合成消息
+  （如 plan 审批后的执行指令）提供独立的组装路径，避免重复注入 plan mode 标记和 memory notes。
+- **PlanModeFromContext**：`callContext` 新增 `planMode` 字段，新增 `PlanModeFromContext(ctx)`
+  导出函数。工具可自查是否在 plan mode 下运行，条件性禁用写入相关界面。
+- **InheritLifecycleFrom**：新增 `Controller.InheritLifecycleFrom(prev)` 方法，
+  模型切换时保留 `startedOnce` 和 `turn` 计数，防止 SessionStart hook 重复触发。
+- **BeginDestroySession**：新增两阶段会话销毁机制（`BeginDestroySession` +
+  `SessionDestroyHandle`），分离后台任务取消和资源释放，避免孤儿进程。
 - **PermissionRequest hook 事件**：新增 `PermissionRequest` hook 事件类型，
   支持在权限审批时触发外部策略引擎。`Payload` 新增 `Subject` 字段。
 - **RenameSession API**：`branch.go` 新增 `RenameSession(sessionPath, title)` 方法，
@@ -79,6 +104,8 @@
 - **CONTRIBUTING.md / RELEASING.md**：分支引用从 `main-v2` 更新为 `main`。
 - **CI：桌面端 release 标记为 Latest**：添加 `make_latest: true`，
   确保 updater 的 `/releases/latest/` 指向桌面端而非 CLI。
+- **Provider.Content 类型统一**：新增 `modernc.org/sqlite` 依赖（纯 Go，无 CGo）
+  用于 Memory FTS5 索引。
 
 [0.1.6]: https://github.com/zzycxz/momapeer/releases/tag/desktop-v0.1.6
 

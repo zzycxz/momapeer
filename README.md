@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/zzycxz/momapeer/releases/tag/v0.1.0"><img src="https://img.shields.io/badge/version-v0.1.0-0153e5?style=flat-square" alt="Version 0.1.0"/></a>
+  <a href="https://github.com/zzycxz/momapeer/releases"><img src="https://img.shields.io/badge/version-v0.1.6-0153e5?style=flat-square" alt="Version 0.1.6"/></a>
   <a href="https://github.com/zzycxz/momapeer/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/zzycxz/momapeer/ci.yml?style=flat-square&label=ci&labelColor=161b22&logo=githubactions&logoColor=white" alt="CI"/></a>
   <a href="./LICENSE"><img src="https://img.shields.io/github/license/zzycxz/momapeer.svg?style=flat-square&color=8b949e&labelColor=161b22" alt="license"/></a>
   <a href="https://github.com/zzycxz/momapeer/stargazers"><img src="https://img.shields.io/github/stars/zzycxz/momapeer.svg?style=flat-square&color=dbab09&labelColor=161b22&logo=github&logoColor=white" alt="GitHub stars"/></a>
@@ -31,26 +31,28 @@
 
 ## momapeer 是什么？
 
-momapeer (v0.1.0) 是一款专为中国移动九天 (MoMA) 平台生态打造的 AI 智能编程助手，以高度可配置化和 MCP 插件体系为核心驱动力。
-它不仅提供强大的本地代码理解能力，更能深度接入九天大模型（如 `jiutian-lan-35b`）实现自然语言驱动的自主编程。
+momapeer 是一款专为中国移动九天 (MoMA) 平台生态打造的 AI 智能编程助手，以高度可配置化和 MCP 插件体系为核心驱动力。
+它不仅提供强大的本地代码理解能力，更能深度接入九天大模型（如 DeepSeek、Qwen、GLM 等 300+ 模型）实现自然语言驱动的自主编程。
 
-Agent 可以在 **终端**（TUI）、**桌面客户端**（基于 Wails）、**HTTP/SSE 服务器** 或 **多通道 IM 机器人**（企业微信 / 飞书）等全场景中运行——所有前端均由同一个高性能、传输无关的核心引擎驱动。
+Agent 可以在 **终端**（TUI）、**桌面客户端**（基于 Wails）、**HTTP/SSE 服务器** 或 **多通道 IM 机器人**（企业微信 / 飞书 / QQ）等全场景中运行——所有前端均由同一个高性能、传输无关的核心引擎驱动。
 
-> **开源声明：** 本项目针对中国移动九天平台与企业级场景进行了深度的架构优化与扩展。
+> **开源声明：** 本项目基于 [DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix) 进行二次开发，
+> 针对中国移动九天平台与企业级场景进行了深度的架构优化与扩展。
 
 ## 核心特性
 
 ### 工程化与生态
 
-- **九天原生架构** — 深度优化对接 MoMA 平台，通过 `momapeer.toml` 完全配置驱动，无侵入性。
-- **双模型协作引擎** — 支持双端模型协作（例如：逻辑推演规划器 + 代码生成执行器），大幅降低幻觉。
-- **MCP 插件生态** — 全面支持 Model Context Protocol (MCP)，外部工具以子进程形式通过 stdio JSON-RPC 运行，无限扩展 Agent 能力。
+- **九天原生架构** — 深度优化对接 MoMA 平台，支持 thinking mode 协议、reasoning_content 回传、28 个预置模型 CNY 定价，通过 `momapeer.toml` 完全配置驱动。
+- **双模型协作引擎** — 支持双端模型协作（逻辑推演规划器 + 代码生成执行器），大幅降低幻觉。
+- **MCP 插件生态** — 全面支持 Model Context Protocol (MCP)，外部工具以子进程形式通过 stdio / HTTP 运行，无限扩展 Agent 能力。
+- **内置 Web Search** — 集成 Brave → Exa → Linkup 三引擎链式降级搜索，无需外部 MCP 即可联网检索。
 - **极速轻量分发** — `CGO_ENABLED=0` 单二进制打包，极简部署，支持交叉编译 6 大操作系统架构。
 
 ### 内置智能工具箱（20+）
 
-原生集成全套 IDE 级工具链：`bash` · `read_file` · `write_file` · `edit_file` · `multi_edit` · `glob` · `grep` · `ls` ·
-`web_fetch` · `todo_write` · `complete_step` · `notebook_edit` · `workspace` · `preview` · `gitignore` ·
+原生集成全套 IDE 级工具链：`bash` · `read_file` · `write_file` · `edit_file` · `multi_edit` · `move_file` · `glob` · `grep`（支持超时） · `ls` ·
+`web_fetch` · `web_search` · `todo_write` · `complete_step` · `notebook_edit` · `workspace` · `preview` · `gitignore` ·
 `codegraph_*`（基于 tree-sitter 的项目级符号与调用图谱精准搜索）。
 
 ### 独家代码智能
@@ -58,11 +60,29 @@ Agent 可以在 **终端**（TUI）、**桌面客户端**（基于 Wails）、**
 - **CodeGraph 引擎** — 基于 tree-sitter + SQLite 构建本地化轻量级代码图谱。零 API 调用开销，后台静默建立 AST 索引，实现精准的方法调用与符号追踪。
 - **全栈 LSP 集成** — 与主流语言服务器深度绑定，提供诊断、跳转定义与交叉引用能力。
 
-### 自动化与安全
+### 自主智能与自进化
 
-- **规划驱动模式 (Plan Mode)** — 自动拦截高危操作，Agent 在执行文件修改或敏感 Shell 命令前需提交“执行规划”并等待人工签核。
-- **记忆化沉淀** — 分层知识库（项目级/个人/全局）与自动记忆存储，模型越用越懂你的代码库。
+- **Goal 独立 Judge** — 目标达成评估由独立 LLM 模型执行（基于 transcript 证据，temperature=0），防止代理乐观停止。
+- **Max Mode（Best-of-N）** — N 个并行候选推理 + 独立 judge 择优，适用于复杂架构设计和疑难 bug，显著提升推理质量。
+- **Dream / Distill 自进化** — Dream（7 天周期）自动沉淀会话知识到项目记忆；Distill（30 天周期）自动发现重复工作流并打包为可复用 Skill。
+- **Memory FTS5 全文检索** — 基于 SQLite FTS5 + BM25 排序的记忆搜索，按相关性检索而非全量注入，token 开销随记忆数量线性增长。
+- **Memory Archive 软删除** — 记忆删除后移至 `.archive/` 目录，可追溯恢复，不再永久丢失。
+- **GlobalDir 跨项目记忆** — 用户偏好和反馈指导记忆在所有项目间共享，切换项目不丢失积累。
+
+### 安全与可靠性
+
+- **权限系统多 subject 评估** — `move_file` 等多端点工具同时检查 source 和 destination 路径，deny 规则不会被绕过。
+- **Checkpoint 路径穿越防护** — `safePath` 使用 `filepath.IsLocal` 显式拒绝 `..`、UNC 路径等逃逸向量。
+- **Memory store 路径防护** — `safeJoin` 防止通过 `remember` 工具注入路径穿越攻击。
+- **Summarizer 超时保护** — 90 秒超时防止 LLM 流式卡死导致 compaction 永久阻塞。
+- **Transient 401 重试** — 网关偶发认证失败自动重试，减少虚假会话中断。
 - **检查点与时光倒流** — 引入代码修改快照系统，支持 `/rewind` 一键撤销，提供极致的容错安全网。
+
+### 规划驱动模式
+
+- **Plan Mode** — 自动拦截高危操作，Agent 在执行文件修改或敏感 Shell 命令前需提交"执行规划"并等待人工签核。
+- **Evidence-Backed 完成** — 每个计划步骤必须引用证据（验证命令、diff、文件路径），防止代理声称完成而无实际产出。
+- **PlanModeFromContext** — 工具可自查是否在 plan mode 下运行，条件性禁用写入相关界面。
 
 ## 全场景接入
 
@@ -70,13 +90,13 @@ Agent 可以在 **终端**（TUI）、**桌面客户端**（基于 Wails）、**
 |------|------|------|
 | **终端 TUI** | `momapeer chat` | 极客首选：沉浸式终端界面（基于 Charm Bubble Tea） |
 | **API 服务** | `momapeer serve` | 开放能力：提供标准 HTTP/SSE 编程接入接口 |
-| **桌面客户端** | Wails 图标启动 | UI 交互：提供原生 macOS / Windows / Linux 体验 |
-| **企业机器人** | `momapeer bot start` | 团队协作：企业微信 / 飞书等 IM 网关接入 |
+| **桌面客户端** | Wails 图标启动 | UI 交互：提供原生 macOS / Windows / Linux 多标签体验 |
+| **企业机器人** | `momapeer bot start` | 团队协作：企业微信 / 飞书 / QQ 等 IM 网关接入 |
 | **ACP 服务** | `momapeer acp` | 协议桥接：Agent Control Protocol 远程控制层 |
 
 ## 安装指南
 
-当前版本：**v0.1.0**
+当前版本：**v0.1.6**
 
 ```sh
 npm i -g momapeer                        # 任意系统——自动拉取对应平台的原生二进制
@@ -87,7 +107,7 @@ brew install zzycxz/momapeer/momapeer    # macOS 用户
 
 > **⚠️ macOS 桌面版安装必读：**
 > 如果您下载了 `.zip` 格式的 macOS 桌面端应用，由于这是开源项目未进行 Apple 开发者签名，解压后双击运行可能会提示 **"App is damaged and can't be opened"（文件已损坏，请移至废纸篓）**。
-> 
+>
 > **解决办法：** 打开终端，运行以下命令解除隔离保护（假设 App 在下载目录）：
 > ```sh
 > xattr -cr ~/Downloads/momapeer.app
@@ -138,8 +158,8 @@ $env:JIUTIAN_API_KEY = "您的真实密钥"
 default_model = "moma"
 
 [[providers]]
-name        = "moma"           
-kind        = "openai"         
+name        = "moma"
+kind        = "openai"
 base_url    = "https://jiutian.10086.cn/largemodel/moma/api/v3"
 model       = "moma/jiutian/jiutian-lan-35b"
 api_key_env = "JIUTIAN_API_KEY"
@@ -188,8 +208,6 @@ Developer → CLI / Desktop / HTTP / Bot / ACP
 
 项目包含 40 余个严格解耦的 Internal 包，依赖图谱遵循严格的无环单向流动：
 `cli → {agent, plugin, config} → {tool, provider}`
-
-
 
 ---
 

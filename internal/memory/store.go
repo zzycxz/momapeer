@@ -202,7 +202,7 @@ func (s Store) Save(m Memory) (string, error) {
 	// Remove stale copies from other directories.
 	for _, other := range s.dirs() {
 		if other != dir {
-			removeActiveMemoryInDir(other, name)
+			_ = removeActiveMemoryInDir(other, name) // best-effort; the primary save succeeded
 		}
 	}
 	return path, nil
@@ -424,34 +424,6 @@ func flushIndexIn(dir string, lines map[string]string) error {
 	return os.WriteFile(filepath.Join(dir, indexFile), []byte(b.String()), 0o644)
 }
 
-func removeMemoryFile(path string) error {
-	err := os.Remove(path)
-	if err == nil || os.IsNotExist(err) {
-		return nil
-	}
-	if !os.IsPermission(err) {
-		return err
-	}
-	repairOwnerWrite(path, false)
-	repairOwnerWrite(filepath.Dir(path), true)
-	err = os.Remove(path)
-	if err == nil || os.IsNotExist(err) {
-		return nil
-	}
-	return err
-}
-
-func repairOwnerWrite(path string, dir bool) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return
-	}
-	need := os.FileMode(0o600)
-	if dir {
-		need = 0o700
-	}
-	_ = os.Chmod(path, info.Mode().Perm()|need)
-}
 
 // render serializes a memory to frontmatter + body. The frontmatter mirrors the
 // auto-memory shape (name / description / metadata.type) so the files are
