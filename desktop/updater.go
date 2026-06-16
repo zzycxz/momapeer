@@ -271,20 +271,35 @@ func applyLinux(targz []byte) error {
 // installer targets the running app's own directory (issue #3217) so an update
 // overwrites in place instead of landing a second copy at the per-user default —
 // this also covers upgrades from builds that predate the registry InstallLocation.
-func applyWindows(installer []byte) error {
-	f, err := os.CreateTemp("", "momapeer-update-*.exe")
+func applyWindows(newExe []byte) error {
+	currentExe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	name := f.Name()
-	if _, err := f.Write(installer); err != nil {
-		f.Close()
+	if resolved, err := filepath.EvalSymlinks(currentExe); err == nil {
+		currentExe = resolved
+	}
+
+	// Write the new binary to a temp file beside the current one.
+	tmpPath := currentExe + ".new"
+	if err := os.WriteFile(tmpPath, newExe, 0o755); err != nil {
 		return err
 	}
-	if err := f.Close(); err != nil {
+
+	// Write a batch script that waits for the current process to exit, replaces
+	// the binary, cleans up, and relaunches.
+ batPath := filepath.Join(filepath.Dir(currentExe), "momapeer-update.bat")
+	bat := fmt.Sprintf(`@echo off
+:wait
+timeout /t 1 /nobreak >nul
+move /y "%s" "%s" >nul 2>&1
+if errorlevel 1 goto wait
+del "%%~f0" & start "" "%s"
+`, tmpPath, currentExe, currentExe)
+	if err := os.WriteFile(batPath, []byte(bat), 0o755); err != nil {
 		return err
 	}
-	return installerCommand(name, currentInstallDir()).Start()
+	return exec.Command("cmd", "/C", batPath).Start()
 }
 
 // currentInstallDir is the directory of the running executable — the location a

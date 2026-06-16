@@ -55,8 +55,7 @@ func TestGenManifest(t *testing.T) {
 	names := []string{
 		"momapeer-darwin-arm64.zip",
 		"momapeer-darwin-amd64.zip",
-		"momapeer-windows-amd64-installer.exe",
-		"momapeer-windows-amd64.zip", // portable download, not the updater channel
+		"momapeer-windows-amd64.exe", // CI-produced binary (updater channel)
 		"momapeer-linux-amd64.tar.gz",
 		"momapeer-linux-amd64.deb",            // human download, not the updater channel
 		"momapeer-linux-amd64.tar.gz.minisig", // must be skipped
@@ -90,7 +89,7 @@ func TestGenManifest(t *testing.T) {
 	if !ok {
 		t.Fatal("windows-amd64 missing")
 	}
-	wantURL := "https://github.com/zzycxz/momapeer/releases/download/desktop-v1.2.0/momapeer-windows-amd64-installer.exe"
+	wantURL := "https://github.com/zzycxz/momapeer/releases/download/desktop-v1.2.0/momapeer-windows-amd64.exe"
 	if win.URL != wantURL {
 		t.Fatalf("windows url = %q, want %q", win.URL, wantURL)
 	}

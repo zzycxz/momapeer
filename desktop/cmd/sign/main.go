@@ -212,9 +212,6 @@ func matchPlatform(name string) string {
 	if strings.HasSuffix(name, ".deb") {
 		return ""
 	}
-	if strings.Contains(name, "windows-amd64") && !strings.HasSuffix(name, "-installer.exe") {
-		return ""
-	}
 	for _, p := range platforms {
 		if strings.Contains(name, p) {
 			return p
