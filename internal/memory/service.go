@@ -17,8 +17,8 @@ const (
 
 // SearchService provides on-demand FTS5-backed memory search with BM25 ranking.
 type SearchService struct {
-	fts       *FTSStore
-	store     Store
+	fts        *FTSStore
+	store      Store
 	floorRatio float64
 	limit      int
 }

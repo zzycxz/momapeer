@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	grepMaxMatches    = 200
+	grepMaxMatches     = 200
 	grepDefaultTimeout = 30 * time.Second
 	grepMaxTimeout     = 300 * time.Second
 )

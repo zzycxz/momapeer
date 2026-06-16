@@ -24,10 +24,10 @@ const maxAuthRetries = 2
 
 // SendOptions configures SendWithRetry's behaviour.
 type SendOptions struct {
-	ProvName string // provider instance name for error messages
-	KeyEnv   string // api_key_env for AuthError
-	KeyPresent bool // a non-empty key was configured
-	RetryAuth  bool // retry 401/403 up to maxAuthRetries (key previously worked)
+	ProvName   string // provider instance name for error messages
+	KeyEnv     string // api_key_env for AuthError
+	KeyPresent bool   // a non-empty key was configured
+	RetryAuth  bool   // retry 401/403 up to maxAuthRetries (key previously worked)
 }
 
 const maxBackoff = 15 * time.Second

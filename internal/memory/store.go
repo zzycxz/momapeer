@@ -424,7 +424,6 @@ func flushIndexIn(dir string, lines map[string]string) error {
 	return os.WriteFile(filepath.Join(dir, indexFile), []byte(b.String()), 0o644)
 }
 
-
 // render serializes a memory to frontmatter + body. The frontmatter mirrors the
 // auto-memory shape (name / description / metadata.type) so the files are
 // interchangeable with that ecosystem and re-readable by loadMemory.
