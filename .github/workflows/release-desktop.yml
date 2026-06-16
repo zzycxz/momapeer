@@ -151,6 +151,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: momapeer ${{ github.ref_name }}
+          make_latest: true
           body: |
             ## MoMAPeer Desktop ${{ github.ref_name }}
 
