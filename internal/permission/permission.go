@@ -127,10 +127,32 @@ func New(mode string, allow, ask, deny []string) Policy {
 
 // Decide evaluates a tool call. readOnly is the tool's own classification; args
 // is the raw JSON the model sent, from which the call's subject is extracted
-// for glob matching. Precedence: deny > ask > allow > fallback (Allow for
-// readers, Mode for writers).
+// for glob matching. Calls with multiple subjects, such as move_file's source
+// and destination paths, must be safe for every subject before the call is
+// allowed. Precedence: deny > ask > allow > fallback (Allow for readers, Mode
+// for writers).
 func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Decision {
-	return p.DecideSubject(toolName, readOnly, Subject(args))
+	return p.DecideSubjects(toolName, readOnly, Subjects(args))
+}
+
+// DecideSubjects evaluates a tool call when the caller already extracted one or
+// more approval subjects from args. If any subject is denied, the whole call is
+// denied; if any requires approval, the call asks; only when every subject is
+// allowed does the call proceed without prompting.
+func (p Policy) DecideSubjects(toolName string, readOnly bool, subjects []string) Decision {
+	if len(subjects) == 0 {
+		return p.DecideSubject(toolName, readOnly, "")
+	}
+	out := Allow
+	for _, subject := range subjects {
+		switch p.DecideSubject(toolName, readOnly, subject) {
+		case Deny:
+			return Deny
+		case Ask:
+			out = Ask
+		}
+	}
+	return out
 }
 
 // DecideSubject evaluates a tool call when the caller already extracted the
@@ -228,26 +250,39 @@ func bashRulePrefixBaseMatches(existing, candidate Rule) bool {
 // subjectKeys are the JSON argument keys, in priority order, that carry a tool
 // call's "subject" — the thing a Subject glob matches against. Generic so tools
 // need not implement a permission-specific method: bash exposes command, the
-// file tools expose path / file_path, grep & glob expose pattern.
-var subjectKeys = []string{"command", "file_path", "path", "pattern"}
+// file tools expose path / file_path, grep & glob expose pattern. Multi-endpoint
+// tools like move_file expose source_path + destination_path.
+var subjectKeys = []string{"command", "file_path", "path", "source_path", "destination_path", "pattern"}
 
-// Subject extracts the matchable subject string from a call's raw JSON args,
-// returning "" when none of the known keys is present (such a call only matches
-// bare "ToolName" rules).
-func Subject(args json.RawMessage) string {
+// Subjects extracts all matchable subject strings from a call's raw JSON args.
+// Multi-endpoint tools (e.g. move_file with source_path + destination_path)
+// return multiple entries so permission evaluation can check every endpoint.
+func Subjects(args json.RawMessage) []string {
 	if len(args) == 0 {
-		return ""
+		return nil
 	}
 	var m map[string]any
 	if err := json.Unmarshal(args, &m); err != nil {
-		return ""
+		return nil
 	}
+	var out []string
 	for _, k := range subjectKeys {
 		if v, ok := m[k]; ok {
 			if s, ok := v.(string); ok && s != "" {
-				return s
+				out = append(out, s)
 			}
 		}
+	}
+	return out
+}
+
+// Subject extracts the first matchable subject string from a call's raw JSON
+// args, returning "" when none of the known keys is present (such a call only
+// matches bare "ToolName" rules).
+func Subject(args json.RawMessage) string {
+	subjects := Subjects(args)
+	if len(subjects) > 0 {
+		return subjects[0]
 	}
 	return ""
 }

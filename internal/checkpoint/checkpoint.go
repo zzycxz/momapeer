@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -212,6 +211,11 @@ func (s *Store) List() []Meta {
 		for i, f := range c.Files {
 			paths[i] = f.Path
 		}
+		// The current in-progress turn's files haven't been committed yet —
+		// they must not participate in CanCode propagation.
+		if c == s.cur {
+			paths = nil
+		}
 		out = append(out, Meta{Turn: c.Turn, Time: c.Time, Prompt: c.Prompt, Paths: paths})
 	}
 	return out
@@ -296,7 +300,8 @@ func detectCurrentEncoding(path string) *fileenc.Kind {
 
 // safePath resolves p against root and rejects anything escaping it — restore
 // must never write outside the workspace, even if a snapshot path is hostile or
-// the project moved since it was taken.
+// the project moved since it was taken. Uses filepath.IsLocal (Go 1.20+) for
+// robust rejection of "..", UNC paths, and other platform-specific escape vectors.
 func safePath(root, p string) (string, error) {
 	abs := p
 	if !filepath.IsAbs(abs) {
@@ -305,7 +310,8 @@ func safePath(root, p string) (string, error) {
 	abs = filepath.Clean(abs)
 	if root != "" {
 		r := filepath.Clean(root)
-		if abs != r && !strings.HasPrefix(abs, r+string(os.PathSeparator)) {
+		rel, err := filepath.Rel(r, abs)
+		if err != nil || !filepath.IsLocal(rel) {
 			return "", fmt.Errorf("checkpoint path %q escapes workspace %q", p, root)
 		}
 	}

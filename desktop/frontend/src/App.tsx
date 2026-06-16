@@ -692,7 +692,6 @@ export default function App() {
   const [activeSidebarImConnectionId, setActiveSidebarImConnectionId] = useState("");
   const [sidebarImDetailConnectionId, setSidebarImDetailConnectionId] = useState("");
   const [sidebarImExpanded, setSidebarImExpanded] = useState(false);
-  const [isDevBuild, setIsDevBuild] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [sidebarResizing, setSidebarResizing] = useState(false);
@@ -743,7 +742,6 @@ export default function App() {
   useWindowStatePersistence();
 
   useEffect(() => {
-    void app.Version().then((v) => setIsDevBuild(v === "dev"));
   }, []);
 
   const closeTransientOverlays = useCallback(() => {
@@ -2280,7 +2278,6 @@ export default function App() {
           </section>
 
           <nav className="sidebar__nav">
-          {isDevBuild && (
           <div className={`sidebar-im${sidebarImExpanded ? " sidebar-im--expanded" : ""}`} aria-label={t("sidebar.im")}>
             <button
               className="sidebar-im__summary"
@@ -2351,7 +2348,6 @@ export default function App() {
               </div>
             )}
           </div>
-          )}
             <Tooltip label={t("sidebar.allHistory")} fill side="right" disabled={sidebarNavTooltipDisabled}>
               <button
                 className="sidebar__navitem"
@@ -2766,7 +2762,6 @@ export default function App() {
       {settingsTarget !== null && (
         <SettingsPanel
           initialTab={settingsTarget}
-          isDevBuild={isDevBuild}
           onClose={() => setSettingsTarget(null)}
           onChanged={() => {
             void refreshMeta();
