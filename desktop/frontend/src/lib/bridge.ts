@@ -629,10 +629,10 @@ function makeMockApp(): AppBindings {
     subagentEffort: "",
     autoPlan: "off",
     providers: [
-      { name: "moma", builtIn: true, added: false, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-13b", "jiutian/jiutian-lan-8b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-math-8b", "jiutian/jiutian-code-8b", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-235b-a22b-2507", "qwen/qwen3-next-80b-a3b-instruct", "qwen/qwen3.5-27b", "qwen/qwen3.5-9b", "qwen/qwen3.5-4b", "qwen/qwen3-coder-next", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v32", "deepseek/deepseek-v3", "deepseek/deepseek-r1", "z.ai/glm-5.1", "z.ai/glm-5", "minimax/minimax-m2.7", "minimax/minimax-m2.5", "minimax/minimax-latest", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "stepfun/step-3.5-flash", "nvidia/nemotron-3-super", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: true, balanceUrl: "", contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
+      { name: "moma", builtIn: true, added: false, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-coder-next", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v32", "z.ai/glm-5.1", "z.ai/glm-5", "minimax/minimax-m2.7", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "stepfun/step-3.5-flash", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: true, balanceUrl: "", contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
     ],
     officialProviders: [
-      { name: "moma", builtIn: true, added: false, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-13b", "jiutian/jiutian-lan-8b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-math-8b", "jiutian/jiutian-code-8b", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-235b-a22b-2507", "qwen/qwen3-next-80b-a3b-instruct", "qwen/qwen3.5-27b", "qwen/qwen3.5-9b", "qwen/qwen3.5-4b", "qwen/qwen3-coder-next", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v32", "deepseek/deepseek-v3", "deepseek/deepseek-r1", "z.ai/glm-5.1", "z.ai/glm-5", "minimax/minimax-m2.7", "minimax/minimax-m2.5", "minimax/minimax-latest", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "stepfun/step-3.5-flash", "nvidia/nemotron-3-super", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: true, balanceUrl: "", contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
+      { name: "moma", builtIn: true, added: false, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-coder-next", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v32", "z.ai/glm-5.1", "z.ai/glm-5", "minimax/minimax-m2.7", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "stepfun/step-3.5-flash", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: true, balanceUrl: "", contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
     ],
     permissions: { mode: "ask", allow: ["ls", "read_file"], ask: [], deny: ["Bash(rm:*)"] },
     sandbox: { bash: "enforce", network: true, workspaceRoot: "", allowWrite: [] },
@@ -1072,10 +1072,10 @@ function makeMockApp(): AppBindings {
   ];
   const mockModelCatalog = [
     { ref: "qwen/qwen3.6-35b", provider: "moma", model: "qwen3.6-35b" },
-    { ref: "qwen/qwen3-next-80b-a3b-instruct", provider: "moma", model: "qwen3-next-80b-a3b-instruct" },
+    { ref: "deepseek/deepseek-v32", provider: "moma", model: "deepseek-v32" },
     { ref: "openai/gpt-oss-120b", provider: "moma", model: "gpt-oss-120b" },
     { ref: "moonshotai/kimi-k2.6", provider: "moma", model: "kimi-k2.6" },
-    { ref: "minimax/minimax-latest", provider: "moma", model: "minimax-latest" },
+    { ref: "minimax/minimax-m2.7", provider: "moma", model: "minimax-m2.7" },
   ];
   const defaultMockModelRef = mockModelCatalog[0].ref;
   const mockModelRef = (name: string): string => {
@@ -1811,10 +1811,10 @@ function makeMockApp(): AppBindings {
         ],
         "/model": [
           { label: "qwen/qwen3.6-35b", insert: "qwen/qwen3.6-35b", hint: "current" },
-          { label: "qwen/qwen3-next-80b-a3b-instruct", insert: "qwen/qwen3-next-80b-a3b-instruct", hint: "" },
+          { label: "deepseek/deepseek-v32", insert: "deepseek/deepseek-v32", hint: "" },
           { label: "openai/gpt-oss-120b", insert: "openai/gpt-oss-120b", hint: "" },
           { label: "moonshotai/kimi-k2.6", insert: "moonshotai/kimi-k2.6", hint: "" },
-          { label: "minimax/minimax-latest", insert: "minimax/minimax-latest", hint: "" },
+          { label: "minimax/minimax-m2.7", insert: "minimax/minimax-m2.7", hint: "" },
         ],
         "/effort": [
           { label: "auto", insert: "auto", hint: "use the model default" },
@@ -2041,7 +2041,7 @@ function makeMockApp(): AppBindings {
     },
     async AddOfficialProviderAccess(kind: string, key: string) {
       const templates: Record<string, ProviderView> = {
-        moma: { name: "moma", builtIn: true, added: true, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-13b", "jiutian/jiutian-lan-8b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-math-8b", "jiutian/jiutian-code-8b", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-235b-a22b-2507", "qwen/qwen3-next-80b-a3b-instruct", "qwen/qwen3.5-27b", "qwen/qwen3.5-9b", "qwen/qwen3.5-4b", "qwen/qwen3-coder-next", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v32", "deepseek/deepseek-v3", "deepseek/deepseek-r1", "z.ai/glm-5.1", "z.ai/glm-5", "minimax/minimax-m2.7", "minimax/minimax-m2.5", "minimax/minimax-latest", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "stepfun/step-3.5-flash", "nvidia/nemotron-3-super", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: !!key.trim(), balanceUrl: "", contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
+        moma: { name: "moma", builtIn: true, added: true, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-coder-next", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v32", "z.ai/glm-5.1", "z.ai/glm-5", "minimax/minimax-m2.7", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "stepfun/step-3.5-flash", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: !!key.trim(), balanceUrl: "", contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
       };
       const next = templates[kind] ?? templates.moma;
       const i = settings.providers.findIndex((x) => x.name === next.name);
@@ -2052,7 +2052,7 @@ function makeMockApp(): AppBindings {
       if (!p.baseUrl.trim()) throw new Error(t("settings.fetchModelsMissingBaseUrl"));
       if (!p.apiKeyEnv.trim()) throw new Error(t("settings.fetchModelsMissingKeyEnv"));
       await delay(350);
-      if (p.baseUrl.includes("jiutian")) return ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-13b", "jiutian/jiutian-lan-8b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-math-8b", "jiutian/jiutian-code-8b", "jiutian/jiutian-da-35b"];
+      if (p.baseUrl.includes("jiutian")) return ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b"];
       return ["openai/gpt-oss-120b", "qwen/qwen3.6-35b"];
     },
     async DeleteProvider(name: string) {
