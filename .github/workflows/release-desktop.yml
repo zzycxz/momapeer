@@ -125,6 +125,21 @@ jobs:
             exit 1
           fi
 
+      - name: Strip debug symbols (Linux/macOS)
+        if: runner.os != 'Windows'
+        working-directory: ./desktop/build/bin
+        run: strip ${{ matrix.binary_name }}
+
+      - name: Strip debug symbols (Windows)
+        if: runner.os == 'Windows'
+        working-directory: ./desktop/build/bin
+        shell: bash
+        run: |
+          # Try strip from MinGW/Git Bash, then llvm-strip from LLVM-MinGW
+          strip "${{ matrix.binary_name }}" 2>/dev/null || \
+          llvm-strip "${{ matrix.binary_name }}" 2>/dev/null || \
+          echo "strip not available, skipping"
+
       - name: Upload Build Log
         if: failure()
         uses: actions/upload-artifact@v4
