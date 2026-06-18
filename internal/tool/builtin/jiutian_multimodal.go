@@ -149,7 +149,7 @@ func (*imageGenerate) Execute(ctx context.Context, args json.RawMessage) (string
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Generated %d image(s):\n", len(result.Choices[0].Data)))
+	fmt.Fprintf(&sb, "Generated %d image(s):\n", len(result.Choices[0].Data))
 	for i, img := range result.Choices[0].Data {
 		// The /fs/getFile link requires the API-key Bearer header, so a bare URL
 		// answers 401. Download each image with auth and save it under
@@ -158,26 +158,26 @@ func (*imageGenerate) Execute(ctx context.Context, args json.RawMessage) (string
 		downloadURL := fmt.Sprintf("https://jiutian.10086.cn/largemodel/moma/api/v1/fs/getFile?key=%s", img.URL)
 		raw, mime, err := jiutianDownloadFile(ctx, downloadURL)
 		if err != nil {
-			sb.WriteString(fmt.Sprintf("  %d: %s  (本地保存失败：%v；该链接需带 API Key 访问)\n", i+1, downloadURL, err))
+			fmt.Fprintf(&sb, "  %d: %s  (本地保存失败：%v；该链接需带 API Key 访问)\n", i+1, downloadURL, err)
 			continue
 		}
 		rel, err := saveImageAttachment(mime, raw)
 		if err != nil {
-			sb.WriteString(fmt.Sprintf("  %d: %s  (本地保存失败：%v；该链接需带 API Key 访问)\n", i+1, downloadURL, err))
+			fmt.Fprintf(&sb, "  %d: %s  (本地保存失败：%v；该链接需带 API Key 访问)\n", i+1, downloadURL, err)
 			continue
 		}
 		// Output as markdown image syntax so the chat renders the picture inline
 		// (Markdown.tsx resolves .momapeer/attachments paths to data URLs). The
 		// file is already saved locally by SaveImageBytes, satisfying "save to
 		// project + show in chat" without relying on the model echoing anything.
-		sb.WriteString(fmt.Sprintf("  %d: ![image](%s)\n", i+1, rel))
-		sb.WriteString(fmt.Sprintf("     (saved to %s)\n", rel))
+		fmt.Fprintf(&sb, "  %d: ![image](%s)\n", i+1, rel)
+		fmt.Fprintf(&sb, "     (saved to %s)\n", rel)
 	}
 	if result.Choices[0].Text != "" {
-		sb.WriteString(fmt.Sprintf("Description: %s\n", result.Choices[0].Text))
+		fmt.Fprintf(&sb, "Description: %s\n", result.Choices[0].Text)
 	}
 	c := result.Choices[0]
-	sb.WriteString(fmt.Sprintf("(%dx%d, %s, %d tokens)", c.WidthResult, c.HeightResult, c.RatioResult, result.Usage.CompletionTokens))
+	fmt.Fprintf(&sb, "(%dx%d, %s, %d tokens)", c.WidthResult, c.HeightResult, c.RatioResult, result.Usage.CompletionTokens)
 	return sb.String(), nil
 }
 

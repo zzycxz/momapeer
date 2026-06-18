@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -230,7 +231,7 @@ func main() {
 *** End Patch`
 
 	a := applyPatch{workDir: dir}
-	result, err := a.Execute(nil, mustJSON(patch))
+	result, err := a.Execute(context.TODO(), mustJSON(patch))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
@@ -270,7 +271,7 @@ func TestApplyPatch_DeleteIntegration(t *testing.T) {
 *** End Patch`
 
 	a := applyPatch{workDir: dir}
-	result, err := a.Execute(nil, mustJSON(patch))
+	result, err := a.Execute(context.TODO(), mustJSON(patch))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
@@ -285,7 +286,7 @@ func TestApplyPatch_DeleteIntegration(t *testing.T) {
 
 func TestApplyPatch_EmptyPatchText(t *testing.T) {
 	a := applyPatch{}
-	_, err := a.Execute(nil, mustJSON(""))
+	_, err := a.Execute(context.TODO(), mustJSON(""))
 	if err == nil {
 		t.Fatal("expected error for empty patchText")
 	}

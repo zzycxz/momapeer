@@ -154,11 +154,7 @@ func parseAddContent(lines []string, start, end int) (string, int) {
 		}
 		i++
 	}
-	result := content.String()
-	if strings.HasSuffix(result, "\n") {
-		result = result[:len(result)-1]
-	}
-	return result, i
+	return strings.TrimSuffix(content.String(), "\n"), i
 }
 
 func parseUpdateChunks(lines []string, start, end int) ([]updateChunk, int) {

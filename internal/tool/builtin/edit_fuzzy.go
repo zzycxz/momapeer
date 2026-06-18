@@ -222,6 +222,8 @@ func stripAllIndent(s string) string {
 }
 
 // normalizeIndent strips the common leading whitespace from all lines.
+//
+//nolint:unused // retained for future fuzzy-match improvements
 func normalizeIndent(s string) (string, int) {
 	lines := strings.Split(s, "\n")
 	minIndent := -1
@@ -245,6 +247,7 @@ func normalizeIndent(s string) (string, int) {
 	return strings.Join(lines, "\n"), minIndent
 }
 
+//nolint:unused // used by normalizeIndent
 func countLeadingSpaces(s string) int {
 	count := 0
 	for _, r := range s {
@@ -331,6 +334,8 @@ func linesContainInOrder(content, target []string) bool {
 }
 
 // isCJK reports whether r is a CJK ideograph, kana, or hangul.
+//
+//nolint:unused // retained for future CJK-aware fuzzy matching
 func isCJK(r rune) bool {
 	return unicode.Is(unicode.Han, r) ||
 		unicode.Is(unicode.Hiragana, r) ||

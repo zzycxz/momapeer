@@ -381,10 +381,10 @@ func runKind(ctx context.Context, sessionDir string, kind DreamKind, task string
 	sub := New(prov, reg, sess, Options{}, sink)
 	err := sub.Run(bgCtx, task)
 	run.Duration = time.Since(run.StartedAt).Truncate(time.Second).String()
-	switch {
-	case err == nil:
+	switch err {
+	case nil:
 		run.Status = "ok"
-	case err == context.DeadlineExceeded:
+	case context.DeadlineExceeded:
 		run.Status = "timeout"
 		run.Error = err.Error()
 	default:
