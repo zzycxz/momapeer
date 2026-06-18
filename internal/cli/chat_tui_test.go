@@ -831,8 +831,8 @@ func TestEffortCommandWritesCurrentMoMAProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read saved config: %v", err)
 	}
-	if !strings.Contains(string(body), `effort      = "high"`) {
-		t.Fatalf("saved config missing effort=high (max clamped to high):\n%s", body)
+	if !strings.Contains(string(body), `effort      = "max"`) {
+		t.Fatalf("saved config missing effort=max:\n%s", body)
 	}
 }
 
