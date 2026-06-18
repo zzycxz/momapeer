@@ -200,7 +200,7 @@ func (gw *BotGateway) handleMessage(ctx context.Context, plat Platform, adapter 
 		// 开放模式（默认）：自动加入
 		gw.logger.Info("user not in allowlist, auto-adding", "platform", plat, "user_id", msg.UserID)
 		gw.autoAddToAllowlist(plat, msg.UserID)
-		_ = gw.sendText(ctx, adapter, msg, fmt.Sprintf("👋 您好！您已被自动加入白名单，现在可以正常使用了。", msg.UserID))
+		_ = gw.sendText(ctx, adapter, msg, "👋 您好！您已被自动加入白名单，现在可以正常使用了。")
 	}
 
 	src := msg.Session()
