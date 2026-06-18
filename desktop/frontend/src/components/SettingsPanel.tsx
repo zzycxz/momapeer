@@ -439,6 +439,7 @@ function defaultBotSettings(): BotSettingsView {
     allowlist: {
       enabled: true,
       allowAll: false,
+      mode: "open",
       qqUsers: [],
       feishuUsers: [],
       weixinUsers: [],
@@ -1148,6 +1149,38 @@ function BotsSection({ s, busy, apply }: SectionProps) {
           </div>
         </div>
 
+        <div className="bot-access-mode">
+          <strong>{t("settings.botAccessMode")}</strong>
+          <div className="bot-access-mode__options">
+            <label className="bot-access-mode__option">
+              <input
+                type="radio"
+                name="bot-access-mode"
+                checked={(draft.allowlist.mode || "open") === "open"}
+                disabled={busy}
+                onChange={() => setDraft((prev) => ({ ...prev, allowlist: { ...prev.allowlist, mode: "open" } }))}
+              />
+              <span>
+                <strong>{t("settings.botAccessModeOpen")}</strong>
+                <em>{t("settings.botAccessModeOpenHint")}</em>
+              </span>
+            </label>
+            <label className="bot-access-mode__option">
+              <input
+                type="radio"
+                name="bot-access-mode"
+                checked={(draft.allowlist.mode || "open") === "review"}
+                disabled={busy}
+                onChange={() => setDraft((prev) => ({ ...prev, allowlist: { ...prev.allowlist, mode: "review" } }))}
+              />
+              <span>
+                <strong>{t("settings.botAccessModeReview")}</strong>
+                <em>{t("settings.botAccessModeReviewHint")}</em>
+              </span>
+            </label>
+          </div>
+        </div>
+
         <div className="bot-connection-list bot-connection-list--simple">
           <div className="bot-connection-list__head">
             <strong>{t("settings.botConnectedBots")}</strong>
@@ -1158,7 +1191,6 @@ function BotsSection({ s, busy, apply }: SectionProps) {
             <div className="bot-connection-table" role="table" aria-label={t("settings.botConnectedBots")}>
               <div className="bot-connection-table__header" role="row">
                 <span>{t("settings.botConnectionColumnChannel")}</span>
-                <span>{t("settings.botConnectionColumnName")}</span>
                 <span>{t("settings.botConnectionColumnRemote")}</span>
                 <span>{t("settings.botConnectionColumnScope")}</span>
                 <span>{t("settings.botConnectionColumnStatus")}</span>
@@ -1169,11 +1201,10 @@ function BotsSection({ s, busy, apply }: SectionProps) {
                   <div className="bot-connection-row__grid" role="row">
                     <div className="bot-connection-row__channel" role="cell">
                       <span className={`bot-connection-row__badge bot-connection-row__badge--${connection.provider === "weixin" ? "weixin" : connection.domain === "lark" ? "lark" : "feishu"}`}>
-                        {connection.provider === "weixin" ? "微" : connection.domain === "lark" ? "L" : "飞"}
+                        {connection.provider === "weixin" ? "微" : connection.domain === "lark" ? "L" : "@"}
                       </span>
-                      <span>{botConnectionLabel(connection, t)}</span>
+                      <span>{connection.label || botConnectionLabel(connection, t)}</span>
                     </div>
-                    <strong role="cell">{connection.label || botConnectionLabel(connection, t)}</strong>
                     <code role="cell">{botConnectionRemoteLabel(connection)}</code>
                     <span role="cell">{botConnectionScopeLabel(connection, t)}</span>
                     <span className={`bot-connection-row__status bot-connection-row__status--${connection.status === "connected" ? "connected" : "disconnected"}`} role="cell">

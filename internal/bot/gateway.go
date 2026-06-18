@@ -23,6 +23,9 @@ type GatewayConfig struct {
 	Allowlist     AllowlistConfig
 	Enabled       map[Platform]bool
 	Debounce      time.Duration
+	// AllowlistSaver 当新用户被自动加入白名单时调用，用于持久化。
+	// 参数为更新后的完整 AllowlistConfig。nil 表示不持久化。
+	AllowlistSaver func(AllowlistConfig)
 }
 
 // ChannelConfig overrides gateway defaults for one IM channel.
@@ -35,6 +38,7 @@ type ChannelConfig struct {
 type AllowlistConfig struct {
 	Enabled  bool
 	AllowAll bool
+	Mode     string // "open"（自动加入）| "review"（需审批）
 	Users    map[Platform][]string
 	Groups   map[Platform][]string
 }
@@ -176,6 +180,7 @@ func (gw *BotGateway) dispatchLoop(ctx context.Context, plat Platform, adapter A
 			if !ok {
 				return
 			}
+			gw.logger.Info("[gateway] message received", "platform", plat, "user_id", msg.UserID)
 			gw.handleMessage(ctx, plat, adapter, msg)
 		}
 	}
@@ -186,9 +191,16 @@ func (gw *BotGateway) handleMessage(ctx context.Context, plat Platform, adapter 
 
 	// allowlist 检查
 	if !gw.checkAllowlist(plat, msg) {
-		gw.logger.Info("user not in allowlist", "platform", plat, "user", hashID(msg.UserID))
-		_ = gw.sendText(ctx, adapter, msg, "抱歉，您没有使用此 bot 的权限。")
-		return
+		if gw.cfg.Allowlist.Mode == "review" {
+			// 审核模式：拒绝并显示 user_id
+			gw.logger.Info("user not in allowlist (review mode)", "platform", plat, "user_id", msg.UserID)
+			_ = gw.sendText(ctx, adapter, msg, fmt.Sprintf("⏳ 您尚未获得使用权限。\n\n您的 user_id: %s\n\n请将此 ID 发送给管理员，等待审批通过后即可使用。", msg.UserID))
+			return
+		}
+		// 开放模式（默认）：自动加入
+		gw.logger.Info("user not in allowlist, auto-adding", "platform", plat, "user_id", msg.UserID)
+		gw.autoAddToAllowlist(plat, msg.UserID)
+		_ = gw.sendText(ctx, adapter, msg, fmt.Sprintf("👋 您好！您已被自动加入白名单，现在可以正常使用了。", msg.UserID))
 	}
 
 	src := msg.Session()
@@ -209,7 +221,6 @@ func (gw *BotGateway) handleMessage(ctx context.Context, plat Platform, adapter 
 		return
 	}
 	if !acquired {
-		// 正在处理中且非 bypass 命令，已在 TryAcquire 中入队
 		gw.logger.Debug("session busy, queued", "session", key[:8])
 		return
 	}
@@ -228,6 +239,46 @@ func (gw *BotGateway) addPendingReaction(ctx context.Context, plat Platform, ada
 	if err := reactor.AddPendingReaction(ctx, msg.MessageID); err != nil {
 		gw.logger.Warn("pending reaction failed", "platform", plat, "err", err)
 	}
+}
+
+// autoAddToAllowlist 将用户自动加入内存白名单，并通过回调持久化。
+func (gw *BotGateway) autoAddToAllowlist(plat Platform, userID string) {
+	gw.mu.Lock()
+	if gw.allowlist[plat] == nil {
+		gw.allowlist[plat] = make(map[string]bool)
+	}
+	gw.allowlist[plat][userID] = true
+	// 构建当前完整的 allowlist 配置用于持久化
+	cfg := gw.snapshotAllowlist()
+	gw.mu.Unlock()
+
+	if gw.cfg.AllowlistSaver != nil {
+		gw.cfg.AllowlistSaver(cfg)
+	}
+}
+
+// snapshotAllowlist 从内存白名单生成 AllowlistConfig。调用方需持锁。
+func (gw *BotGateway) snapshotAllowlist() AllowlistConfig {
+	cfg := gw.cfg.Allowlist
+	cfg.Enabled = true
+	cfg.AllowAll = false
+	cfg.Users = map[Platform][]string{
+		PlatformFeishu: allowlistKeys(gw.allowlist[PlatformFeishu]),
+		PlatformWeixin: allowlistKeys(gw.allowlist[PlatformWeixin]),
+		PlatformQQ:     allowlistKeys(gw.allowlist[PlatformQQ]),
+	}
+	return cfg
+}
+
+func allowlistKeys(m map[string]bool) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 func (gw *BotGateway) checkAllowlist(plat Platform, msg InboundMessage) bool {
@@ -343,6 +394,9 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 		gw.mu.Unlock()
 		_ = gw.sendText(ctx, adapter, msg, fmt.Sprintf("活跃任务数: %d\n保留会话数: %d", active, sessions))
 
+	case strings.HasPrefix(msg.Text, "/whoami"):
+		_ = gw.sendText(ctx, adapter, msg, fmt.Sprintf("平台: %s\n用户 ID: %s", msg.Platform, msg.UserID))
+
 	case strings.HasPrefix(msg.Text, "/help"):
 		help := "可用命令:\n" +
 			"/stop - 停止当前任务\n" +
@@ -352,6 +406,7 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 			"/deny <id> - 拒绝操作\n" +
 			"/answer <id> <选项> - 回答 ask 问题\n" +
 			"/status - 查看状态\n" +
+			"/whoami - 查看你的用户 ID\n" +
 			"/help - 显示帮助"
 		_ = gw.sendText(ctx, adapter, msg, help)
 	}
@@ -376,6 +431,7 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 	// 获取或创建 Controller
 	state := gw.getOrCreateSession(ctx, key, msg)
 	if state == nil || state.ctrl == nil {
+		gw.logger.Warn("failed to create session", "session", key[:8])
 		_ = gw.sendText(ctx, adapter, msg, "内部错误：无法创建会话。")
 		return
 	}

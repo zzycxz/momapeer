@@ -639,6 +639,7 @@ export interface AgentView {
 export interface BotAllowlistView {
   enabled: boolean;
   allowAll: boolean;
+  mode: string; // "open" | "review"
   qqUsers: string[];
   feishuUsers: string[];
   weixinUsers: string[];

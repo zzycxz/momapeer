@@ -146,6 +146,7 @@ func (a *App) PollBotConnectionInstall(installID string) (BotInstallPollResult, 
 			return BotInstallPollResult{Status: status, Message: weixinInstallStatusMessage(status)}, nil
 		}
 		a.deleteBotInstall(installID)
+		installerUserID := strings.TrimSpace(result.UserID)
 		conn, err := a.upsertBotConnection(config.BotConnectionConfig{
 			ID:         connectionID("weixin", "weixin"),
 			Provider:   "weixin",
@@ -161,6 +162,12 @@ func (a *App) PollBotConnectionInstall(installID string) (BotInstallPollResult, 
 			c.Bot.Weixin.APIBase = result.BaseURL
 			if c.Bot.Weixin.TokenEnv == "" {
 				c.Bot.Weixin.TokenEnv = "WEIXIN_BOT_TOKEN"
+			}
+			// 自动将安装者加入白名单
+			if installerUserID != "" {
+				c.Bot.Allowlist.Enabled = true
+				c.Bot.Allowlist.AllowAll = false
+				c.Bot.Allowlist.WeixinUsers = prependUniqueString(c.Bot.Allowlist.WeixinUsers, installerUserID)
 			}
 		})
 		if err != nil {
@@ -313,6 +320,12 @@ func (a *App) pollFeishuConnectionInstall(installID string, session *botInstallS
 	if domain == "lark" {
 		label = "Lark"
 	}
+	// 从 OAuth 响应中提取安装者的 open_id，自动加入白名单
+	var installerOpenID string
+	if userInfo, ok := data["user_info"].(map[string]any); ok {
+		installerOpenID = strings.TrimSpace(stringValue(userInfo["open_id"]))
+	}
+
 	conn, err := a.upsertBotConnection(config.BotConnectionConfig{
 		ID:         connectionID("feishu", domain),
 		Provider:   "feishu",
@@ -329,6 +342,12 @@ func (a *App) pollFeishuConnectionInstall(installID string, session *botInstallS
 		c.Bot.Feishu.AppSecretEnv = secretEnv
 		c.Bot.Feishu.Mode = "websocket"
 		c.Bot.Feishu.RequireMention = true
+		// 自动将安装者加入白名单
+		if installerOpenID != "" {
+			c.Bot.Allowlist.Enabled = true
+			c.Bot.Allowlist.AllowAll = false
+			c.Bot.Allowlist.FeishuUsers = prependUniqueString(c.Bot.Allowlist.FeishuUsers, installerOpenID)
+		}
 	})
 	if err != nil {
 		return BotInstallPollResult{Status: "error", Error: err.Error()}, nil

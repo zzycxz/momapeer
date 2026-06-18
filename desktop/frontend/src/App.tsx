@@ -3,6 +3,7 @@ import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } 
 import { ShellExpandProvider, useShellExpand } from "./lib/shellExpand";
 import {
   Activity,
+  Bird,
   Command,
   Download,
   SquarePen,
@@ -12,8 +13,10 @@ import {
   FileJson,
   GitBranch,
   History,
+  MessageCircle,
   MessageSquare,
   Plus,
+  Send,
   Settings as SettingsIcon,
   Pencil,
   Trash2,
@@ -156,6 +159,16 @@ type SidebarImConnectionDetailProps = {
   onOpenSession: () => void;
   onOpenSettings: () => void;
 };
+
+function PlatformIcon({ platform, size = 14 }: { platform: string; size?: number }) {
+  if (platform === "weixin") {
+    return <MessageCircle size={size} />;
+  }
+  if (platform === "lark") {
+    return <Bird size={size} />;
+  }
+  return <Send size={size} />;
+}
 
 function isSidebarImConnection(connection: BotConnectionView): boolean {
   return connection.provider === "feishu" || connection.provider === "weixin";
@@ -321,7 +334,7 @@ function SidebarImConnectionDetail({ connection, onClose, onOpenSession, onOpenS
     <div className="bot-detail">
       <section className="bot-detail__summary">
         <div className={`bot-detail__avatar bot-detail__avatar--${connection.platform}`} aria-hidden="true">
-          {connection.platform === "weixin" ? "微" : connection.platform === "lark" ? "L" : "飞"}
+          <PlatformIcon platform={connection.platform} size={20} />
         </div>
         <div className="bot-detail__summary-main">
           <span>{translate("botDetail.subtitle")}</span>
@@ -2334,7 +2347,7 @@ export default function App() {
                         onClick={() => void selectSidebarImConnection(connection)}
                       >
                         <span className={`sidebar-im-row__platform sidebar-im-row__platform--${connection.platform}`} aria-hidden="true">
-                          {connection.platform === "weixin" ? "微" : connection.platform === "lark" ? "L" : "飞"}
+                          <PlatformIcon platform={connection.platform} />
                         </span>
                         <span className="sidebar-im-row__main">
                           <strong>{connection.title}</strong>

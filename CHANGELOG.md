@@ -83,6 +83,34 @@
   效果：用户可放心关闭不常用 skill 控制上下文，LLM 仍保有全局能力视野并按需提示开启。
   默认状态保持开启，不破坏现有行为。
 
+- **桌面端内嵌 IM Bot Gateway**：此前 IM bot（飞书/QQ/微信）只能通过 CLI
+  `momapeer bot start` 独立启动，桌面端不感知 bot 消息。改为桌面端启动时自动在进程内
+  启动 bot gateway（`bot_gateway_app.go`），生命周期跟随 App（`startup()` 启动、
+  `shutdown()` 停止）。用户在设置页「启用机器人」并保存后 gateway 热重启（
+  `SetBotSettings` → `restartBotGateway`）。飞书/微信消息在桌面端进程内处理并回复，
+  无需手动运行 CLI。
+- **IM 安装即授权**：飞书 OAuth 和微信 iLink 安装完成后，自动将安装者的 open_id /
+  user_id 加入白名单（`bot_connection_app.go` 的 `pollFeishuConnectionInstall` /
+  `PollBotConnectionInstall`），同时设置 `allowlist.enabled = true`。新用户无需手动编辑
+  配置文件即可使用 bot。
+- **白名单访问模式**：`BotAllowlist` 新增 `Mode` 字段（`config.go`），支持两种模式：
+  - **开放模式**（`open`，默认）：新用户发消息自动加入白名单，无需管理员操作。
+  - **审核模式**（`review`）：新用户被拒绝并显示 user_id，需管理员手动添加。
+    设置页新增访问模式选择器（`SettingsPanel.tsx`），带 radio 按钮和说明文字。
+    gateway 根据模式决定自动加入或拒绝（`gateway.go` 的 `handleMessage`）。
+    白名单变更通过 `AllowlistSaver` 回调持久化到 `config.toml`。
+- **IM Bot `/whoami` 命令**：新增 `/whoami` 斜杠命令，返回当前用户的平台和 user_id，
+  方便管理员获取自己的 ID 用于白名单管理。`/help` 输出同步更新。
+
+### Fixed (IM Bot)
+
+- **飞书回复分段修复**：IM bot 的 `renderSink` 原先对流式文本每 500ms 强制 flush，
+  导致回复被切成多条消息。改为等 `event.Message`（完整消息）到达后一次性发送，
+  `TurnDone` 作为兜底。桌面端和 CLI 的流式渲染不受影响（使用独立的 `tabEventSink`）。
+- **飞书/微信图标优化**：设置页连接表格的平台图标从文字字符（"飞"/"微"/"L"）改为
+  Lucide 图标（`Send`/`MessageCircle`/`Bird`）和 "@" 符号，与其他 UI 风格统一。
+- **连接表格去重**：移除重复的「名称」列（与「渠道」列内容相同），表格从 6 列精简为 5 列。
+
 ## [0.1.7] — 2026-06-17
 
 ### Security

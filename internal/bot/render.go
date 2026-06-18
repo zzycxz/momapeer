@@ -63,10 +63,10 @@ func (s *renderSink) Emit(e event.Event) {
 			s.inThinking = false
 		}
 		s.buf.WriteString(e.Text)
-		s.maybeFlush()
 
 	case event.Message:
-		// full message received, do nothing extra
+		// 完整消息到达，立即刷新
+		s.flush()
 
 	case event.ToolDispatch:
 		s.toolNames[e.Tool.ID] = e.Tool.Name

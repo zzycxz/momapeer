@@ -10964,6 +10964,52 @@ a[href] {
   flex: 0 0 auto;
   gap: 10px;
 }
+.bot-access-mode {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 14px;
+}
+.bot-access-mode strong {
+  font-size: var(--font-control-small);
+}
+.bot-access-mode__options {
+  display: flex;
+  gap: 12px;
+}
+.bot-access-mode__option {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+.bot-access-mode__option:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+.bot-access-mode__option input[type="radio"] {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+.bot-access-mode__option span {
+  display: grid;
+  gap: 2px;
+}
+.bot-access-mode__option strong {
+  font-size: var(--font-control-small);
+}
+.bot-access-mode__option em {
+  font-style: normal;
+  font-size: var(--font-control-small);
+  color: var(--fg-dim);
+  line-height: 1.4;
+}
 .bot-add-panel {
   display: grid;
   gap: 12px;
@@ -11308,9 +11354,8 @@ a[href] {
 .bot-connection-row__grid {
   display: grid;
   grid-template-columns:
-    minmax(72px, 0.8fr)
-    minmax(64px, 0.75fr)
-    minmax(0, 1.25fr)
+    minmax(72px, 1fr)
+    minmax(0, 1.5fr)
     minmax(52px, 0.55fr)
     minmax(60px, 0.6fr)
     minmax(140px, auto);

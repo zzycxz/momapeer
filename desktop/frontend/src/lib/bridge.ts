@@ -669,6 +669,7 @@ function makeMockApp(): AppBindings {
       allowlist: {
         enabled: true,
         allowAll: false,
+        mode: "open",
         qqUsers: [],
         feishuUsers: [],
         weixinUsers: [],

@@ -28,6 +28,7 @@ import (
 
 	"github.com/zzycxz/momapeer/internal/agent"
 	"github.com/zzycxz/momapeer/internal/billing"
+	"github.com/zzycxz/momapeer/internal/bot"
 	"github.com/zzycxz/momapeer/internal/boot"
 	"github.com/zzycxz/momapeer/internal/builtinmcp"
 	"github.com/zzycxz/momapeer/internal/config"
@@ -78,6 +79,7 @@ type App struct {
 
 	mediaTokens *mediaTokenStore
 	botInstalls map[string]*botInstallSession
+	botGW       *bot.BotGateway // nil when bot is disabled or not started
 
 	metrics atomic.Pointer[metricsAggregator] // non-nil only when desktop.metrics is opted in; swapped live by SetDesktopMetrics
 }
@@ -276,6 +278,11 @@ func (a *App) startup(ctx context.Context) {
 		a.metrics.Store(newMetricsAggregator(filepath.Dir(config.UserConfigPath())))
 	}
 
+	// 启动内嵌 bot gateway
+	if cfg, err := config.Load(); err == nil && cfg.Bot.Enabled {
+		a.startBotGateway(cfg)
+	}
+
 	go a.restoreOrBuildTabs()
 	go a.sendStartupPing()
 	go a.flushMetrics()
@@ -467,6 +474,7 @@ func (a *App) snapshotAllTabs() {
 
 // shutdown snapshots all tabs, saves the final window geometry, and closes tabs.
 func (a *App) shutdown(context.Context) {
+	a.stopBotGateway()
 	a.stopTray()
 	// Save window geometry synchronously from Go so it's persisted even if the
 	// frontend's beforeunload promise hasn't resolved yet.

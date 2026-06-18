@@ -82,6 +82,7 @@ type AgentView struct {
 type BotAllowlistView struct {
 	Enabled      bool     `json:"enabled"`
 	AllowAll     bool     `json:"allowAll"`
+	Mode         string   `json:"mode"` // "open" | "review"
 	QQUsers      []string `json:"qqUsers"`
 	FeishuUsers  []string `json:"feishuUsers"`
 	WeixinUsers  []string `json:"weixinUsers"`
@@ -430,6 +431,7 @@ func botSettingsView(b config.BotConfig) BotSettingsView {
 		Allowlist: BotAllowlistView{
 			Enabled:      b.Allowlist.Enabled,
 			AllowAll:     b.Allowlist.AllowAll,
+			Mode:         allowlistModeOrDefault(b.Allowlist.Mode),
 			QQUsers:      nonNil(b.Allowlist.QQUsers),
 			FeishuUsers:  nonNil(b.Allowlist.FeishuUsers),
 			WeixinUsers:  nonNil(b.Allowlist.WeixinUsers),
@@ -470,6 +472,14 @@ func orDefault(s, def string) string {
 		return def
 	}
 	return s
+}
+
+func allowlistModeOrDefault(mode string) string {
+	mode = strings.TrimSpace(mode)
+	if mode == "review" {
+		return "review"
+	}
+	return "open"
 }
 
 func botDomainOrDefault(domain string) string {
@@ -1211,7 +1221,7 @@ func (a *App) SetNetwork(n NetworkView) error {
 }
 
 func (a *App) SetBotSettings(b BotSettingsView) error {
-	return a.applyConfigOnly(func(c *config.Config) error {
+	err := a.applyConfigOnly(func(c *config.Config) error {
 		c.Bot.Enabled = b.Enabled
 		c.Bot.Model = strings.TrimSpace(b.Model)
 		c.Bot.MaxSteps = b.MaxSteps
@@ -1219,6 +1229,7 @@ func (a *App) SetBotSettings(b BotSettingsView) error {
 		c.Bot.Allowlist = config.BotAllowlist{
 			Enabled:      b.Allowlist.Enabled,
 			AllowAll:     b.Allowlist.AllowAll,
+			Mode:         allowlistModeOrDefault(b.Allowlist.Mode),
 			QQUsers:      trimList(b.Allowlist.QQUsers),
 			FeishuUsers:  trimList(b.Allowlist.FeishuUsers),
 			WeixinUsers:  trimList(b.Allowlist.WeixinUsers),
@@ -1250,6 +1261,16 @@ func (a *App) SetBotSettings(b BotSettingsView) error {
 		c.Bot.Connections = botConnectionConfigs(b.Connections)
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	// 热重启 gateway
+	if b.Enabled {
+		a.restartBotGateway()
+	} else {
+		a.stopBotGateway()
+	}
+	return nil
 }
 
 func (a *App) SetBotSecret(envName, value string) error {

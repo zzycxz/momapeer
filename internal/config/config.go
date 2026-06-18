@@ -400,6 +400,7 @@ type BotConfig struct {
 type BotAllowlist struct {
 	Enabled      bool     `toml:"enabled"`
 	AllowAll     bool     `toml:"allow_all"`
+	Mode         string   `toml:"mode"` // "open"（默认，自动加入）| "review"（需管理员审批）
 	QQUsers      []string `toml:"qq_users"`
 	FeishuUsers  []string `toml:"feishu_users"`
 	WeixinUsers  []string `toml:"weixin_users"`
