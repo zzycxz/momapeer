@@ -94,6 +94,11 @@ jobs:
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
+      - name: Install UPX
+        uses: crazy-max/ghaction-upx@v3
+        with:
+          install-only: true
+
       - name: Inject version from tag
         id: version
         shell: bash
@@ -111,7 +116,7 @@ jobs:
           CC: aarch64-w64-mingw32-gcc
           CXX: aarch64-w64-mingw32-g++
         run: |
-          wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }} -ldflags "-s -w -X main.version=${{ steps.version.outputs.semver }}" -v 2 > wails_build.log 2>&1
+          wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }} -ldflags "-s -w -X main.version=${{ steps.version.outputs.semver }}" -upx -v 2 > wails_build.log 2>&1
           if [ $? -ne 0 ]; then echo "Wails build failed"; exit 1; fi
 
       - name: Build Wails App (Others)
@@ -119,26 +124,11 @@ jobs:
         working-directory: ./desktop
         shell: bash
         run: |
-          wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }} -ldflags "-s -w -X main.version=${{ steps.version.outputs.semver }}" -v 2 > wails_build.log 2>&1
+          wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }} -ldflags "-s -w -X main.version=${{ steps.version.outputs.semver }}" -upx -v 2 > wails_build.log 2>&1
           if [ $? -ne 0 ]; then
             echo "Wails build failed"
             exit 1
           fi
-
-      - name: Strip debug symbols (Linux/macOS)
-        if: runner.os != 'Windows'
-        working-directory: ./desktop/build/bin
-        run: strip ${{ matrix.binary_name }}
-
-      - name: Strip debug symbols (Windows)
-        if: runner.os == 'Windows'
-        working-directory: ./desktop/build/bin
-        shell: bash
-        run: |
-          # Try strip from MinGW/Git Bash, then llvm-strip from LLVM-MinGW
-          strip "${{ matrix.binary_name }}" 2>/dev/null || \
-          llvm-strip "${{ matrix.binary_name }}" 2>/dev/null || \
-          echo "strip not available, skipping"
 
       - name: Upload Build Log
         if: failure()
