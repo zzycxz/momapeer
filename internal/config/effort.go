@@ -34,7 +34,7 @@ type modelReasoningCapability struct {
 var modelReasoningCapabilities = func() map[string]modelReasoningCapability {
 	m := make(map[string]modelReasoningCapability, len(openai.MoMAThinkingModels))
 	for id := range openai.MoMAThinkingModels {
-		m[id] = modelReasoningCapability{Protocol: ReasoningProtocolMoMA, Levels: []string{"low", "medium", "high"}, Default: "high"}
+		m[id] = modelReasoningCapability{Protocol: ReasoningProtocolMoMA, Levels: []string{"high", "max"}, Default: "high"}
 	}
 	return m
 }()
@@ -110,14 +110,10 @@ func NormalizeEffort(e *ProviderEntry, raw string) (string, error) {
 	switch ReasoningProtocolForEntry(e) {
 	case ReasoningProtocolMoMA:
 		switch level {
-		case "medium", "high":
+		case "high", "max":
 			return level, nil
-		case "low":
-			return "medium", nil // low rejected by 2/18 MoMA models; clamp to medium
-		case "xhigh", "max":
-			return "high", nil // rejected by 16/18 MoMA models; clamp to high
 		default:
-			return "", fmt.Errorf("usage: /effort auto|low|medium|high")
+			return "", fmt.Errorf("usage: /effort auto|high|max")
 		}
 	case ReasoningProtocolOpenAI:
 		switch level {
@@ -292,7 +288,7 @@ func effortCapabilityFromModel(cap modelReasoningCapability) EffortCapability {
 }
 
 func momaEffortCapability() EffortCapability {
-	return EffortCapability{Supported: true, Levels: []string{"auto", "low", "medium", "high"}, Default: "high"}
+	return EffortCapability{Supported: true, Levels: []string{"auto", "high", "max"}, Default: "high"}
 }
 
 func openAIEffortCapability() EffortCapability {
