@@ -77,7 +77,28 @@ func (c *Config) SetAutoPlan(mode string) error {
 	return nil
 }
 
-// SetUIShortcutLayout selects the CLI keyboard shortcut layout. "classic" keeps
+// SetDreamEnabled toggles the background self-evolution master switch. When
+// disabled, neither Dream nor Distill spawns automatically or via manual trigger.
+func (c *Config) SetDreamEnabled(enabled bool) {
+	c.Dream.Enabled = enabled
+}
+
+// SetDreamIntervals configures the Dream and Distill automatic-run cadence in
+// days. A non-positive value is rejected (use the package defaults by leaving
+// the field at 0 in TOML, not by passing <=0 here). Both intervals must be >= 1.
+func (c *Config) SetDreamIntervals(dreamDays, distillDays int) error {
+	if dreamDays < 1 {
+		return fmt.Errorf("dream_interval %d: must be >= 1", dreamDays)
+	}
+	if distillDays < 1 {
+		return fmt.Errorf("distill_interval %d: must be >= 1", distillDays)
+	}
+	c.Dream.DreamInterval = dreamDays
+	c.Dream.DistillInterval = distillDays
+	return nil
+}
+
+
 // historical behavior; "desktop" enables the two-axis desktop-style shortcuts.
 func (c *Config) SetUIShortcutLayout(layout string) error {
 	switch strings.ToLower(strings.TrimSpace(layout)) {

@@ -467,7 +467,7 @@ export function Transcript({
         for (const it of group.items) {
           // Running read-only tools render individually (visible in progress);
           // only completed read-only tools go into the batch (hidden after done)
-          if (it.kind === "tool" && it.readOnly && !it.parentId && it.name !== "todo_write" && it.name !== "exit_plan_mode") {
+          if (it.kind === "tool" && it.readOnly && !it.parentId && it.name !== "todo_write" && it.name !== "exit_plan_mode" && !(it.attachments && it.attachments.length)) {
             if (it.status === "running") {
               flushReadOnlyBatch();
               out.push(<ToolCard key={it.id} item={it} subcalls={subcallsByParent.get(it.id)} />);
@@ -778,7 +778,7 @@ function WarmTurnItems({
     const it = items[i];
 
     // Completed read-only tools → batch into ReadOnlyBatch
-    if (it.kind === "tool" && it.readOnly && !it.parentId && it.name !== "todo_write" && it.name !== "exit_plan_mode" && it.status !== "running") {
+    if (it.kind === "tool" && it.readOnly && !it.parentId && it.name !== "todo_write" && it.name !== "exit_plan_mode" && it.status !== "running" && !(it.attachments && it.attachments.length)) {
       roBatch.push(it as ToolItem);
       continue;
     }
@@ -909,7 +909,11 @@ type TurnCollapseProps = {
 
 function TurnCollapse({ items, durationMs, mode, subcalls }: TurnCollapseProps) {
   const t = useT();
-  const [open, setOpen] = useState(false);
+  // A turn that produced viewable attachments (e.g. an image_generate picture)
+  // defaults to open so the result stays visible instead of being hidden in
+  // the collapsed "processed" fold the moment the turn completes.
+  const hasViewableAttachment = items.some((it) => it.kind === "tool" && it.attachments && it.attachments.length > 0);
+  const [open, setOpen] = useState(hasViewableAttachment);
 
   // Keep only items the body will actually render — an expandable fold over
   // nothing is worse than no fold. Minimal mode strips reasoning, so a
@@ -923,7 +927,7 @@ function TurnCollapse({ items, durationMs, mode, subcalls }: TurnCollapseProps) 
       if (it.kind === "phase") return mode !== "minimal";
       if (it.kind !== "tool") return false;
       if (it.parentId || it.name === "todo_write" || it.name === "exit_plan_mode") return false;
-      if (mode === "minimal") return !it.readOnly && it.name !== "bash";
+      if (mode === "minimal") return (!it.readOnly && it.name !== "bash") || Boolean(it.attachments && it.attachments.length);
       return true;
     });
   }, [items, mode]);
@@ -942,7 +946,7 @@ function TurnCollapse({ items, durationMs, mode, subcalls }: TurnCollapseProps) 
     roBatch.length = 0;
   };
   for (const it of displayItems) {
-    if (it.kind === "tool" && it.readOnly && !it.parentId && it.name !== "todo_write" && it.name !== "exit_plan_mode" && it.status !== "running") {
+    if (it.kind === "tool" && it.readOnly && !it.parentId && it.name !== "todo_write" && it.name !== "exit_plan_mode" && it.status !== "running" && !(it.attachments && it.attachments.length)) {
       roBatch.push(it as ToolItem);
       continue;
     }

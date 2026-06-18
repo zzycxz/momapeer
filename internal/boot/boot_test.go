@@ -20,6 +20,7 @@ import (
 
 	"github.com/zzycxz/momapeer/internal/agent"
 	"github.com/zzycxz/momapeer/internal/config"
+	"github.com/zzycxz/momapeer/internal/instruction"
 	"github.com/zzycxz/momapeer/internal/event"
 	"github.com/zzycxz/momapeer/internal/netclient"
 	"github.com/zzycxz/momapeer/internal/plugin"
@@ -435,8 +436,11 @@ func TestNewProviderAppliesModelReasoningProtocol(t *testing.T) {
 			t.Fatalf("stream error: %v", chunk.Err)
 		}
 	}
-	if got := gotReq["reasoning_effort"]; got != "high" {
-		t.Fatalf("reasoning_effort = %#v, want high from MoMA model capability", got)
+	if got := gotReq["thinking_effort"]; got != "high" {
+		t.Fatalf("thinking_effort = %#v, want high from MoMA model capability", got)
+	}
+	if got := gotReq["reasoning_effort"]; got != nil {
+		t.Fatalf("reasoning_effort should be absent for MoMA, got %#v", got)
 	}
 	thinking, ok := gotReq["thinking"].(map[string]any)
 	if !ok || thinking["type"] != "enabled" {
@@ -599,8 +603,17 @@ api_key_env = "MOMAPEER_TEST_KEY_UNSET"
 		t.Fatalf("AllSkills should include disabled skills for management: %v", ctrl.AllSkills())
 	}
 	sys := systemMessage(ctrl.History())
-	if strings.Contains(sys, "projskill") || strings.Contains(sys, "- review ") {
-		t.Fatalf("disabled skill names should be omitted from system prompt:\n%s", sys)
+	// Disabled skills stay in the pinned index (tagged [关闭]) so the model
+	// knows they exist and can suggest re-enabling; they remain uncallable
+	// (ctrl.Skills above excludes them). The [关闭] tag follows the name
+	// (and any [🧬 subagent] tag), so check name + tag separately.
+	if !strings.Contains(sys, "[关闭]") {
+		t.Fatalf("disabled skills should be tagged [关闭] in system prompt:\n%s", sys)
+	}
+	for _, name := range []string{"projskill", "review"} {
+		if !strings.Contains(sys, name) {
+			t.Fatalf("disabled skill %q should still appear in system prompt:\n%s", name, sys)
+		}
 	}
 }
 
@@ -695,6 +708,9 @@ api_key_env = "MOMAPEER_TEST_KEY_UNSET"
 	// The language policy is always appended at boot; strip it so this assertion
 	// is purely about whether project/ancestor memory leaked into the base.
 	base = stripLanguagePolicy(base)
+	// Model-specific addons (e.g. ThinkingAddon for thinking-capable models)
+	// are appended at boot; strip them so this assertion is purely about memory.
+	base = stripThinkingAddon(base)
 	if base != "JUST THE BASE" {
 		t.Fatalf("expected untouched base prompt, got:\n%s", sys)
 	}
@@ -749,6 +765,10 @@ func stripLanguagePolicy(s string) string {
 		s = strings.TrimSpace(strings.TrimSuffix(s, policy))
 	}
 	return s
+}
+
+func stripThinkingAddon(s string) string {
+	return strings.TrimSpace(strings.TrimSuffix(s, instruction.ThinkingAddon))
 }
 
 func writeFile(t *testing.T, dir, name, body string) {

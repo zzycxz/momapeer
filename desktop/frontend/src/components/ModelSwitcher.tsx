@@ -94,6 +94,26 @@ export function ModelSwitcher({ label, tabId, onPick }: { label: string; tabId?:
   }
 
   const [hoverCat, setHoverCat] = useState<string | null>(null);
+  const hoverTimerRef = useRef<number | null>(null);
+
+  const enterCat = useCallback((catId: string) => {
+    if (hoverTimerRef.current !== null) {
+      window.clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+    setHoverCat(catId);
+  }, []);
+
+  const leaveCat = useCallback(() => {
+    hoverTimerRef.current = window.setTimeout(() => {
+      setHoverCat(null);
+      hoverTimerRef.current = null;
+    }, 150);
+  }, []);
+
+  useEffect(() => () => {
+    if (hoverTimerRef.current !== null) window.clearTimeout(hoverTimerRef.current);
+  }, []);
 
   // Only show categories that have models, in defined order
   const visibleCats = CATEGORIES.filter((c) => {
@@ -143,8 +163,8 @@ export function ModelSwitcher({ label, tabId, onPick }: { label: string; tabId?:
                     className="modelsw__cascade" 
                     role="group" 
                     aria-label={cat.label}
-                    onMouseEnter={() => setHoverCat(cat.id)}
-                    onMouseLeave={() => setHoverCat(null)}
+                    onMouseEnter={() => enterCat(cat.id)}
+                    onMouseLeave={leaveCat}
                   >
                     <div className="modelsw__cascade-head">
                       <span className="modelsw__cascade-label">{cat.label}</span>

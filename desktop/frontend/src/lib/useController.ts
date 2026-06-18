@@ -26,6 +26,7 @@ import type {
   ToolApprovalMode,
   WireApproval,
   WireAsk,
+  WireAttachment,
   WireEvent,
   WireUsage,
 } from "./types";
@@ -64,6 +65,7 @@ export type Item =
       isShell?: boolean; // true for !-prefix shell commands (controls default expand)
       parentId?: string; // a sub-agent call nests under the `task` call with this id
       profile?: { model?: string; effort?: string }; // subagent model/effort from tool event
+      attachments?: WireAttachment[]; // files the tool produced (e.g. generated images)
     };
 
 interface State {
@@ -340,7 +342,7 @@ function applyEvent(s: State, e: WireEvent): State {
       }
       if (idx >= 0) {
         const it = next[idx];
-        if (it.kind === "tool") next[idx] = { ...it, status: t.err ? "error" : "done", output: t.output, error: t.err, truncated: t.truncated, durationMs: t.durationMs };
+        if (it.kind === "tool") next[idx] = { ...it, status: t.err ? "error" : "done", output: t.output, error: t.err, truncated: t.truncated, durationMs: t.durationMs, attachments: t.attachments };
       }
       return { ...s, items: next };
     }

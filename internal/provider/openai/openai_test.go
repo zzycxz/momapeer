@@ -350,21 +350,24 @@ func TestBuildRequestForwardsReasoningEffort(t *testing.T) {
 
 func TestBuildRequestMoMAThinking(t *testing.T) {
 	for _, tc := range []struct {
-		name          string
-		effort        string
-		wantThinking  string
-		wantReasoning string
+		name           string
+		effort         string
+		wantThinking   string
+		wantEffort     string
 	}{
-		{name: "high", effort: "high", wantThinking: "enabled", wantReasoning: "high"},
-		{name: "max", effort: "max", wantThinking: "enabled", wantReasoning: "max"},
+		{name: "high", effort: "high", wantThinking: "enabled", wantEffort: "high"},
+		{name: "medium", effort: "medium", wantThinking: "enabled", wantEffort: "medium"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := (&client{model: "jiutian/jiutian-lan-thinking", moma: true, effort: tc.effort}).buildRequest(provider.Request{})
 			if req.Thinking == nil || req.Thinking.Type != tc.wantThinking {
 				t.Fatalf("Thinking = %+v, want %q", req.Thinking, tc.wantThinking)
 			}
-			if req.ReasoningEffort != tc.wantReasoning {
-				t.Fatalf("ReasoningEffort = %q, want %q", req.ReasoningEffort, tc.wantReasoning)
+			if req.ThinkingEffort != tc.wantEffort {
+				t.Fatalf("ThinkingEffort = %q, want %q", req.ThinkingEffort, tc.wantEffort)
+			}
+			if req.ReasoningEffort != "" {
+				t.Fatalf("ReasoningEffort should be empty for MoMA, got %q", req.ReasoningEffort)
 			}
 		})
 	}

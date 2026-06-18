@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/zzycxz/momapeer/internal/memory"
+	"github.com/zzycxz/momapeer/internal/provider/openai"
 )
 
 // VerifyCheck is a host-observable project check extracted from structured
@@ -14,6 +15,30 @@ type VerifyCheck struct {
 	SourcePath string
 	Line       int
 }
+
+// ForModel returns a model-specific prompt addon based on MoMA model capabilities.
+// The base DefaultSystemPrompt is model-agnostic; this function adds targeted
+// instructions for models that need them (thinking models, serial-constraint models).
+// Returns empty string for models that work fine with the default prompt.
+func ForModel(modelID string) string {
+	id := strings.ToLower(strings.TrimSpace(modelID))
+
+	// Thinking-capable models: encourage deep reasoning before tool calls.
+	if openai.MoMAThinkingModels[id] {
+		return ThinkingAddon
+	}
+
+	// Serial-constraint models: one tool per message.
+	// (Currently no known MoMA models need this; add specific model IDs here
+	// when testing reveals a model that fails with parallel tool calls.)
+	// if serialModels[id] { return SerialAddon }
+
+	return ""
+}
+
+const ThinkingAddon = `You have extended thinking capability. When facing complex problems, think step by step before calling tools. Use your reasoning to plan the approach first, then execute with tools.`
+
+const SerialAddon = `Important: Use exactly one tool per assistant message. Wait for the tool result before calling the next tool. Do not call multiple tools in parallel.`
 
 type contextKey struct{}
 

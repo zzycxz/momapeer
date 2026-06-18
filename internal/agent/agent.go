@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1104,14 +1105,15 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) []s
 		o := outcomes[i]
 		t, ok := a.tools.Get(c.Name)
 		a.sink.Emit(event.Event{Kind: event.ToolResult, Tool: event.Tool{
-			ID:         c.ID,
-			Name:       c.Name,
-			Args:       c.Arguments,
-			Output:     o.output,
-			Err:        o.errMsg,
-			ReadOnly:   ok && t.ReadOnly(),
-			Truncated:  o.truncated,
-			DurationMs: durations[i],
+			ID:          c.ID,
+			Name:        c.Name,
+			Args:        c.Arguments,
+			Output:      o.output,
+			Err:         o.errMsg,
+			ReadOnly:    ok && t.ReadOnly(),
+			Truncated:   o.truncated,
+			DurationMs:  durations[i],
+			Attachments: o.attachments,
 		}})
 		if o.truncated && o.truncMsg != "" {
 			a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: o.truncMsg})
@@ -1259,11 +1261,12 @@ func batchStormSignature(calls []provider.ToolCall, outcomes []toolOutcome) (str
 // blocked narrows that to a refusal (plan mode / permission). truncMsg is set
 // (without the "· " prefix) when the output was head+tailed.
 type toolOutcome struct {
-	output    string
-	blocked   bool
-	errMsg    string
-	truncated bool
-	truncMsg  string
+	output      string
+	blocked     bool
+	errMsg      string
+	truncated   bool
+	truncMsg    string
+	attachments []event.Attachment
 }
 
 // executeOne runs a single tool call. It is pure with respect to the event sink
@@ -1392,7 +1395,32 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		a.hooks.SubagentStop(ctx, result)
 	}
 	body, truncMsg := truncateToolOutput(result)
-	return toolOutcome{output: body, truncated: truncMsg != "", truncMsg: truncMsg}
+	return toolOutcome{output: body, truncated: truncMsg != "", truncMsg: truncMsg, attachments: extractImageAttachments(body)}
+}
+
+// attachmentImageRe matches image file paths under .momapeer/attachments/ that a
+// tool may emit in its result text (e.g. image_generate's ![image](...) output).
+// We surface them as structured attachments so the frontend can render the
+// picture under the tool card without depending on the model echoing the path.
+var attachmentImageRe = regexp.MustCompile(`\.momapeer/attachments/[^\s)'"]+\.(?:png|jpg|jpeg|gif|webp|bmp|svg|tif|tiff)`)
+
+// extractImageAttachments pulls deduped .momapeer/attachments image paths from a
+// tool result string, preserving first-seen order.
+func extractImageAttachments(s string) []event.Attachment {
+	matches := attachmentImageRe.FindAllString(s, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(matches))
+	out := make([]event.Attachment, 0, len(matches))
+	for _, m := range matches {
+		if _, ok := seen[m]; ok {
+			continue
+		}
+		seen[m] = struct{}{}
+		out = append(out, event.Attachment{Path: m, Kind: "image"})
+	}
+	return out
 }
 
 func (a *Agent) repeatedSuccessBlock(call provider.ToolCall, t tool.Tool) (string, bool) {

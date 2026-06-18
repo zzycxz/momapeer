@@ -5,6 +5,7 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,6 +40,45 @@ type Message struct {
 	ToolCalls          []ToolCall `json:"tool_calls,omitempty"`   // set by assistant
 	ToolCallID         string     `json:"tool_call_id,omitempty"` // links a tool result to its call
 	Name               string     `json:"name,omitempty"`         // tool message: tool name
+}
+
+// UnmarshalJSON restores Content as its concrete type. The field is `any`
+// (string for plain text, []ContentPart for multimodal). encoding/json has no
+// way to recover that from a generic []interface{} on reload, so without this
+// a saved multimodal message comes back as []interface{} — and every downstream
+// switch on `content.(type)` (ContentString, ContentLen, buildRequest) misses
+// its []ContentPart case, dumping the image data URL as plain text. We decode
+// content separately: a JSON string stays a string; a JSON array becomes
+// []ContentPart, fixing the type for the whole pipeline.
+func (m *Message) UnmarshalJSON(data []byte) error {
+	type alias Message
+	var raw struct {
+		alias
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*m = Message(raw.alias)
+	trimmed := bytes.TrimSpace(raw.Content)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		m.Content = nil
+		return nil
+	}
+	if trimmed[0] == '"' {
+		var s string
+		if err := json.Unmarshal(trimmed, &s); err != nil {
+			return err
+		}
+		m.Content = s
+		return nil
+	}
+	var parts []ContentPart
+	if err := json.Unmarshal(trimmed, &parts); err != nil {
+		return err
+	}
+	m.Content = parts
+	return nil
 }
 
 // ContentPart is one block in a multimodal message (OpenAI content parts format).

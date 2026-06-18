@@ -150,7 +150,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		return nil, err
 	}
 
-	execProv, err := NewProviderWithProxy(entry, proxySpec)
+	execProv, err := NewProviderWithProxy(entry, proxySpec, cfg.Jiutian.ImageUnderstand)
 	if err != nil {
 		return nil, err
 	}
@@ -158,6 +158,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	sysPrompt, err := cfg.ResolveSystemPrompt()
 	if err != nil {
 		return nil, err
+	}
+	// Model-specific prompt addon (thinking encouragement, serial constraint, etc.)
+	if addon := instruction.ForModel(entry.Model); addon != "" {
+		sysPrompt += "\n\n" + addon
 	}
 	// Output style: fold the selected persona/tone block into the base prompt
 	// before language/memory/skills append, so a "replace" style (keep-coding
@@ -192,7 +196,17 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	skills := skillStore.List()
 	allSkillStore := skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), ExcludedPaths: cfg.SkillExcludedPaths(), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard})
 	allSkills := allSkillStore.List()
-	sysPrompt = skill.ApplyIndex(sysPrompt, skills)
+	// Build the pinned skills index from the FULL set (including disabled ones)
+	// so the model knows every available skill and can suggest re-enabling one
+	// when a task fits. Disabled entries are tagged in the index and stay
+	// uncallable (run_skill/subagent tools bind to skillStore, which filters
+	// them out). This keeps disabled skills to a one-line index footprint.
+	indexedSkills := make([]skill.Skill, 0, len(allSkills))
+	for _, s := range allSkills {
+		s.Disabled = cfg.IsSkillDisabled(s.Name)
+		indexedSkills = append(indexedSkills, s)
+	}
+	sysPrompt = skill.ApplyIndex(sysPrompt, indexedSkills)
 
 	reg := tool.NewRegistry()
 	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: cfg.WriteRootsForRoot(root), Network: cfg.Sandbox.Network}
@@ -205,6 +219,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	searchSpec := builtin.ResolveSearch(cfg.Tools.Search.Engine, cfg.Tools.Search.RgPath, stderr)
 	bashTimeout := time.Duration(cfg.BashTimeoutSeconds()) * time.Second
 	addBuiltins(reg, cfg.Tools.Enabled, cfg.WriteRootsForRoot(root), bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec)
+	// Register Jiutian multimodal tools based on config (not via init(), so they
+	// can be toggled per-capability in [jiutian] config section).
+	for _, t := range builtin.JiutianTools(&cfg.Jiutian) {
+		reg.Add(t)
+	}
 	// Always construct a host, even with no plugins configured, so the controller's
 	// host pointer is stable for the session and `/mcp add` can hot-add into it.
 	pluginHost := plugin.NewHost()
@@ -1003,7 +1022,11 @@ func NewProvider(e *config.ProviderEntry) (provider.Provider, error) {
 
 // NewProviderWithProxy builds a provider.Provider with the configured ordinary
 // network proxy settings.
-func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec) (provider.Provider, error) {
+func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec, opts ...bool) (provider.Provider, error) {
+	imageUnderstand := false
+	if len(opts) > 0 {
+		imageUnderstand = opts[0]
+	}
 	return provider.New(e.Kind, provider.Config{
 		Name:    e.Name,
 		BaseURL: e.BaseURL,
@@ -1013,11 +1036,14 @@ func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec) (p
 		// provider-kind-specific knobs. EffectiveEffort applies a configured
 		// default_effort when the user has not explicitly selected /effort.
 		Extra: map[string]any{
-			"api_key_env":        e.APIKeyEnv,
-			"thinking":           e.Thinking,
-			"effort":             config.EffectiveEffort(e),
-			"reasoning_protocol": config.ReasoningProtocolForEntry(e),
-			"proxy_spec":         proxy,
+			"api_key_env":             e.APIKeyEnv,
+			"thinking":                e.Thinking,
+			"effort":                  config.EffectiveEffort(e),
+			"reasoning_protocol":      config.ReasoningProtocolForEntry(e),
+			"proxy_spec":              proxy,
+			"vision":                  e.Vision,
+			"vision_detail":           e.VisionDetail,
+			"jiutian_image_understand": imageUnderstand,
 		},
 	})
 }
@@ -1102,16 +1128,23 @@ func PluginSpecs(entries []config.PluginEntry) []plugin.Spec {
 	for i, e := range entries {
 		e = e.ExpandedPlugin() // resolve ${VAR} / ${VAR:-default} from the environment
 		specs[i] = plugin.Spec{
-			Name:    e.Name,
-			Type:    e.Type,
-			Command: e.Command,
-			Args:    e.Args,
-			Env:     e.Env,
-			URL:     e.URL,
-			Headers: e.Headers,
+			Name:        e.Name,
+			Type:        e.Type,
+			Command:     e.Command,
+			Args:        e.Args,
+			Env:         e.Env,
+			URL:         e.URL,
+			Headers:     e.Headers,
+			CallTimeout: parseDuration(e.CallTimeout),
 		}
 	}
 	return specs
+}
+
+// parseDuration parses a Go duration string, returning 0 for empty/invalid.
+func parseDuration(s string) time.Duration {
+	d, _ := time.ParseDuration(strings.TrimSpace(s))
+	return d
 }
 
 // MCPStartupNotice formats the warning shown when configured MCP servers failed

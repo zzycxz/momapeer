@@ -104,15 +104,15 @@ func (m multiEdit) Execute(ctx context.Context, args json.RawMessage) (string, e
 			applied += count
 			continue
 		}
-		switch strings.Count(content, old) {
-		case 0:
+		region, found, unique := fuzzyMatch(content, old)
+		if !found {
 			return "", fmt.Errorf("edit %d: old_string not found", i+1)
-		case 1:
-			content = strings.Replace(content, old, newStr, 1)
-			applied++
-		default:
+		}
+		if !unique {
 			return "", fmt.Errorf("edit %d: old_string is not unique; add more surrounding context or set replace_all", i+1)
 		}
+		content = strings.Replace(content, region, newStr, 1)
+		applied++
 	}
 
 	if err := writeFileEncoded(p.Path, content, enc); err != nil {

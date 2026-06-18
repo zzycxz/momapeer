@@ -42,18 +42,7 @@ func (webSearch) Schema() json.RawMessage {
 func (webSearch) ReadOnly() bool { return true }
 
 func (ws webSearch) proxyURLFor(req *http.Request) (string, error) {
-	pf, err := netclient.ProxyFunc(ws.proxySpec)
-	if err != nil {
-		return "", err
-	}
-	if pf == nil {
-		return "", nil
-	}
-	u, err := pf(req)
-	if err != nil || u == nil {
-		return "", err
-	}
-	return u.String(), nil
+	return netclient.ProxyURLFor(ws.proxySpec, req)
 }
 
 type searchResultItem struct {

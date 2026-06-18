@@ -18,7 +18,8 @@ var readOnlyBashCommands = map[string]bool{
 	"stat": true, "file": true, "du": true, "df": true,
 	"ps": true, "top": true, "htop": true,
 	"diff": true, "cmp": true, "comm": true,
-	"awk": true, "sed": true,
+	// awk and sed are intentionally excluded — they can execute arbitrary
+	// code (e.g. awk 'system("cmd")') and must require user approval.
 	"man": true, "info": true, "help": true,
 	"true": true, "false": true, "test": true, "[": true,
 	"basename": true, "dirname": true, "realpath": true, "readlink": true,

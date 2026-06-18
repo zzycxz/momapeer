@@ -5,6 +5,7 @@ import { DiffView } from "./DiffView";
 import { useT } from "../lib/i18n";
 import { diffsFor, subjectOf } from "../lib/tools";
 import { useShellExpand } from "../lib/shellExpand";
+import { app } from "../lib/bridge";
 import type { Item } from "../lib/useController";
 
 type ToolItem = Extract<Item, { kind: "tool" }>;
@@ -25,6 +26,33 @@ function pretty(json: string): string {
 function formatToolDuration(ms?: number): string {
   if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
   return `${Math.round(ms)} ms`;
+}
+
+// ToolAttachments renders image files a tool produced (e.g. image_generate
+// pictures saved under .momapeer/attachments/) directly under the tool card.
+// Paths can't be loaded by a bare <img> in the webview, so fetch a data URL via
+// the kernel — the same bridge UserMessage uses for pasted-image previews.
+function ToolAttachments({ paths }: { paths: string[] }) {
+  const [previews, setPreviews] = useState<Record<string, string>>({});
+  const key = paths.join("\n");
+  useEffect(() => {
+    const list = key ? key.split("\n") : [];
+    if (list.length === 0) return;
+    let cancelled = false;
+    for (const p of list) {
+      if (previews[p]) continue;
+      app.AttachmentDataURL(p)
+        .then((url) => { if (!cancelled) setPreviews((prev) => (prev[p] ? prev : { ...prev, [p]: url })); })
+        .catch(() => {});
+    }
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return (
+    <div className="tool__attachments">
+      {paths.map((p) => previews[p] ? <img key={p} src={previews[p]} alt="" loading="lazy" /> : null)}
+    </div>
+  );
 }
 
 /** Returns the first n lines of text and the total line count. */
@@ -65,7 +93,8 @@ export const ToolCard = memo(function ToolCard({ item, subcalls }: { item: ToolI
   // Shell output: split into preview + "show all" toggle.
   const shellOutput = item.isShell && item.output ? item.output : null;
   const shellPreview = shellOutput ? splitPreview(shellOutput, SHELL_PREVIEW_LINES) : null;
-  const hasBody = Boolean(summary || diffs.length || hasNested || shellPreview || (!shellPreview && hasArgsOrOutput) || item.error);
+  const hasAttachments = Boolean(item.attachments && item.attachments.some((a) => a.kind === "image"));
+  const hasBody = Boolean(summary || diffs.length || hasNested || shellPreview || (!shellPreview && hasArgsOrOutput) || item.error || hasAttachments);
   const [open, setOpen] = useState(hasNested ? item.status === "running" : false);
   const [showAll, setShowAll] = useState(false);
 
@@ -152,6 +181,10 @@ export const ToolCard = memo(function ToolCard({ item, subcalls }: { item: ToolI
 
         {item.error && <div className="tool__err">{item.error}</div>}
         </div>
+      )}
+
+      {item.attachments && item.attachments.filter((a) => a.kind === "image").length > 0 && (
+        <ToolAttachments paths={item.attachments!.filter((a) => a.kind === "image").map((a) => a.path)} />
       )}
     </div>
   );

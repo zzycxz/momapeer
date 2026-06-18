@@ -22,7 +22,7 @@ type editFile struct {
 func (editFile) Name() string { return "edit_file" }
 
 func (editFile) Description() string {
-	return "Replace an exact string in a file with another. old_string must occur exactly once; add surrounding context to disambiguate. Use for targeted edits instead of rewriting the whole file."
+	return "Replace text in a file. Uses fuzzy matching: exact match first, then tries line-trim, indent-normalize, and block-anchor matching. old_string must occur exactly once; add surrounding context to disambiguate. Use for targeted edits instead of rewriting the whole file."
 }
 
 func (editFile) Schema() json.RawMessage {
@@ -57,16 +57,15 @@ func (e editFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 	}
 
 	old, newStr := matchLineEndings(content, p.OldString, p.NewString)
-	switch strings.Count(content, old) {
-	case 0:
+	region, found, unique := fuzzyMatch(content, old)
+	if !found {
 		return "", fmt.Errorf("old_string not found in %s", p.Path)
-	case 1:
-		// ok
-	default:
+	}
+	if !unique {
 		return "", fmt.Errorf("old_string is not unique in %s; add more surrounding context", p.Path)
 	}
 
-	updated := strings.Replace(content, old, newStr, 1)
+	updated := strings.Replace(content, region, newStr, 1)
 	if err := writeFileEncoded(p.Path, updated, enc); err != nil {
 		return "", fmt.Errorf("write %s: %w", p.Path, err)
 	}

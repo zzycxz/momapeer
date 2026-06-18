@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	_ "modernc.org/sqlite"
 )
@@ -194,12 +195,22 @@ func buildFtsQuery(input string) string {
 	return strings.Join(parts, " OR ")
 }
 
-// tokenize splits input into Unicode-aware tokens (letters, numbers, underscores).
+// tokenize splits input into Unicode-aware tokens. CJK ideographs, kana, and
+// hangul are split into individual characters to match FTS5's unicode61
+// tokenizer behavior (each CJK character is a separate token).
 func tokenize(input string) []string {
 	var tokens []string
 	var buf []rune
 	for _, r := range input {
-		if isTokenChar(r) {
+		if isCJK(r) {
+			// Flush any accumulated Latin/digit buffer.
+			if len(buf) > 0 {
+				tokens = append(tokens, strings.ToLower(string(buf)))
+				buf = buf[:0]
+			}
+			// Each CJK character is its own token (matches unicode61 indexing).
+			tokens = append(tokens, strings.ToLower(string(r)))
+		} else if isTokenChar(r) {
 			buf = append(buf, r)
 		} else {
 			if len(buf) > 0 {
@@ -214,6 +225,19 @@ func tokenize(input string) []string {
 	return tokens
 }
 
+// isTokenChar matches Latin letters, digits, and underscores.
 func isTokenChar(r rune) bool {
-	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r >= 0x4E00 && r <= 0x9FFF // CJK Unified Ideographs
+	return unicode.IsLetter(r) && !isCJK(r) || unicode.IsDigit(r) || r == '_'
+}
+
+// isCJK reports whether r is a CJK ideograph, kana, or hangul — characters
+// that FTS5's unicode61 tokenizer treats as individual single-character tokens.
+func isCJK(r rune) bool {
+	return unicode.Is(unicode.Han, r) ||
+		unicode.Is(unicode.Hiragana, r) ||
+		unicode.Is(unicode.Katakana, r) ||
+		unicode.Is(unicode.Hangul, r) ||
+		r >= 0x3400 && r <= 0x4DBF || // CJK Extension A
+		r >= 0x20000 && r <= 0x2A6DF || // CJK Extension B
+		r >= 0xF900 && r <= 0xFAFF // CJK Compatibility Ideographs
 }

@@ -47,7 +47,7 @@ Pick exactly one candidate by its index number.`
 // RunMaxStep runs N parallel propose-only candidates, then a judge selects the
 // best one. The winner's tool calls are returned for actual execution. If all
 // candidates fail, returns nil (caller should fall back to normal single-step).
-func RunMaxStep(ctx context.Context, prov provider.Provider, sysPrompt string, messages []provider.Message, tools []provider.ToolCall, n int, temperature float64) *MaxJudgeResult {
+func RunMaxStep(ctx context.Context, prov provider.Provider, sysPrompt string, messages []provider.Message, tools []provider.ToolSchema, n int, temperature float64) *MaxJudgeResult {
 	if n <= 1 {
 		n = DefaultMaxCandidates
 	}
@@ -183,15 +183,8 @@ func runMaxJudge(ctx context.Context, prov provider.Provider, candidates []*MaxC
 
 func parseMaxJudgeResult(raw string, candidates []*MaxCandidate) *MaxJudgeResult {
 	raw = strings.TrimSpace(raw)
-	jsonStr := raw
-	if i := strings.Index(raw, "{"); i >= 0 {
-		jsonStr = raw[i:]
-		if j := strings.LastIndex(jsonStr, "}"); j >= 0 {
-			jsonStr = jsonStr[:j+1]
-		}
-	}
 	var r MaxJudgeResult
-	if err := json.Unmarshal([]byte(jsonStr), &r); err != nil {
+	if err := json.Unmarshal([]byte(extractJSON(raw)), &r); err != nil {
 		return &MaxJudgeResult{BestIndex: candidates[0].Index, Reason: "judge returned unparseable: " + raw}
 	}
 	// Validate index.
@@ -201,10 +194,10 @@ func parseMaxJudgeResult(raw string, candidates []*MaxCandidate) *MaxJudgeResult
 	return &r
 }
 
-func describeToolsForJudge(tools []provider.ToolCall) string {
+func describeToolsForJudge(tools []provider.ToolSchema) string {
 	var b strings.Builder
-	for _, tc := range tools {
-		fmt.Fprintf(&b, "- %s: %s\n", tc.Name, tc.Arguments[:min(len(tc.Arguments), 300)])
+	for _, ts := range tools {
+		fmt.Fprintf(&b, "- %s: %s\n  Parameters: %s\n", ts.Name, ts.Description, ts.Parameters)
 	}
 	return b.String()
 }

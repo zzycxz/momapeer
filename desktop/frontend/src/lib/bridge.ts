@@ -23,6 +23,8 @@ import type {
   ContextPanelInfo,
   DirEntry,
   DroppedItem,
+  DreamRunView,
+  DreamStatusView,
   EffortInfo,
   FilePreview,
   HistoryMessage,
@@ -157,6 +159,12 @@ export interface AppBindings {
   RemoveSkillPath(path: string): Promise<void>;
   RefreshSkills(): Promise<void>;
   SetSkillEnabled(name: string, enabled: boolean): Promise<void>;
+  SetJiutianTool(name: string, enabled: boolean): Promise<void>;
+  DreamStatus(): Promise<DreamStatusView>;
+  SetDreamEnabled(enabled: boolean): Promise<void>;
+  SetDreamIntervals(dreamDays: number, distillDays: number): Promise<void>;
+  TriggerDream(): Promise<DreamRunView>;
+  TriggerDistill(): Promise<DreamRunView>;
   SetMCPServerEnabled(name: string, enabled: boolean): Promise<void>;
   SetMCPServerTier(name: string, tier: string): Promise<void>;
   SlashArgs(input: string): Promise<SlashArgsResult>;
@@ -621,6 +629,16 @@ function makeMockApp(): AppBindings {
     sessions.splice(0);
     trashedSessions.splice(0);
   }
+  // Mutable dream/distill status so the Memory panel's self-evolution section is
+  // interactive in browser dev mode (no backend).
+  const dreamMock: DreamStatusView = {
+    enabled: true,
+    dreamInterval: 7,
+    distillInterval: 30,
+    dreamInFlight: false,
+    distillInFlight: false,
+    history: [],
+  };
   // Mutable settings so the Settings panel's edits are observable in browser dev.
   const settings: SettingsView = {
     defaultModel: "moma",
@@ -743,6 +761,7 @@ function makeMockApp(): AppBindings {
       exaKeySet: false,
       linkupKeySet: false,
     },
+    jiutian: { imageUnderstand: true, imageGenerate: false, videoUnderstand: false },
     desktopLanguage: "",
     desktopTheme: "light",
     desktopThemeStyle: "graphite",
@@ -1767,6 +1786,56 @@ function makeMockApp(): AppBindings {
     async SetSkillEnabled(name: string, enabled: boolean) {
       const skill = capSkills.find((s) => s.name === name);
       if (skill) skill.enabled = enabled;
+    },
+    async SetJiutianTool(name: string, enabled: boolean) {
+      const jiutian = settings.jiutian ?? { imageUnderstand: true, imageGenerate: false, videoUnderstand: false };
+      if (name === "image_understand") jiutian.imageUnderstand = enabled;
+      if (name === "image_generate") jiutian.imageGenerate = enabled;
+      if (name === "video_understand") jiutian.videoUnderstand = enabled;
+      settings.jiutian = jiutian;
+    },
+    async DreamStatus(): Promise<DreamStatusView> {
+      return {
+        enabled: dreamMock.enabled,
+        dreamInterval: dreamMock.dreamInterval,
+        distillInterval: dreamMock.distillInterval,
+        dreamInFlight: dreamMock.dreamInFlight,
+        distillInFlight: dreamMock.distillInFlight,
+        lastDream: dreamMock.lastDream,
+        lastDistill: dreamMock.lastDistill,
+        history: dreamMock.history,
+      };
+    },
+    async SetDreamEnabled(enabled: boolean) {
+      dreamMock.enabled = enabled;
+    },
+    async SetDreamIntervals(dreamDays: number, distillDays: number) {
+      dreamMock.dreamInterval = dreamDays;
+      dreamMock.distillInterval = distillDays;
+    },
+    async TriggerDream(): Promise<DreamRunView> {
+      const run: DreamRunView = {
+        kind: "dream",
+        trigger: "manual",
+        startedAt: new Date().toISOString(),
+        duration: "2s",
+        status: "ok",
+      };
+      dreamMock.lastDream = run;
+      dreamMock.history = [run, ...dreamMock.history].slice(0, 20);
+      return run;
+    },
+    async TriggerDistill(): Promise<DreamRunView> {
+      const run: DreamRunView = {
+        kind: "distill",
+        trigger: "manual",
+        startedAt: new Date().toISOString(),
+        duration: "3s",
+        status: "ok",
+      };
+      dreamMock.lastDistill = run;
+      dreamMock.history = [run, ...dreamMock.history].slice(0, 20);
+      return run;
     },
     async SetMCPServerEnabled(name: string, enabled: boolean) {
       capServers = capServers.map((s) =>

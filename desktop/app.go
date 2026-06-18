@@ -2050,9 +2050,17 @@ func (a *App) SlashArgs(input string) SlashArgsResult {
 // CapabilitiesView is the MCP & Skills drawer's data: connected/failed MCP
 // servers and the discoverable skills, the GUI counterpart to `/mcp` + `/skill`.
 type CapabilitiesView struct {
-	Servers    []ServerView    `json:"servers"`
-	Skills     []SkillView     `json:"skills"`
-	SkillRoots []SkillRootView `json:"skillRoots"`
+	Servers      []ServerView      `json:"servers"`
+	Skills       []SkillView       `json:"skills"`
+	SkillRoots   []SkillRootView   `json:"skillRoots"`
+	JiutianTools []JiutianToolView `json:"jiutianTools"`
+}
+
+// JiutianToolView represents one Jiutian multimodal tool with its toggle state.
+type JiutianToolView struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Enabled     bool   `json:"enabled"`
 }
 
 // ServerView is one MCP server for the drawer. Status is "connected" (with
@@ -2263,7 +2271,153 @@ func (a *App) Capabilities() CapabilitiesView {
 		})
 	}
 	out.SkillRoots = skillRootsView()
+	// Jiutian multimodal tools.
+	if loadedCfg != nil {
+		out.JiutianTools = []JiutianToolView{
+			{Name: "image_understand", Description: "图片理解 — 分析截图、UI、错误信息、架构图", Enabled: loadedCfg.Jiutian.ImageUnderstand},
+			{Name: "image_generate", Description: "图片生成 — 文生图、图生图", Enabled: loadedCfg.Jiutian.ImageGenerate},
+			{Name: "video_understand", Description: "视频理解 — 分析操作录屏、演示视频", Enabled: loadedCfg.Jiutian.VideoUnderstand},
+		}
+	}
 	return out
+}
+
+// SetJiutianTool enables or disables a Jiutian multimodal tool in the config file.
+// It goes through applyConfigChange (loadDesktopUserConfigForEdit → SaveTo → rebuild)
+// so the write uses the same source path that Settings() reads from. The previous
+// hand-rolled config.Load()+WriteFile read via LoadForRoot (merging project toml)
+// but wrote the user file, so the success-path re-read in the UI rolled the toggle
+// back to a stale value — the switch appeared unclickable.
+func (a *App) SetJiutianTool(name string, enabled bool) error {
+	return a.applyConfigChange(func(cfg *config.Config) error {
+		switch name {
+		case "image_understand":
+			cfg.Jiutian.ImageUnderstand = enabled
+		case "image_generate":
+			cfg.Jiutian.ImageGenerate = enabled
+		case "video_understand":
+			cfg.Jiutian.VideoUnderstand = enabled
+		default:
+			return fmt.Errorf("unknown jiutian tool: %s", name)
+		}
+		return nil
+	})
+}
+
+// DreamRunView is one Dream/Distill run record for the settings panel.
+type DreamRunView struct {
+	Kind      string `json:"kind"`
+	Trigger   string `json:"trigger"`
+	StartedAt string `json:"startedAt"`
+	Duration  string `json:"duration,omitempty"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
+}
+
+// DreamStatusView is the self-evolution panel's data: the live config (master
+// switch + cadence), the most recent run of each kind, and whether one is in
+// flight. The "last run" times come from the on-disk dream_state.json so manual
+// and automatic runs are both reflected.
+type DreamStatusView struct {
+	Enabled         bool           `json:"enabled"`
+	DreamInterval   int            `json:"dreamInterval"`
+	DistillInterval int            `json:"distillInterval"`
+	DreamInFlight   bool           `json:"dreamInFlight"`
+	DistillInFlight bool           `json:"distillInFlight"`
+	LastDream       *DreamRunView  `json:"lastDream,omitempty"`
+	LastDistill     *DreamRunView  `json:"lastDistill,omitempty"`
+	History         []DreamRunView `json:"history"`
+}
+
+// DreamStatus returns the self-evolution status for the active session's panel.
+func (a *App) DreamStatus() DreamStatusView {
+	view := DreamStatusView{History: []DreamRunView{}}
+	if cfg, err := config.Load(); err == nil {
+		view.Enabled = cfg.Dream.Enabled
+		view.DreamInterval = cfg.Dream.DreamIntervalDays()
+		view.DistillInterval = cfg.Dream.DistillIntervalDays()
+	} else {
+		d := config.Default().Dream
+		view.Enabled, view.DreamInterval, view.DistillInterval = d.Enabled, d.DreamIntervalDays(), d.DistillIntervalDays()
+	}
+	a.mu.RLock()
+	ctrl := a.activeCtrlLocked()
+	a.mu.RUnlock()
+	view.DreamInFlight = agent.DreamInFlight(agent.KindDream)
+	view.DistillInFlight = agent.DreamInFlight(agent.KindDistill)
+	if ctrl == nil {
+		return view
+	}
+	if r, ok := ctrl.LastDreamRun(agent.KindDream); ok {
+		view.LastDream = dreamRunView(r)
+	}
+	if r, ok := ctrl.LastDreamRun(agent.KindDistill); ok {
+		view.LastDistill = dreamRunView(r)
+	}
+	for _, r := range agent.DreamHistory(ctrl.SessionDir(), agent.KindDream) {
+		view.History = append(view.History, *dreamRunView(r))
+	}
+	for _, r := range agent.DreamHistory(ctrl.SessionDir(), agent.KindDistill) {
+		view.History = append(view.History, *dreamRunView(r))
+	}
+	return view
+}
+
+func dreamRunView(r agent.DreamRun) *DreamRunView {
+	return &DreamRunView{
+		Kind:      string(r.Kind),
+		Trigger:   string(r.Trigger),
+		StartedAt: r.StartedAt.UTC().Format(time.RFC3339),
+		Duration:  r.Duration,
+		Status:    r.Status,
+		Error:     r.Error,
+	}
+}
+
+// SetDreamEnabled toggles the self-evolution master switch in the config file.
+func (a *App) SetDreamEnabled(enabled bool) error {
+	return a.applyConfigChange(func(cfg *config.Config) error {
+		cfg.SetDreamEnabled(enabled)
+		return nil
+	})
+}
+
+// SetDreamIntervals sets the Dream and Distill cadence (days) in the config.
+func (a *App) SetDreamIntervals(dreamDays, distillDays int) error {
+	return a.applyConfigChange(func(cfg *config.Config) error {
+		return cfg.SetDreamIntervals(dreamDays, distillDays)
+	})
+}
+
+// TriggerDream runs a Dream consolidation pass now (blocking) and returns the
+// outcome. The frontend uses this for the "run now" button.
+func (a *App) TriggerDream() (DreamRunView, error) {
+	a.mu.RLock()
+	ctrl := a.activeCtrlLocked()
+	a.mu.RUnlock()
+	if ctrl == nil {
+		return DreamRunView{}, fmt.Errorf("no active session")
+	}
+	r, ran := ctrl.TriggerDream(context.Background())
+	if !ran {
+		return DreamRunView{}, fmt.Errorf("dream did not run: %s", r.Error)
+	}
+	return *dreamRunView(r), nil
+}
+
+// TriggerDistill runs a Distill workflow-extraction pass now (blocking).
+func (a *App) TriggerDistill() (DreamRunView, error) {
+	a.mu.RLock()
+	ctrl := a.activeCtrlLocked()
+	a.mu.RUnlock()
+	if ctrl == nil {
+		return DreamRunView{}, fmt.Errorf("no active session")
+	}
+	r, ran := ctrl.TriggerDistill(context.Background())
+	if !ran {
+		return DreamRunView{}, fmt.Errorf("distill did not run: %s", r.Error)
+	}
+	return *dreamRunView(r), nil
 }
 
 func withPluginConfig(v ServerView, p config.PluginEntry) ServerView {

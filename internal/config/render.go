@@ -293,6 +293,27 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	fmt.Fprintf(&b, "context7_enabled = %v   # built-in Context7 MCP; off until manually enabled\n", c.BuiltInMCP.Context7Enabled)
 	b.WriteString("\n")
 
+	// [jiutian] toggles the Jiutian multimodal tools registered with the LLM.
+	// Without this section in the rendered file, SetJiutianTool's write was
+	// silently dropped (LoadForRoot then fell back to defaults), so the
+	// image_generate / video_understand switches never persisted and the tools
+	// never reached the model after a rebuild.
+	b.WriteString("[jiutian]\n")
+	fmt.Fprintf(&b, "image_understand = %v   # LLMImage2Text vision tool\n", c.Jiutian.ImageUnderstand)
+	fmt.Fprintf(&b, "image_generate   = %v   # cntxt2image text-to-image / image-to-image tool\n", c.Jiutian.ImageGenerate)
+	fmt.Fprintf(&b, "video_understand = %v   # video_to_text tool\n", c.Jiutian.VideoUnderstand)
+	b.WriteString("\n")
+
+	// [dream] toggles the background self-evolution agents. Without this section
+	// in the rendered file, SetDreamEnabled/Intervals writes were silently dropped
+	// (LoadForRoot fell back to defaults), so the master switch never persisted —
+	// mirroring the [jiutian] bug fixed earlier.
+	b.WriteString("[dream]\n")
+	fmt.Fprintf(&b, "enabled          = %v   # 后台自进化：Dream 记忆整合 + Distill 工作流提炼\n", c.Dream.Enabled)
+	fmt.Fprintf(&b, "dream_interval   = %d   # Dream 运行周期（天）；0 = 默认 %d\n", c.Dream.DreamIntervalDays(), DefaultDreamInterval)
+	fmt.Fprintf(&b, "distill_interval = %d   # Distill 运行周期（天）；0 = 默认 %d\n", c.Dream.DistillIntervalDays(), DefaultDistillInterval)
+	b.WriteString("\n")
+
 	renderLSPConfig(&b, c.LSP)
 
 	b.WriteString("[skills]\n")

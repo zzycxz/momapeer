@@ -55,6 +55,8 @@ type Config struct {
 	Skills        SkillsConfig        `toml:"skills"`
 	Codegraph     CodegraphConfig     `toml:"codegraph"`
 	BuiltInMCP    BuiltInMCPConfig    `toml:"builtin_mcp"`
+	Jiutian       JiutianConfig       `toml:"jiutian"`
+	Dream         DreamConfig         `toml:"dream"`
 	Statusline    StatuslineConfig    `toml:"statusline"`
 	LSP           LSPConfig           `toml:"lsp"`
 	Bot           BotConfig           `toml:"bot"`
@@ -298,6 +300,48 @@ func (c CodegraphConfig) ResolvedTier() string {
 type BuiltInMCPConfig struct {
 	TimeEnabled     bool `toml:"time_enabled"`
 	Context7Enabled bool `toml:"context7_enabled"`
+}
+
+// JiutianConfig controls which Jiutian platform capabilities are enabled.
+// These are standalone API tools (not chat-model features) that consume
+// tokens from the Jiutian platform separately from the chat model.
+type JiutianConfig struct {
+	ImageUnderstand bool `toml:"image_understand"` // image_understand tool (LLMImage2Text)
+	ImageGenerate   bool `toml:"image_generate"`   // image_generate tool (cntxt2image)
+	VideoUnderstand bool `toml:"video_understand"` // video_understand tool (video_to_text)
+}
+
+// DreamConfig controls the background self-evolution agents: Dream consolidates
+// session knowledge into project memory, Distill extracts repeated workflows
+// into reusable skills. Intervals are in days; a value <= 0 falls back to the
+// default so a partially-specified [dream] section still behaves sanely.
+type DreamConfig struct {
+	Enabled         bool `toml:"enabled"`          // master switch; false disables both background agents
+	DreamInterval   int  `toml:"dream_interval"`   // days between automatic Dream runs; 0 = default 7
+	DistillInterval int  `toml:"distill_interval"` // days between automatic Distill runs; 0 = default 30
+}
+
+// DefaultDreamInterval is the Dream run cadence when [dream].dream_interval is unset.
+const DefaultDreamInterval = 7
+
+// DefaultDistillInterval is the Distill run cadence when [dream].distill_interval is unset.
+const DefaultDistillInterval = 30
+
+// DreamIntervalDays returns the effective Dream cadence in days, applying the
+// default when the configured value is non-positive.
+func (d DreamConfig) DreamIntervalDays() int {
+	if d.DreamInterval > 0 {
+		return d.DreamInterval
+	}
+	return DefaultDreamInterval
+}
+
+// DistillIntervalDays returns the effective Distill cadence in days.
+func (d DreamConfig) DistillIntervalDays() int {
+	if d.DistillInterval > 0 {
+		return d.DistillInterval
+	}
+	return DefaultDistillInterval
 }
 
 // Enabled reports whether the named built-in MCP server is enabled.
@@ -728,6 +772,13 @@ type ProviderEntry struct {
 	// DefaultEffort is the /effort level used when the user picks "auto" or
 	// has not set Effort. Ignored when SupportedEfforts is empty.
 	DefaultEffort string `toml:"default_effort"`
+	// Vision enables image support for this provider. When true, user-attached
+	// images are sent as image_url content parts. When false (default), images
+	// are stripped before sending to avoid 400 errors from text-only models.
+	Vision bool `toml:"vision"`
+	// VisionDetail controls the image detail level sent to the API ("auto",
+	// "low", "high"). Only effective when Vision is true.
+	VisionDetail string `toml:"vision_detail"`
 	// NoProxy reaches this provider's base_url directly, never through the proxy.
 	// For China-only endpoints a foreign-exit proxy resets the TLS handshake (#2803).
 	NoProxy bool `toml:"no_proxy"`
@@ -905,6 +956,10 @@ type PluginEntry struct {
 	// Empty defaults to "background" so enabled MCPs connect automatically
 	// without blocking chat. Unknown non-empty values fall back to "lazy".
 	Tier string `toml:"tier"`
+	// CallTimeout overrides the per-call default timeout (60s) for this MCP
+	// server's JSON-RPC calls. Prevents a slow server from blocking the agent.
+	// Format: Go duration string (e.g. "30s", "2m", "0" to disable).
+	CallTimeout string `toml:"call_timeout"`
 }
 
 func (e PluginEntry) ShouldAutoStart() bool {
@@ -1038,6 +1093,10 @@ func Default() *Config {
 		Codegraph: CodegraphConfig{Enabled: true, AutoInstall: true},
 		// Time MCP is a zero-dependency in-process server — always safe to enable.
 		BuiltInMCP: BuiltInMCPConfig{TimeEnabled: true},
+		// Jiutian multimodal tools — image understanding on by default; generation/video off.
+		Jiutian: JiutianConfig{ImageUnderstand: true, ImageGenerate: false, VideoUnderstand: false},
+		// Background self-evolution (Dream/Distill) on by default; 7/30 day cadence.
+		Dream: DreamConfig{Enabled: true, DreamInterval: DefaultDreamInterval, DistillInterval: DefaultDistillInterval},
 		// LSP tools on by default, but dormant until a language server is on PATH;
 		// a missing server yields an install hint rather than an error.
 		LSP:     LSPConfig{Enabled: true},

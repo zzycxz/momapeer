@@ -75,16 +75,8 @@ func GoalJudge(ctx context.Context, prov provider.Provider, transcript []provide
 
 func parseGoalVerdict(raw string) GoalVerdict {
 	raw = strings.TrimSpace(raw)
-	// Try to extract JSON from the response (may be wrapped in markdown code blocks).
-	jsonStr := raw
-	if i := strings.Index(raw, "{"); i >= 0 {
-		jsonStr = raw[i:]
-		if j := strings.LastIndex(jsonStr, "}"); j >= 0 {
-			jsonStr = jsonStr[:j+1]
-		}
-	}
 	var v GoalVerdict
-	if err := json.Unmarshal([]byte(jsonStr), &v); err != nil {
+	if err := json.Unmarshal([]byte(extractJSON(raw)), &v); err != nil {
 		return GoalVerdict{OK: false, Reason: "judge returned unparseable response: " + raw}
 	}
 	if v.Reason == "" {

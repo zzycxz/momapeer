@@ -118,7 +118,10 @@ func TestBuildFtsQuery(t *testing.T) {
 		{"hello", `"hello"`},
 		{"", ""},
 		{"   ", ""},
-		{"测试中文", `"测试中文"`},
+		{"测试中文", `"测" OR "试" OR "中" OR "文"`},
+		{"hello世界", `"hello" OR "世" OR "界"`},
+		{"あいう", `"あ" OR "い" OR "う"`},
+		{"가나다", `"가" OR "나" OR "다"`},
 	}
 	for _, tt := range tests {
 		got := buildFtsQuery(tt.input)

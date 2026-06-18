@@ -1,4 +1,4 @@
-import { memo, useDeferredValue, useLayoutEffect, useRef } from "react";
+import { memo, useEffect, useDeferredValue, useLayoutEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -7,7 +7,7 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { CodeViewer } from "./CodeViewer";
 import { normalizeMath } from "./mathNormalize";
-import { openExternal } from "../lib/bridge";
+import { app, openExternal } from "../lib/bridge";
 
 // Markdown rendering via react-markdown + remark-gfm (tables, task lists,
 // strike, autolinks) and remark-math + rehype-katex for $/$$ KaTeX math.
@@ -74,8 +74,29 @@ function removeStreamingCursor(container: HTMLElement): void {
     .forEach((el) => el.remove());
 }
 
+// MdImage renders markdown images. Relative `.momapeer/attachments/...` paths
+// can't be loaded by a bare <img> (the webview has no disk base URL), so fetch
+// the data URL via the kernel — same mechanism UserMessage uses for previews.
+// http(s)/data: URLs render natively.
+function MdImage({ src, alt }: { src?: string; alt?: string }) {
+  const s = String(src ?? "");
+  const [dataUrl, setDataUrl] = useState<string>("");
+  useEffect(() => {
+    if (!s.startsWith(".momapeer/attachments/")) return;
+    let cancelled = false;
+    app.AttachmentDataURL(s)
+      .then((url) => { if (!cancelled) setDataUrl(url); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [s]);
+  const resolved = dataUrl || (s.startsWith(".momapeer/attachments/") ? "" : s);
+  if (!resolved) return null;
+  return <img className="md-img" src={resolved} alt={alt ?? ""} loading="lazy" />;
+}
+
 const components: Components = {
   pre: ({ children }) => <>{children}</>,
+  img: ({ src, alt }) => <MdImage src={src} alt={alt} />,
   code: ({ className, children }) => {
     const text = String(children ?? "");
     const match = /language-([\w-]+)/.exec(className ?? "");

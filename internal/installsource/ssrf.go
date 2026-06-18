@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+
+	"github.com/zzycxz/momapeer/internal/netclient"
 )
 
 // ssrfGuardClient wraps base so every fetch refuses to connect to private,
@@ -58,25 +60,8 @@ func ssrfDial(inner func(context.Context, string, string) (net.Conn, error)) fun
 	}
 }
 
-// cgnatRange is RFC 6598 shared address space (100.64.0.0/10). Go's IsPrivate
-// doesn't cover it, yet some clouds host instance metadata there (Alibaba Cloud
-// at 100.100.100.200), so it's an SSRF target to refuse too.
-var cgnatRange = mustCIDR("100.64.0.0/10")
-
-func mustCIDR(s string) *net.IPNet {
-	_, n, err := net.ParseCIDR(s)
-	if err != nil {
-		panic(err)
-	}
-	return n
-}
-
 // blockedFetchIP reports whether ip is an address install_source must not reach.
 // Loopback is intentionally allowed (see ssrfGuardClient).
 func blockedFetchIP(ip net.IP) bool {
-	return ip.IsPrivate() || // RFC1918 + IPv6 unique-local (fc00::/7)
-		ip.IsLinkLocalUnicast() || // 169.254.0.0/16 (incl. cloud metadata) + fe80::/10
-		ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified() || // 0.0.0.0 / ::
-		cgnatRange.Contains(ip) // 100.64.0.0/10 (incl. Alibaba Cloud metadata)
+	return netclient.BlockedFetchIP(ip)
 }

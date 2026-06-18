@@ -14,6 +14,13 @@ import (
 const (
 	prunedMarker  = "[elided tool result — "
 	minPruneBytes = 1024
+
+	// SoftTrim constants: used by SoftTrimLargeResults for graduated pruning.
+	// Outputs larger than SoftTrimThreshold in the prune zone are partially
+	// trimmed (keep head+tail) before being candidates for full elision.
+	SoftTrimThreshold = 4096
+	SoftTrimKeepHead  = 1536
+	SoftTrimKeepTail  = 1536
 )
 
 // PruneStats reports one prune pass.
@@ -70,4 +77,65 @@ func (a *Agent) PruneStaleToolResults() (PruneStats, error) {
 	a.session.Replace(next)
 	a.session.IncrementRewrite()
 	return st, nil
+}
+
+// SoftTrimLargeResults partially trims tool results in the prune zone that are
+// larger than SoftTrimThreshold, keeping head and tail. This is a graduated
+// step between "keep everything" and "full elision" — it preserves the most
+// useful parts (commands/setup at top, results/errors at bottom) while saving
+// context. Call this BEFORE PruneStaleToolResults for a two-pass approach:
+// soft trim first, then hard prune whatever is still too large.
+func (a *Agent) SoftTrimLargeResults() (PruneStats, error) {
+	var st PruneStats
+	if a.contextWindow <= 0 {
+		return st, nil
+	}
+	msgs := a.session.Messages
+	head, start, ok := a.planCompaction(msgs, 1)
+	if !ok {
+		return st, nil
+	}
+	next := append([]provider.Message(nil), msgs...)
+	changed := false
+	for i := head; i < start; i++ {
+		m := msgs[i]
+		if m.Role != provider.RoleTool {
+			continue
+		}
+		content := provider.ContentString(m.Content)
+		if len(content) <= SoftTrimThreshold {
+			continue
+		}
+		if strings.HasPrefix(content, prunedMarker) || strings.Contains(content, "[... trimmed") {
+			continue
+		}
+		trimmed := softTrimOutput(content)
+		if len(trimmed) < len(content) {
+			st.SavedChars += len(content) - len(trimmed)
+			m.Content = trimmed
+			next[i] = m
+			st.Results++
+			changed = true
+		}
+	}
+	if changed {
+		a.session.Replace(next)
+		a.session.IncrementRewrite()
+	}
+	return st, nil
+}
+
+// softTrimOutput keeps the head and tail of a large output, replacing the
+// middle with a marker.
+func softTrimOutput(content string) string {
+	if len(content) <= SoftTrimThreshold {
+		return content
+	}
+	head := snapToRuneBoundary(content, 0, SoftTrimKeepHead)
+	tail := snapToRuneBoundary(content, len(content)-SoftTrimKeepTail, len(content))
+	if len(head)+len(tail) >= len(content) {
+		return content
+	}
+	marker := fmt.Sprintf("\n\n[... trimmed — kept first and last 1.5K of %d chars ...]\n\n", len(content))
+	return head + marker + tail
 }

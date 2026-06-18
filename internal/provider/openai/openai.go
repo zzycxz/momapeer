@@ -3,7 +3,7 @@
 // any other OpenAI-compatible endpoint are just config instances rather than
 // code. Each instance picks the wire shape from its base URL:
 //   - api.jiutian.10086.cn → emits thinking.type=enabled (MoMA-flavor CoT) plus
-//     reasoning_effort as a depth hint.
+//     thinking_effort as a depth hint.
 //   - api.minimaxi.com → emits thinking.type=adaptive|disabled (M3's binary
 //     knob) instead of reasoning_effort, since M3 has no level scale.
 //   - everything else (MoMA and other OpenAI-compatible gateways) uses the
@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/zzycxz/momapeer/internal/jiutian"
 	"github.com/zzycxz/momapeer/internal/netclient"
 	"github.com/zzycxz/momapeer/internal/provider"
 )
@@ -62,9 +63,9 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	protocol, _ := cfg.Extra["reasoning_protocol"].(string)
 	protocol = normalizeReasoningProtocol(protocol)
 	// moma is true when the provider uses MoMA-compatible thinking mode.
-	// For MoMA, only reasoning-capable models (registered in MoMAReasoningModels)
+	// For MoMA, only thinking-capable models (registered in MoMAThinkingModels)
 	// get thinking enabled — non-reasoning models (qwen, glm, etc.) would 400.
-	moma := protocol == "moma" || (protocol == "" && IsMoMA(cfg.BaseURL) && MoMAReasoningModels[strings.ToLower(strings.TrimSpace(cfg.Model))])
+	moma := protocol == "moma" || (protocol == "" && IsMoMA(cfg.BaseURL) && MoMAThinkingModels[strings.ToLower(strings.TrimSpace(cfg.Model))])
 	minimax := protocol == "" && IsMiniMax(cfg.BaseURL)
 	switch {
 	case protocol == "none":
@@ -73,9 +74,14 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		switch effort {
 		case "", "off": // "off" is a retired level (disabled thinking); fall back to the default depth
 			effort = "high"
-		case "high", "max":
+		case "medium", "high":
+			// pass through — universally accepted by all MoMA models (18/18 tested)
+		case "low":
+			effort = "medium" // low rejected by kimi-k2.6, jiutian-lan-236b; clamp to medium
+		case "xhigh", "max":
+			effort = "high" // rejected by 16/18 MoMA models; clamp to high
 		default:
-			return nil, fmt.Errorf("openai: provider %q uses MoMA thinking; effort must be high or max", name)
+			return nil, fmt.Errorf("openai: provider %q uses MoMA thinking; effort must be low, medium, or high", name)
 		}
 	case minimax:
 		// M3's knob is binary. The config effort layer normalises user input
@@ -106,17 +112,26 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("openai: network: %w", err)
 	}
+	vision, _ := cfg.Extra["vision"].(bool)
+	visionDetail, _ := cfg.Extra["vision_detail"].(string)
+	if visionDetail == "" {
+		visionDetail = "auto"
+	}
+	imageUnderstand, _ := cfg.Extra["jiutian_image_understand"].(bool)
 	return &client{
-		name:        name,
-		apiKey:      cfg.APIKey,
-		keyEnv:      keyEnv,
-		baseURL:     strings.TrimRight(cfg.BaseURL, "/"),
-		model:       cfg.Model,
-		moma:        moma,
-		minimax:     minimax,
-		effort:      effort,
-		http:        httpClient,
-		idleTimeout: defaultStreamIdleTimeout,
+		name:         name,
+		apiKey:       cfg.APIKey,
+		keyEnv:       keyEnv,
+		baseURL:      strings.TrimRight(cfg.BaseURL, "/"),
+		model:        cfg.Model,
+		moma:         moma,
+		minimax:      minimax,
+		effort:       effort,
+		vision:          vision,
+		visionDetail:    visionDetail,
+		imageUnderstand: imageUnderstand,
+		http:            httpClient,
+		idleTimeout:  defaultStreamIdleTimeout,
 	}, nil
 }
 
@@ -140,6 +155,9 @@ type client struct {
 	moma        bool
 	minimax     bool          // true for api.minimaxi.com — emits MiniMax-M3's thinking knob instead of reasoning_effort
 	effort      string        // reasoning_effort for OpenAI; thinking.type for MiniMax; "" = auto/provider default
+	vision      bool          // true when the provider supports image_url content parts
+	visionDetail string       // "auto", "low", "high" — forwarded as image detail level
+	imageUnderstand bool      // true when Jiutian image_understand tool is enabled (auto-degradation)
 	idleTimeout time.Duration // SSE stall watchdog window; defaultStreamIdleTimeout unless a test overrides
 	authed      atomic.Bool   // true after first successful auth; enables transient 401 retry
 }
@@ -155,11 +173,13 @@ func normalizeReasoningProtocol(raw string) string {
 	}
 }
 
-// MoMAReasoningModels lists MoMA-hosted models that support MoMA-compatible
+// MoMAThinkingModels lists MoMA-hosted models that support MoMA-compatible
 // thinking mode. Only these models receive the thinking: {type: "enabled"} parameter.
 // This is the single source of truth; config/effort.go derives its map from this.
+// Note: this controls the REQUEST-side thinking field, not the RESPONSE-side
+// reasoning_content/reasoning fields (which are driven by whatever the model returns).
 // Models verified to return reasoning_content via MoMA platform test (2026-06-13)
-var MoMAReasoningModels = map[string]bool{
+var MoMAThinkingModels = map[string]bool{
 	"jiutian/jiutian-lan-thinking":  true,
 	"jiutian/jiutian-da-35b":        true,
 	"qwen/qwen3.6-35b":              true,
@@ -176,6 +196,27 @@ var MoMAReasoningModels = map[string]bool{
 	"openai/gpt-oss-120b":           true,
 }
 
+// MoMAVisionModels lists MoMA-hosted models that support image_url content
+// parts (multimodal / vision). Models NOT in this list will reject image input
+// with a 400 error ("不支持的消息部件类型 image_url"). Users can override
+// per-provider with vision = true in config.
+// Verified via MoMA platform API test with 100x100 PNG (2026-06-17).
+var MoMAVisionModels = map[string]bool{
+	"qwen/qwen3.5-397b-a17b": true, // Qwen-VL series
+	"qwen/qwen3.6-35b":       true, // Qwen3.6 (vision confirmed)
+	"qwen/qwen3.6-27b":       true, // Qwen3.6 (vision confirmed)
+	"moonshotai/kimi-k2.6":    true, // Kimi (vision confirmed)
+}
+
+// ModelSupportsVision reports whether the given model ID supports image input.
+// Checks the provider-level override first, then falls back to the model registry.
+func ModelSupportsVision(modelID string, providerOverride bool) bool {
+	if providerOverride {
+		return true
+	}
+	return MoMAVisionModels[strings.ToLower(strings.TrimSpace(modelID))]
+}
+
 // bufPool reuses byte buffers for JSON-marshalled request bodies. Each turn
 // allocates a buffer, marshals the request, and sends it — pooling avoids the
 // GC churn from repeated alloc/free of ~10-100KB buffers. The pool is
@@ -185,6 +226,85 @@ var bufPool = sync.Pool{
 }
 
 func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	// When the model doesn't support vision, automatically call the standalone
+	// Jiutian image understanding API to get text descriptions of each image,
+	// then replace image parts with the descriptions. Only when the feature
+	// is enabled in config and the API key is available.
+	if !ModelSupportsVision(c.model, c.vision) && c.imageUnderstand {
+		analyzed := false
+		imageCount := 0
+		// Count images first.
+		for _, m := range req.Messages {
+			if m.Role != provider.RoleUser {
+				continue
+			}
+			if parts, ok := m.Content.([]provider.ContentPart); ok {
+				for _, p := range parts {
+					if p.Type == "image_url" && p.ImageURL != nil {
+						imageCount++
+					}
+				}
+			}
+		}
+		// Inject a status message so the user sees progress while waiting.
+		if imageCount > 0 {
+			noun := "image"
+			if imageCount > 1 {
+				noun = "images"
+			}
+			statusMsg := fmt.Sprintf("[Analyzing %d %s via LLMImage2Text...]", imageCount, noun)
+			req.Messages = append(req.Messages[:len(req.Messages)-1],
+				provider.Message{Role: provider.RoleAssistant, Content: statusMsg},
+				req.Messages[len(req.Messages)-1],
+			)
+		}
+		for i := range req.Messages {
+			m := &req.Messages[i]
+			if m.Role != provider.RoleUser {
+				continue
+			}
+			parts, ok := m.Content.([]provider.ContentPart)
+			if !ok || !hasImageParts(parts) {
+				continue
+			}
+			var replaced []provider.ContentPart
+			for _, p := range parts {
+				if p.Type == "text" {
+					replaced = append(replaced, p)
+					continue
+				}
+				if p.Type == "image_url" && p.ImageURL != nil {
+					desc, err := jiutianImageUnderstand(ctx, p.ImageURL.URL)
+					if err != nil {
+						replaced = append(replaced, provider.ContentPart{
+							Type: "text",
+							Text: fmt.Sprintf("[Image analysis failed: %v]", err),
+						})
+					} else {
+						replaced = append(replaced, provider.ContentPart{
+							Type: "text",
+							Text: fmt.Sprintf("[Image content: %s]", desc),
+						})
+					}
+					analyzed = true
+				}
+			}
+			if len(replaced) == 0 {
+				replaced = []provider.ContentPart{{Type: "text", Text: "(image attached)"}}
+			}
+			m.Content = replaced
+		}
+		if analyzed {
+			req.Messages = append(req.Messages[:len(req.Messages)-1],
+				provider.Message{Role: provider.RoleAssistant, Content: fmt.Sprintf(
+					"[Image analysis complete via LLMImage2Text. Your model %q does not support native image input, so images were pre-analyzed by a dedicated vision model. The descriptions above are the vision model's output — use them to answer the user's question.]",
+					c.model,
+				)},
+				req.Messages[len(req.Messages)-1],
+			)
+		}
+	}
+
 	buf := bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
 	if err := json.NewEncoder(buf).Encode(c.buildRequest(req)); err != nil {
@@ -289,6 +409,14 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 		}
 		if m.Role != provider.RoleAssistant || len(cm.ToolCalls) == 0 || provider.ContentString(m.Content) != "" {
 			cm.Content = m.Content
+			// For vision-capable models, convert image content parts to the
+			// wire format with detail level. The Stream() early-exit already
+			// rejects images for non-vision models, so this only runs when safe.
+			if ModelSupportsVision(c.model, c.vision) && m.Role == provider.RoleUser {
+				if parts, ok := m.Content.([]provider.ContentPart); ok && hasImageParts(parts) {
+					cm.Content = imageContentParts(parts, c.visionDetail)
+				}
+			}
 		}
 		msgs[i] = cm
 	}
@@ -302,20 +430,20 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 	}
 
 	out := chatRequest{
-		Model:           c.model,
-		Messages:        msgs,
-		Tools:           tools,
-		Stream:          true,
-		StreamOptions:   &streamOptions{IncludeUsage: true},
-		Temperature:     req.Temperature,
-		MaxTokens:       req.MaxTokens,
-		ReasoningEffort: c.effort,
+		Model:         c.model,
+		Messages:      msgs,
+		Tools:         tools,
+		Stream:        true,
+		StreamOptions: &streamOptions{IncludeUsage: true},
+		Temperature:   req.Temperature,
+		MaxTokens:     req.MaxTokens,
 	}
 	switch {
 	case c.moma:
-		// MoMA's CoT is controlled by `thinking` (always on) plus
-		// `reasoning_effort` for depth. We never disable thinking for MoMA.
+		// MoMA uses `thinking_effort` (not OpenAI's `reasoning_effort`) for depth.
+		// Thinking is always enabled for MoMA thinking models.
 		out.Thinking = &thinkingMode{Type: "enabled"}
+		out.ThinkingEffort = c.effort
 	case c.minimax:
 		// M3 uses a single `thinking.type` field with two valid values:
 		// "adaptive" (default, thinking on) and "disabled" (off). Reasoning
@@ -325,7 +453,9 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 			t = "adaptive" // /effort auto == the M3 model default
 		}
 		out.Thinking = &thinkingMode{Type: t}
-		out.ReasoningEffort = ""
+	default:
+		// OpenAI-compatible: use standard reasoning_effort field.
+		out.ReasoningEffort = c.effort
 	}
 	return out
 }
@@ -545,7 +675,8 @@ type chatRequest struct {
 	StreamOptions   *streamOptions `json:"stream_options,omitempty"`
 	Temperature     float64        `json:"temperature,omitempty"`
 	MaxTokens       int            `json:"max_tokens,omitempty"`
-	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
+	ReasoningEffort string         `json:"reasoning_effort,omitempty"` // OpenAI standard
+	ThinkingEffort  string         `json:"thinking_effort,omitempty"`  // MoMA platform
 	Thinking        *thinkingMode  `json:"thinking,omitempty"`
 }
 
@@ -624,4 +755,80 @@ type wireUsage struct {
 	CompletionTokensDetails *struct {
 		ReasoningTokens int `json:"reasoning_tokens"`
 	} `json:"completion_tokens_details"`
+}
+
+// hasImageParts reports whether any part in the slice is an image_url.
+func hasImageParts(parts []provider.ContentPart) bool {
+	for _, p := range parts {
+		if p.Type == "image_url" && p.ImageURL != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// chatContentPart is the wire format for a content part in the OpenAI API.
+type chatContentPart struct {
+	Type     string            `json:"type"`
+	Text     string            `json:"text,omitempty"`
+	ImageURL *chatImageURLPart `json:"image_url,omitempty"`
+}
+
+// chatImageURLPart is the wire format for an image_url content part.
+type chatImageURLPart struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// imageContentParts converts provider ContentParts to the OpenAI wire format,
+// applying the vision detail level to all images.
+func imageContentParts(parts []provider.ContentPart, detail string) []chatContentPart {
+	out := make([]chatContentPart, 0, len(parts))
+	for _, p := range parts {
+		switch p.Type {
+		case "text":
+			out = append(out, chatContentPart{Type: "text", Text: p.Text})
+		case "image_url":
+			if p.ImageURL != nil {
+				out = append(out, chatContentPart{
+					Type: "image_url",
+					ImageURL: &chatImageURLPart{
+						URL:    p.ImageURL.URL,
+						Detail: detail,
+					},
+				})
+			}
+		}
+	}
+	return out
+}
+
+// imageUnderstandPrompt tells the vision model that its output will be consumed
+// by a text-only LLM, so it should produce stable, structured descriptions.
+const imageUnderstandPrompt = "Your output will be read by a text-only AI model. Describe the image concisely in one paragraph — transcribe all visible text (errors, code, labels) exactly, skip decorative elements and filler phrases, match the dominant language of the text."
+
+// jiutianImageUnderstand calls Jiutian's standalone image understanding API
+// (/v3/image/text) with the LLMImage2Text model. imageParam can be a base64
+// data URL or a Jiutian uploaded file path. Returns the text description.
+func jiutianImageUnderstand(ctx context.Context, imageParam string) (string, error) {
+	payload := map[string]any{
+		"model":  "LLMImage2Text",
+		"image":  imageParam,
+		"prompt": imageUnderstandPrompt,
+		"stream": false,
+	}
+
+	var result struct {
+		Code   int `json:"code"`
+		Result struct {
+			Text string `json:"text"`
+		} `json:"result"`
+	}
+	if err := jiutian.APICall(ctx, "POST", "/image/text", payload, &result); err != nil {
+		return "", err
+	}
+	if result.Code != 200 || result.Result.Text == "" {
+		return "", fmt.Errorf("jiutian image/text code=%d, empty text", result.Code)
+	}
+	return result.Result.Text, nil
 }

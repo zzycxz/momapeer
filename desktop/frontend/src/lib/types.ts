@@ -44,6 +44,12 @@ export interface WireTool {
   partial?: boolean; // an early dispatch (name only) — a full one with args follows
   parentId?: string; // set on a sub-agent's calls — the parent `task` call's id
   profile?: WireProfile; // subagent model/effort resolved for this call
+  attachments?: WireAttachment[]; // files the tool produced (e.g. generated images)
+}
+
+export interface WireAttachment {
+  path: string; // repo-relative, under .momapeer/attachments/
+  kind: string; // "image"
 }
 
 export interface WireUsage {
@@ -462,6 +468,12 @@ export interface CapabilitiesView {
   servers: ServerView[];
   skills: SkillView[];
   skillRoots: SkillRootView[];
+  jiutianTools?: JiutianToolView[];
+}
+export interface JiutianToolView {
+  name: string;
+  description: string;
+  enabled: boolean;
 }
 export interface MCPServerInput {
   name: string;
@@ -525,6 +537,27 @@ export interface MemoryView {
   scopes: MemoryScope[];
   storeDir: string;
   available: boolean;
+}
+
+// Dream / Distill self-evolution payloads (desktop/app.go DreamStatusView).
+export interface DreamRunView {
+  kind: string; // "dream" | "distill"
+  trigger: string; // "auto" | "manual"
+  startedAt: string; // RFC3339
+  duration?: string;
+  status: string; // "ok" | "error" | "timeout"
+  error?: string;
+}
+
+export interface DreamStatusView {
+  enabled: boolean;
+  dreamInterval: number;
+  distillInterval: number;
+  dreamInFlight: boolean;
+  distillInFlight: boolean;
+  lastDream?: DreamRunView;
+  lastDistill?: DreamRunView;
+  history: DreamRunView[];
 }
 
 // SettingsTab is the top-level navigation item in the Settings Centre modal.
@@ -734,6 +767,7 @@ export interface SettingsView {
   agent: AgentView;
   bot: BotSettingsView;
   webSearch: WebSearchView;
+  jiutian?: { imageUnderstand: boolean; imageGenerate: boolean; videoUnderstand: boolean };
   desktopLanguage: string; // "" | "en" | "zh"; empty = auto
   desktopTheme: string; // "auto" | "dark" | "light"
   desktopThemeStyle: string;

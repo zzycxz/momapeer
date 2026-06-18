@@ -13,7 +13,7 @@ func newClient(t *testing.T, baseURL, effort string) *client {
 	if effort != "" {
 		extra["effort"] = effort
 	}
-	// Use a model from MoMAReasoningModels so the thinking branch is taken
+	// Use a model from MoMAThinkingModels so the thinking branch is taken
 	p, err := New(provider.Config{Name: "p", BaseURL: baseURL, Model: "jiutian/jiutian-lan-thinking", APIKey: "k", Extra: extra})
 	if err != nil {
 		t.Fatalf("New(%q, effort=%q): %v", baseURL, effort, err)
@@ -35,8 +35,10 @@ func TestEffortNormalization(t *testing.T) {
 		{MoMA, "MAX", "high"}, // case-insensitive
 		{MoMA, "auto", ""},    // UI/config auto means omit provider-specific effort
 		{MoMA, "", ""},        // unset stays omitted
-		{moma, "max", "max"},
+		{moma, "max", "high"},   // max clamped to high (16/18 MoMA models reject)
 		{moma, "high", "high"},
+		{moma, "medium", "medium"},
+		{moma, "low", "medium"}, // low clamped to medium (2/18 MoMA models reject)
 		{moma, "auto", "high"},
 		{moma, "", "high"}, // MoMA default depth
 	}

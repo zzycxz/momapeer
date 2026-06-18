@@ -129,7 +129,7 @@ export function SettingsPanel({ onClose, onChanged, initialTab }: { onClose: () 
                 {tab === "models" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><ModelsSection s={s} busy={busy} apply={apply} backgroundApply={backgroundApply} /></SettingsPageShell>}
                 {tab === "bots" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><BotsSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
                 {tab === "mcp" && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy ?? false} apply={apply}><MCPServersSettingsPage />{s && <WebSearchSection s={s} busy={busy} apply={apply} />}</SettingsPageShell>}
-                {tab === "skills" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><SkillsSettingsPage /></SettingsPageShell>}
+                {tab === "skills" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><SkillsSettingsPage /><JiutianSection /></SettingsPageShell>}
                 {tab === "memory" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><MemorySettingsPage /></SettingsPageShell>}
                 {tab === "permissions" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><PermissionsSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
                 {tab === "sandbox" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><SandboxSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
@@ -1981,6 +1981,94 @@ function proxyModeLabel(mode: ProxyMode, t: ReturnType<typeof useT>): string {
     case "off":
       return t("settings.proxyMode.off");
   }
+}
+
+// 工具名到状态键的映射
+const JIUTIAN_TOOL_KEYS: Record<string, keyof { imageUnderstand: boolean; imageGenerate: boolean; videoUnderstand: boolean }> = {
+  image_understand: "imageUnderstand",
+  image_generate: "imageGenerate",
+  video_understand: "videoUnderstand",
+};
+
+function JiutianSection() {
+  const [jiutian, setJiutian] = useState<{ imageUnderstand: boolean; imageGenerate: boolean; videoUnderstand: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    app.Settings()
+      .then((s) => setJiutian(s.jiutian ?? { imageUnderstand: true, imageGenerate: false, videoUnderstand: false }))
+      .catch(() => {});
+  }, []);
+
+  const toggle = async (name: string, value: boolean) => {
+    if (busy) return;
+    // 乐观更新：点击立即反映到 UI，不等待异步完成。成功后保持乐观值，不再
+    // 立即回读 app.Settings()——后端写读现已同源(applyConfigChange)，回读
+    // 只会把刚写入的值原样覆盖回来，徒增把开关"弹回"的风险。
+    const stateKey = JIUTIAN_TOOL_KEYS[name];
+    const prev = jiutian;
+    if (stateKey) setJiutian((p) => p ? { ...p, [stateKey]: value } : p);
+    setBusy(true);
+    try {
+      await app.SetJiutianTool(name, value);
+    } catch {
+      // 写入失败：回滚到点击前的本地状态，而非再调 app.Settings()。
+      setJiutian(prev);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!jiutian) return null;
+
+  const fields: Array<{ key: keyof typeof jiutian; label: string; hint: string; toolName: string }> = [
+    { key: "imageUnderstand", label: "图片理解", hint: "分析截图、UI、错误信息、架构图（LLMImage2Text）", toolName: "image_understand" },
+    { key: "imageGenerate",   label: "图片生成", hint: "文生图、图生图（cntxt2image）",                  toolName: "image_generate" },
+    { key: "videoUnderstand", label: "视频理解", hint: "分析操作录屏、演示视频（video_to_text）",        toolName: "video_understand" },
+  ];
+
+  return (
+    <section className="mem-section">
+      <div className="cap-skills-head">
+        <div className="cap-skills-head__copy">
+          <div className="cap-skills-head__title">九天多模态能力</div>
+          <div className="cap-skills-head__summary">开关九天平台的图片/视频处理工具。关闭后对应工具不会注册给 LLM。</div>
+        </div>
+      </div>
+      <div className="cap-skills">
+        {fields.map(({ key, label, hint, toolName }) => (
+          <div key={key} className={`cap-skill-card${!jiutian[key] ? " cap-skill-card--disabled" : ""}`}>
+            <div className="cap-skill-card__top">
+              <button className="cap-skill-card__toggle" type="button" tabIndex={-1}>
+                <span className="cap-skill-card__head">
+                  <span className="cap-skill-card__icon">/</span>
+                  <span className="cap-skill-card__main">
+                    <span className="cap-skill-card__command">{label}</span>
+                    <span className="cap-skill-card__badges">
+                      <span className="cap-skill-badge cap-skill-badge--project">九天</span>
+                      {!jiutian[key] && <span className="cap-skill-badge cap-skill-badge--off">已关闭</span>}
+                    </span>
+                  </span>
+                </span>
+              </button>
+              <Tooltip label={`${label}${jiutian[key] ? "关闭" : "开启"}`}>
+                <label className="cap-switch" aria-label={`${label}${jiutian[key] ? "关闭" : "开启"}`}>
+                  <input
+                    type="checkbox"
+                    checked={jiutian[key]}
+                    disabled={busy}
+                    onChange={(e) => void toggle(toolName, e.target.checked)}
+                  />
+                  <span className="cap-switch__track" />
+                </label>
+              </Tooltip>
+            </div>
+            <div className="cap-skill-card__desc">{hint}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function WebSearchSection({ s, busy, apply }: SectionProps) {

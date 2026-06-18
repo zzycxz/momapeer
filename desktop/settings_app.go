@@ -135,6 +135,13 @@ type WebSearchView struct {
 	LinkupKeySet bool `json:"linkupKeySet"`
 }
 
+// JiutianView reports the enabled state of each Jiutian multimodal tool.
+type JiutianView struct {
+	ImageUnderstand bool `json:"imageUnderstand"`
+	ImageGenerate   bool `json:"imageGenerate"`
+	VideoUnderstand bool `json:"videoUnderstand"`
+}
+
 // SettingsView is the whole Settings panel payload.
 type SettingsView struct {
 	DefaultModel      string          `json:"defaultModel"`
@@ -150,6 +157,7 @@ type SettingsView struct {
 	Agent             AgentView       `json:"agent"`
 	Bot               BotSettingsView `json:"bot"`
 	WebSearch         WebSearchView   `json:"webSearch"`
+	Jiutian           JiutianView     `json:"jiutian"`
 	DesktopLanguage   string          `json:"desktopLanguage"`
 	DesktopTheme      string          `json:"desktopTheme"`
 	DesktopThemeStyle string          `json:"desktopThemeStyle"`
@@ -380,6 +388,11 @@ func (a *App) Settings() SettingsView {
 			BraveKeySet:  os.Getenv("BRAVE_API_KEY") != "" || os.Getenv("BRAVE_SEARCH_API_KEY") != "",
 			ExaKeySet:    os.Getenv("EXA_API_KEY") != "",
 			LinkupKeySet: os.Getenv("LINKUP_API_KEY") != "",
+		},
+		Jiutian: JiutianView{
+			ImageUnderstand: cfg.Jiutian.ImageUnderstand,
+			ImageGenerate:   cfg.Jiutian.ImageGenerate,
+			VideoUnderstand: cfg.Jiutian.VideoUnderstand,
 		},
 		DesktopLanguage:   cfg.DesktopLanguage(),
 		DesktopTheme:      cfg.DesktopTheme(),

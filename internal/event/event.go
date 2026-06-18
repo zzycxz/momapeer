@@ -104,6 +104,14 @@ type Profile struct {
 	Effort string
 }
 
+// Attachment is a file (e.g. a generated image) a tool produced alongside its
+// text output, so a frontend can render it directly under the tool card without
+// relying on the model to echo the path into its reply.
+type Attachment struct {
+	Path string `json:"path"` // repo-relative, under .momapeer/attachments/
+	Kind string `json:"kind"` // "image"
+}
+
 // Tool describes a tool call for ToolDispatch / ToolResult events. On dispatch
 // only ID/Name/Args/ReadOnly are set; on result Output/Err/Truncated are filled
 // in. Args is the raw JSON arguments — a sink compacts it for display.
@@ -124,6 +132,10 @@ type Tool struct {
 	// sub-agent's calls carry the parent `task` call's ID so a frontend can nest
 	// them under it. Empty for top-level calls.
 	ParentID string
+	// Attachments carries files the tool generated (e.g. image_generate pictures
+	// saved under .momapeer/attachments/), parsed from the result text so the
+	// frontend can display them regardless of what the model writes back.
+	Attachments []Attachment
 	FileDiff
 	Profile *Profile // ToolDispatch: subagent model/effort (set for task/skill calls)
 }

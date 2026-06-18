@@ -520,6 +520,7 @@ func (c *Controller) runGoalLoopWithRawDisplay(ctx context.Context, input any, r
 
 func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input any, raw, display string) error {
 	c.maybeSessionStart(ctx)
+	c.maybeDreamDistill(ctx)
 	c.maybeAutoPlan(ctx, raw)
 	ctx = agent.WithParentSession(ctx, c.parentSessionID())
 	composedText := c.Compose(provider.ContentString(input))
@@ -2106,6 +2107,47 @@ func (c *Controller) SetSkillEnabled(name string, enabled bool) error {
 // HookRunner returns the session's hook runner (nil-safe; may hold zero hooks),
 // so a frontend can list the active hooks via `/hooks`.
 func (c *Controller) HookRunner() *hook.Runner { return c.hooks }
+
+func (c *Controller) maybeDreamDistill(ctx context.Context) {
+	if c.sessionDir == "" || c.executor == nil {
+		return
+	}
+	// The cadence + master-switch gate lives inside agent.ShouldAutoDream /
+	// ShouldAutoDistill (which read live config), so this is a cheap no-op when
+	// self-evolution is disabled or not yet due.
+	agent.SpawnDream(ctx, c.sessionDir, c.executor.Provider(), c.reg, c.executor.Session(), c.sink)
+	agent.SpawnDistill(ctx, c.sessionDir, c.executor.Provider(), c.reg, c.executor.Session(), c.sink)
+}
+
+// TriggerDream runs a Dream consolidation pass on demand, blocking until it
+// finishes or times out. Returns the run record (status/error included). A
+// false "ran" means the run did not execute (e.g. disabled, or already running).
+// Intended for the desktop "run now" button.
+func (c *Controller) TriggerDream(ctx context.Context) (agent.DreamRun, bool) {
+	if c.executor == nil {
+		return agent.DreamRun{Status: "error", Error: "no active session"}, false
+	}
+	return agent.RunDreamOnce(ctx, c.sessionDir, c.executor.Provider(), c.reg, c.executor.Session(), c.sink)
+}
+
+// TriggerDistill runs a Distill workflow-extraction pass on demand. See TriggerDream.
+func (c *Controller) TriggerDistill(ctx context.Context) (agent.DreamRun, bool) {
+	if c.executor == nil {
+		return agent.DreamRun{Status: "error", Error: "no active session"}, false
+	}
+	return agent.RunDistillOnce(ctx, c.sessionDir, c.executor.Provider(), c.reg, c.executor.Session(), c.sink)
+}
+
+// LastDreamRun exposes the most recent recorded run of a kind for this session,
+// for the desktop "last run" status display.
+func (c *Controller) LastDreamRun(kind agent.DreamKind) (agent.DreamRun, bool) {
+	return agent.LastDreamRun(c.sessionDir, kind)
+}
+
+// DreamInFlight reports whether a run of the given kind is currently executing.
+func (c *Controller) DreamInFlight(kind agent.DreamKind) bool {
+	return agent.DreamInFlight(kind)
+}
 
 // AddMCPServer connects an MCP server live and persists it to the config file. Its
 // tools are registered immediately and become available on the next turn (the

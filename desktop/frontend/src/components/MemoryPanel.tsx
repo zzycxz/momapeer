@@ -2,7 +2,7 @@ import { ChevronDown, ChevronRight, FileText, Search, Trash2 } from "lucide-reac
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
-import type { MemoryFact, MemoryView } from "../lib/types";
+import type { DreamRunView, DreamStatusView, MemoryFact, MemoryView } from "../lib/types";
 import { ResizableDrawer } from "./ResizableDrawer";
 import { Tooltip } from "./Tooltip";
 import { ModalCloseButton } from "./ModalCloseButton";
@@ -742,6 +742,7 @@ export function MemorySettingsPage() {
 
 	return (
 		<>
+			<SelfEvolutionSection />
 			<div className="settings-subtabs" role="tablist" aria-label={t("settings.tab.memory")}>
 				<button
 					className={"settings-subtab" + (tab === "memories" ? " settings-subtab--active" : "")}
@@ -1066,5 +1067,209 @@ export function MemorySettingsPage() {
 				})}
 			</section>}
 		</>
+	);
+}
+
+// SelfEvolutionSection is the Dream/Distill configuration + status block at the
+// top of the Memory settings page. Dream consolidates session knowledge into
+// project memory; Distill extracts repeated workflows into skills. Both run in
+// the background on a cadence; here the user can toggle them, set the cadence,
+// run them on demand, and see when they last ran.
+function SelfEvolutionSection() {
+	const t = useT();
+	const [status, setStatus] = useState<DreamStatusView | null>(null);
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	// Interval drafts are edited locally then saved on blur / button.
+	const [dreamDraft, setDreamDraft] = useState("");
+	const [distillDraft, setDistillDraft] = useState("");
+
+	const reload = useCallback(async () => {
+		const s = await app.DreamStatus().catch(() => null);
+		setStatus(s);
+		if (s) {
+			setDreamDraft(String(s.dreamInterval));
+			setDistillDraft(String(s.distillInterval));
+		}
+	}, []);
+	useEffect(() => { void reload(); }, [reload]);
+
+	const apply = async (fn: () => Promise<unknown>) => {
+		setBusy(true);
+		setError(null);
+		try {
+			await fn();
+			await reload();
+		} catch (e) {
+			setError(String((e as Error)?.message ?? e));
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	// Optimistic toggle: flip immediately, roll back on failure (mirrors
+	// JiutianSection's pattern so the switch never visibly snaps back).
+	const toggleEnabled = async (enabled: boolean) => {
+		const prev = status;
+		if (prev) setStatus({ ...prev, enabled });
+		setBusy(true);
+		setError(null);
+		try {
+			await app.SetDreamEnabled(enabled);
+			await reload();
+		} catch (e) {
+			setStatus(prev);
+			setError(String((e as Error)?.message ?? e));
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	const saveIntervals = async () => {
+		const d = Math.max(1, Math.floor(Number(dreamDraft) || 0));
+		const di = Math.max(1, Math.floor(Number(distillDraft) || 0));
+		setDreamDraft(String(d));
+		setDistillDraft(String(di));
+		if (status && d === status.dreamInterval && di === status.distillInterval) return;
+		await apply(() => app.SetDreamIntervals(d, di));
+	};
+
+	const trigger = async (kind: "dream" | "distill") => {
+		await apply(() => (kind === "dream" ? app.TriggerDream() : app.TriggerDistill()));
+	};
+
+	const disabled = !status?.enabled;
+	const fmtAgo = (run?: DreamRunView): string => {
+		if (!run) return t("dream.neverRun");
+		const ms = Date.now() - new Date(run.startedAt).getTime();
+		if (!Number.isFinite(ms) || ms < 0) return run.startedAt;
+		const days = Math.floor(ms / 86_400_000);
+		const hours = Math.floor(ms / 3_600_000);
+		if (days >= 1) return t("dream.daysAgo", { n: days });
+		if (hours >= 1) return t("dream.hoursAgo", { n: hours });
+		return t("dream.justNow");
+	};
+
+	if (!status) {
+		return (
+			<section className="mem-section">
+				<div className="mem-section__title">{t("dream.title")}</div>
+				<div className="mem-empty">{t("settings.loading")}</div>
+			</section>
+		);
+	}
+
+	return (
+		<section className="mem-section dream-section">
+			<div className="mem-section__head">
+				<div>
+					<div className="mem-section__title">{t("dream.title")}</div>
+					<div className="mem-note">{t("dream.subtitle")}</div>
+				</div>
+				<div className="dream-master">
+					<span>{status.enabled ? t("settings.toggleOn") : t("settings.toggleOff")}</span>
+					<label className="cap-switch" aria-label={t("dream.title")}>
+						<input
+							type="checkbox"
+							checked={status.enabled}
+							disabled={busy}
+							onChange={(e) => void toggleEnabled(e.target.checked)}
+						/>
+						<span className="cap-switch__track" />
+					</label>
+				</div>
+			</div>
+
+			{error && <div className="mem-error" role="alert">{error}</div>}
+
+			<div className="dream-grid">
+				{/* Dream: memory consolidation */}
+				<div className={`dream-card${disabled ? " dream-card--disabled" : ""}`}>
+					<div className="dream-card__head">
+						<strong>{t("dream.dreamName")}</strong>
+						<span className="dream-card__status">
+							{status.dreamInFlight ? t("dream.running") : t("dream.lastRun", { when: fmtAgo(status.lastDream) })}
+						</span>
+					</div>
+					<div className="mem-note">{t("dream.dreamDesc")}</div>
+					<div className="dream-card__controls">
+						<label className="dream-interval">
+							<span>{t("dream.interval")}</span>
+							<input
+								className="mem-input dream-interval__input"
+								type="number"
+								min={1}
+								value={dreamDraft}
+								disabled={busy || disabled}
+								inputMode="numeric"
+								onChange={(e) => setDreamDraft(e.target.value.replace(/[^\d]/g, ""))}
+								onBlur={() => void saveIntervals()}
+								onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+							/>
+							<small>{t("dream.days")}</small>
+						</label>
+						<button
+							type="button"
+							className="btn btn--secondary btn--small"
+							disabled={busy || disabled || status.dreamInFlight}
+							onClick={() => void trigger("dream")}
+						>
+							{status.dreamInFlight ? t("dream.running") : t("dream.runNow")}
+						</button>
+					</div>
+				</div>
+
+				{/* Distill: workflow extraction */}
+				<div className={`dream-card${disabled ? " dream-card--disabled" : ""}`}>
+					<div className="dream-card__head">
+						<strong>{t("dream.distillName")}</strong>
+						<span className="dream-card__status">
+							{status.distillInFlight ? t("dream.running") : t("dream.lastRun", { when: fmtAgo(status.lastDistill) })}
+						</span>
+					</div>
+					<div className="mem-note">{t("dream.distillDesc")}</div>
+					<div className="dream-card__controls">
+						<label className="dream-interval">
+							<span>{t("dream.interval")}</span>
+							<input
+								className="mem-input dream-interval__input"
+								type="number"
+								min={1}
+								value={distillDraft}
+								disabled={busy || disabled}
+								inputMode="numeric"
+								onChange={(e) => setDistillDraft(e.target.value.replace(/[^\d]/g, ""))}
+								onBlur={() => void saveIntervals()}
+								onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+							/>
+							<small>{t("dream.days")}</small>
+						</label>
+						<button
+							type="button"
+							className="btn btn--secondary btn--small"
+							disabled={busy || disabled || status.distillInFlight}
+							onClick={() => void trigger("distill")}
+						>
+							{status.distillInFlight ? t("dream.running") : t("dream.runNow")}
+						</button>
+					</div>
+				</div>
+			</div>
+
+			{status.history.length > 0 && (
+				<div className="dream-history">
+					<div className="dream-history__title">{t("dream.history")}</div>
+					{status.history.slice(0, 6).map((r, i) => (
+						<div key={i} className={`dream-history__row dream-history__row--${r.status}`}>
+							<span className="dream-history__kind">{r.kind === "distill" ? t("dream.distillName") : t("dream.dreamName")}</span>
+							<span className="dream-history__when">{fmtAgo(r)}</span>
+							<span className="dream-history__tag">{r.trigger === "manual" ? t("dream.manual") : t("dream.auto")}</span>
+							<span className="dream-history__state">{r.status === "ok" ? t("dream.ok") : r.status === "timeout" ? t("dream.timeout") : t("dream.failed")}</span>
+							{r.error && <span className="dream-history__err" title={r.error}>{r.error}</span>}
+						</div>
+					))}
+				</div>
+			)}
+		</section>
 	);
 }

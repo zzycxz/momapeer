@@ -28,12 +28,13 @@ const closeWaitBudget = 5 * time.Second
 // the turn, so a hung server would otherwise hang a cancelled turn forever).
 // callMu serialises a request/response round-trip over the shared pipe.
 type stdioTransport struct {
-	name   string
-	cmd    *exec.Cmd
-	job    uintptr // Windows Job Object handle (0 elsewhere); reaps detached grandchildren on close
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	stderr *tailBuffer
+	name        string
+	cmd         *exec.Cmd
+	job         uintptr // Windows Job Object handle (0 elsewhere); reaps detached grandchildren on close
+	stdin       io.WriteCloser
+	stdout      *bufio.Reader
+	stderr      *tailBuffer
+	callTimeout time.Duration // per-call default when ctx has no deadline; 0 = no timeout
 
 	callMu sync.Mutex // one in-flight request/response at a time over the shared pipe
 
@@ -84,14 +85,19 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 	if s.LowPriority {
 		proc.LowPriorityStarted(cmd)
 	}
+	callTimeout := s.CallTimeout
+	if callTimeout <= 0 {
+		callTimeout = 60 * time.Second
+	}
 	t := &stdioTransport{
-		name:    s.Name,
-		cmd:     cmd,
-		job:     job,
-		stdin:   stdin,
-		stdout:  bufio.NewReader(stdout),
-		stderr:  stderr,
-		pending: map[int]chan rpcResponse{},
+		name:        s.Name,
+		cmd:         cmd,
+		job:         job,
+		stdin:       stdin,
+		stdout:      bufio.NewReader(stdout),
+		stderr:      stderr,
+		callTimeout: callTimeout,
+		pending:     map[int]chan rpcResponse{},
 	}
 	go t.readLoop()
 	return t, nil
@@ -457,6 +463,14 @@ func (t *stdioTransport) call(ctx context.Context, method string, params any) (j
 
 	if err := t.write(rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}); err != nil {
 		return nil, fmt.Errorf("plugin %q: write %s: %w", t.name, method, err)
+	}
+
+	// Apply a per-call timeout when the caller's context has no deadline,
+	// so a slow or hung MCP server cannot block the agent indefinitely.
+	if _, ok := ctx.Deadline(); !ok && t.callTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, t.callTimeout)
+		defer cancel()
 	}
 
 	select {

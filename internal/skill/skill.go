@@ -63,6 +63,12 @@ type Skill struct {
 	RunAs        RunAs  // inline | subagent
 	Model        string // optional model override for runAs=subagent (frontmatter `model:`)
 	Effort       string // optional effort for runAs=subagent (frontmatter `effort:`)
+	// Disabled marks a skill the user turned off. It stays in the pinned skills
+	// index (so the model knows it exists and can suggest re-enabling) but is
+	// not callable via run_skill until re-enabled. Set by callers building the
+	// index from the full (unfiltered) store; the filtered store still omits
+	// disabled skills entirely, keeping them uncallable.
+	Disabled bool
 }
 
 // IsValidName reports whether name is a usable skill identifier.

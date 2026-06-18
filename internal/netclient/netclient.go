@@ -76,6 +76,24 @@ func ProxyFunc(spec ProxySpec) (func(*http.Request) (*url.URL, error), error) {
 	return proxyFunc(spec)
 }
 
+// ProxyURLFor resolves the proxy URL string for a given request under spec.
+// Returns "" when no proxy applies. This is a convenience wrapper around
+// ProxyFunc for callers that only need the URL string.
+func ProxyURLFor(spec ProxySpec, req *http.Request) (string, error) {
+	pf, err := ProxyFunc(spec)
+	if err != nil {
+		return "", err
+	}
+	if pf == nil {
+		return "", nil
+	}
+	u, err := pf(req)
+	if err != nil || u == nil {
+		return "", err
+	}
+	return u.String(), nil
+}
+
 // NewHTTPClient returns an HTTP client with momapeer proxy settings applied.
 func NewHTTPClient(spec ProxySpec, opts TransportOptions) (*http.Client, error) {
 	tr, err := NewTransport(spec, opts)
@@ -268,4 +286,29 @@ func redactURL(u *url.URL) string {
 		}
 	}
 	return cp.String()
+}
+
+// --- SSRF protection helpers (shared by web_fetch and install_source) ---
+
+// CGNATRange is RFC 6598 shared address space (100.64.0.0/10). Go's IsPrivate
+// doesn't cover it, yet some clouds host instance metadata there (Alibaba Cloud
+// at 100.100.100.200), so it's an SSRF target.
+var CGNATRange = mustCIDR("100.64.0.0/10")
+
+func mustCIDR(s string) *net.IPNet {
+	_, n, err := net.ParseCIDR(s)
+	if err != nil {
+		panic(err)
+	}
+	return n
+}
+
+// BlockedFetchIP reports whether ip is an address that outbound fetches must
+// not reach. Covers RFC1918, link-local, unspecified, and CGNAT ranges.
+func BlockedFetchIP(ip net.IP) bool {
+	return ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() ||
+		CGNATRange.Contains(ip)
 }

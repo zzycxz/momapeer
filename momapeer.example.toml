@@ -55,6 +55,18 @@ context_window = 200000
 price       = { cache_hit = 0, input = 1, output = 2, currency = "¥" }   # per 1M tokens (MoMA does not report cache tokens)
 # MoMA thinking is always on; effort: high | max. Omit for auto (provider default).
 effort      = "high"
+# Image support: set vision = true for models that accept image_url content parts
+# (e.g. qwen-vl, gpt-4o). Default false — images are stripped to avoid 400 errors.
+# vision       = true
+# vision_detail = "auto"   # "auto", "low", or "high"
+
+# ── Jiutian multimodal tools ──────────────────────────────────────────────
+# Standalone API tools that consume Jiutian platform tokens separately from
+# the chat model. Disable any you don't need to hide them from the LLM.
+[jiutian]
+image_understand = true   # /v3/image/text — analyze images via LLMImage2Text
+image_generate   = true   # /v3/images/generations — text-to-image / image-to-image
+video_understand = true   # /v3/video/text — analyze videos via video_to_text
 
 # Anthropic (Claude) — the "anthropic" kind speaks the Messages API directly (no
 # OpenAI shim). base_url is optional (defaults to https://api.anthropic.com). Note:
@@ -117,6 +129,9 @@ bash_timeout_seconds = 120   # foreground safety cap; set 0 for no tool-local ca
 # [[plugins]]
 # name    = "example"
 # command = "momapeer-plugin-example"
+# # Per-call timeout for this MCP server's JSON-RPC calls (default 60s).
+# # Prevents a slow server from blocking the agent indefinitely.
+# call_timeout = "60s"
 # # Enabled MCP servers connect automatically in the background after session
 # # start. Use /mcp or the desktop MCP panel to refresh, reconnect, or disable.
 

@@ -59,6 +59,10 @@ type Spec struct {
 	// LowPriority runs a stdio subprocess below normal scheduling priority, for
 	// background indexers (CodeGraph) that must not starve the user's machine.
 	LowPriority bool
+	// CallTimeout caps how long a single MCP JSON-RPC call may take when the
+	// caller's context has no deadline. Zero uses the default (60s). Prevents a
+	// slow or hung MCP server from blocking the agent indefinitely.
+	CallTimeout time.Duration
 }
 
 // transport carries JSON-RPC messages to and from one MCP server. call sends a

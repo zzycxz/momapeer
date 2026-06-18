@@ -7,6 +7,27 @@ import (
 	"github.com/zzycxz/momapeer/internal/memory"
 )
 
+func TestForModel_ThinkingModel(t *testing.T) {
+	addon := ForModel("qwen/qwen3.6-35b")
+	if addon != ThinkingAddon {
+		t.Fatalf("expected ThinkingAddon for qwen3.6-35b, got %q", addon)
+	}
+}
+
+func TestForModel_UnknownModel(t *testing.T) {
+	addon := ForModel("unknown/model")
+	if addon != "" {
+		t.Fatalf("expected empty for unknown model, got %q", addon)
+	}
+}
+
+func TestForModel_AutoRouter(t *testing.T) {
+	addon := ForModel("moma/auto-router")
+	if addon != "" {
+		t.Fatalf("expected empty for auto-router, got %q", addon)
+	}
+}
+
 func TestExtractHostChecksFromStructuredSection(t *testing.T) {
 	docs := []memory.Source{{
 		Path:  "AGENTS.md",
