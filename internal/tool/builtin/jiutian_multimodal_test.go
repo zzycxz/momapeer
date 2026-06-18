@@ -33,8 +33,8 @@ func TestImageGenerateSchema(t *testing.T) {
 	if g.Name() != "image_generate" {
 		t.Fatalf("name = %q", g.Name())
 	}
-	if !g.ReadOnly() {
-		t.Fatal("should be read-only")
+	if g.ReadOnly() {
+		t.Fatal("image_generate writes a file, should NOT be read-only")
 	}
 }
 
