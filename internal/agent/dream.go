@@ -59,8 +59,8 @@ type DreamRun struct {
 	Trigger   DreamTrigger `json:"trigger"`
 	StartedAt time.Time    `json:"started_at"`
 	Duration  string       `json:"duration,omitempty"`
-	Status    string       `json:"status"`            // "ok" | "error" | "timeout"
-	Error     string       `json:"error,omitempty"`   // set when status != ok
+	Status    string       `json:"status"`             // "ok" | "error" | "timeout"
+	Error     string       `json:"error,omitempty"`    // set when status != ok
 	Memories  int          `json:"memories,omitempty"` // best-effort count when discoverable
 }
 
@@ -79,9 +79,9 @@ type dreamStateFile struct {
 // The cadence decision itself NEVER consults this state — it reads the on-disk
 // dream_state.json so a manual run cannot perturb the automatic schedule.
 type spawnCoordinator struct {
-	mu         sync.Mutex
-	inFlight   map[DreamKind]bool
-	lastAuto   map[DreamKind]time.Time
+	mu       sync.Mutex
+	inFlight map[DreamKind]bool
+	lastAuto map[DreamKind]time.Time
 }
 
 var dreamCoord = &spawnCoordinator{
@@ -358,7 +358,6 @@ func runKind(ctx context.Context, sessionDir string, kind DreamKind, task string
 			return run, false
 		}
 	}
-
 
 	// Concurrency gate. inFlight is per-kind so Dream and Distill can run in
 	// parallel, but two Dreams cannot.

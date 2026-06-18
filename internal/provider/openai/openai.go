@@ -119,19 +119,19 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	}
 	imageUnderstand, _ := cfg.Extra["jiutian_image_understand"].(bool)
 	return &client{
-		name:         name,
-		apiKey:       cfg.APIKey,
-		keyEnv:       keyEnv,
-		baseURL:      strings.TrimRight(cfg.BaseURL, "/"),
-		model:        cfg.Model,
-		moma:         moma,
-		minimax:      minimax,
-		effort:       effort,
+		name:            name,
+		apiKey:          cfg.APIKey,
+		keyEnv:          keyEnv,
+		baseURL:         strings.TrimRight(cfg.BaseURL, "/"),
+		model:           cfg.Model,
+		moma:            moma,
+		minimax:         minimax,
+		effort:          effort,
 		vision:          vision,
 		visionDetail:    visionDetail,
 		imageUnderstand: imageUnderstand,
 		http:            httpClient,
-		idleTimeout:  defaultStreamIdleTimeout,
+		idleTimeout:     defaultStreamIdleTimeout,
 	}, nil
 }
 
@@ -146,20 +146,20 @@ func newHTTPClient(cfg provider.Config) (*http.Client, error) {
 }
 
 type client struct {
-	name        string
-	apiKey      string
-	keyEnv      string // api_key_env name, surfaced in auth errors
-	baseURL     string
-	model       string
-	http        *http.Client
-	moma        bool
-	minimax     bool          // true for api.minimaxi.com — emits MiniMax-M3's thinking knob instead of reasoning_effort
-	effort      string        // reasoning_effort for OpenAI; thinking.type for MiniMax; "" = auto/provider default
-	vision      bool          // true when the provider supports image_url content parts
-	visionDetail string       // "auto", "low", "high" — forwarded as image detail level
-	imageUnderstand bool      // true when Jiutian image_understand tool is enabled (auto-degradation)
-	idleTimeout time.Duration // SSE stall watchdog window; defaultStreamIdleTimeout unless a test overrides
-	authed      atomic.Bool   // true after first successful auth; enables transient 401 retry
+	name            string
+	apiKey          string
+	keyEnv          string // api_key_env name, surfaced in auth errors
+	baseURL         string
+	model           string
+	http            *http.Client
+	moma            bool
+	minimax         bool          // true for api.minimaxi.com — emits MiniMax-M3's thinking knob instead of reasoning_effort
+	effort          string        // reasoning_effort for OpenAI; thinking.type for MiniMax; "" = auto/provider default
+	vision          bool          // true when the provider supports image_url content parts
+	visionDetail    string        // "auto", "low", "high" — forwarded as image detail level
+	imageUnderstand bool          // true when Jiutian image_understand tool is enabled (auto-degradation)
+	idleTimeout     time.Duration // SSE stall watchdog window; defaultStreamIdleTimeout unless a test overrides
+	authed          atomic.Bool   // true after first successful auth; enables transient 401 retry
 }
 
 func (c *client) Name() string { return c.name }
@@ -205,7 +205,7 @@ var MoMAVisionModels = map[string]bool{
 	"qwen/qwen3.5-397b-a17b": true, // Qwen-VL series
 	"qwen/qwen3.6-35b":       true, // Qwen3.6 (vision confirmed)
 	"qwen/qwen3.6-27b":       true, // Qwen3.6 (vision confirmed)
-	"moonshotai/kimi-k2.6":    true, // Kimi (vision confirmed)
+	"moonshotai/kimi-k2.6":   true, // Kimi (vision confirmed)
 }
 
 // ModelSupportsVision reports whether the given model ID supports image input.

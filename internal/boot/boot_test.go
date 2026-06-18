@@ -20,8 +20,8 @@ import (
 
 	"github.com/zzycxz/momapeer/internal/agent"
 	"github.com/zzycxz/momapeer/internal/config"
-	"github.com/zzycxz/momapeer/internal/instruction"
 	"github.com/zzycxz/momapeer/internal/event"
+	"github.com/zzycxz/momapeer/internal/instruction"
 	"github.com/zzycxz/momapeer/internal/netclient"
 	"github.com/zzycxz/momapeer/internal/plugin"
 	"github.com/zzycxz/momapeer/internal/provider"

@@ -98,7 +98,6 @@ func (c *Config) SetDreamIntervals(dreamDays, distillDays int) error {
 	return nil
 }
 
-
 // historical behavior; "desktop" enables the two-axis desktop-style shortcuts.
 func (c *Config) SetUIShortcutLayout(layout string) error {
 	switch strings.ToLower(strings.TrimSpace(layout)) {

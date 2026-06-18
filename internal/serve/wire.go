@@ -54,18 +54,18 @@ type wireProfile struct {
 }
 
 type wireTool struct {
-	ID          string            `json:"id,omitempty"`
-	Name        string            `json:"name"`
-	Args        string            `json:"args,omitempty"`
-	Output      string            `json:"output,omitempty"`
-	Err         string            `json:"err,omitempty"`
-	ReadOnly    bool              `json:"readOnly"`
-	Truncated   bool              `json:"truncated,omitempty"`
-	DurationMs  int64             `json:"durationMs,omitempty"`
-	Partial     bool              `json:"partial,omitempty"`
-	ParentID    string            `json:"parentId,omitempty"`
-	Profile     *wireProfile      `json:"profile,omitempty"`
-	Attachments []wireAttachment  `json:"attachments,omitempty"`
+	ID          string           `json:"id,omitempty"`
+	Name        string           `json:"name"`
+	Args        string           `json:"args,omitempty"`
+	Output      string           `json:"output,omitempty"`
+	Err         string           `json:"err,omitempty"`
+	ReadOnly    bool             `json:"readOnly"`
+	Truncated   bool             `json:"truncated,omitempty"`
+	DurationMs  int64            `json:"durationMs,omitempty"`
+	Partial     bool             `json:"partial,omitempty"`
+	ParentID    string           `json:"parentId,omitempty"`
+	Profile     *wireProfile     `json:"profile,omitempty"`
+	Attachments []wireAttachment `json:"attachments,omitempty"`
 }
 
 type wireAttachment struct {

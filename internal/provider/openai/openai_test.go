@@ -350,10 +350,10 @@ func TestBuildRequestForwardsReasoningEffort(t *testing.T) {
 
 func TestBuildRequestMoMAThinking(t *testing.T) {
 	for _, tc := range []struct {
-		name           string
-		effort         string
-		wantThinking   string
-		wantEffort     string
+		name         string
+		effort       string
+		wantThinking string
+		wantEffort   string
 	}{
 		{name: "high", effort: "high", wantThinking: "enabled", wantEffort: "high"},
 		{name: "medium", effort: "medium", wantThinking: "enabled", wantEffort: "medium"},

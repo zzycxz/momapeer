@@ -35,7 +35,7 @@ func TestEffortNormalization(t *testing.T) {
 		{MoMA, "MAX", "high"}, // case-insensitive
 		{MoMA, "auto", ""},    // UI/config auto means omit provider-specific effort
 		{MoMA, "", ""},        // unset stays omitted
-		{moma, "max", "high"},   // max clamped to high (16/18 MoMA models reject)
+		{moma, "max", "high"}, // max clamped to high (16/18 MoMA models reject)
 		{moma, "high", "high"},
 		{moma, "medium", "medium"},
 		{moma, "low", "medium"}, // low clamped to medium (2/18 MoMA models reject)

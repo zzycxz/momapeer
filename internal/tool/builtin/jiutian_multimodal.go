@@ -94,6 +94,7 @@ func (*imageGenerate) Description() string {
 func (*imageGenerate) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"prompt":{"type":"string","description":"Image description"},"reference_image":{"type":"string","description":"Optional: base64 data URL or file path for image-to-image"},"n":{"type":"integer","description":"Number of images (1-4, default 1)"}},"required":["prompt"]}`)
 }
+
 // ReadOnly is false: image_generate produces a visible artifact (a saved
 // picture rendered under the tool card), so it must not be folded into the
 // transcript's quiet read-only batch like grep/ls. Treating it as a
@@ -126,7 +127,9 @@ func (*imageGenerate) Execute(ctx context.Context, args json.RawMessage) (string
 
 	var result struct {
 		Choices []struct {
-			Data         []struct{ URL string `json:"url"` } `json:"data"`
+			Data []struct {
+				URL string `json:"url"`
+			} `json:"data"`
 			Text         string `json:"text"`
 			WidthResult  int    `json:"width_result"`
 			HeightResult int    `json:"height_result"`
