@@ -475,6 +475,50 @@ export interface JiutianToolView {
   description: string;
   enabled: boolean;
 }
+// ── Skill Store (技能商店) ──────────────────────────────────────────────
+export interface StoreStatusView {
+  enabled: boolean;
+  source: string;
+  baseUrl: string;
+}
+export interface StoreSkillView {
+  slug: string;
+  displayName: string;
+  summary: string;
+  stars: number;
+  installs: number;
+  latestVersion: string;
+  updatedAt: number;
+  installed: boolean;
+  installedVersion: string;
+}
+export interface StoreSkillDetailView extends StoreSkillView {
+  ownerHandle: string;
+  ownerName: string;
+  ownerImage: string;
+  changelog: string;
+  isSuspicious: boolean;
+  verdict: string;
+}
+export interface StoreListResult {
+  items: StoreSkillView[];
+  nextCursor: string;
+}
+export interface StoreUpdateView {
+  slug: string;
+  name: string;
+  installedVersion: string;
+  latestVersion: string;
+  changelog: string;
+}
+export interface InstalledSkill {
+  slug: string;
+  name: string;
+  version: string;
+  source: string;
+  installedAt: string;
+  dir: string;
+}
 export interface MCPServerInput {
   name: string;
   transport: string; // stdio | http | sse
@@ -561,7 +605,7 @@ export interface DreamStatusView {
 }
 
 // SettingsTab is the top-level navigation item in the Settings Centre modal.
-export type SettingsTab = "general" | "models" | "providers" | "bots" | "mcp" | "skills" | "memory" | "permissions" | "sandbox" | "network" | "appearance" | "updates";
+export type SettingsTab = "general" | "models" | "providers" | "bots" | "mcp" | "skills" | "store" | "memory" | "permissions" | "sandbox" | "network" | "appearance" | "updates";
 
 // Settings panel payloads (desktop/settings_app.go).
 export interface ProviderView {

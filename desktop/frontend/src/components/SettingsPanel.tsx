@@ -26,9 +26,10 @@ import { Tooltip } from "./Tooltip";
 import { AnchoredPopover } from "./AnchoredPopover";
 import { MCPServersSettingsPage, SkillsSettingsPage } from "./CapabilitiesPanel";
 import { MemorySettingsPage } from "./MemoryPanel";
+import { StorePanel } from "./StorePanel";
 import { ModalCloseButton } from "./ModalCloseButton";
 
-const SETTINGS_TABS: SettingsTab[] = ["general", "models", "bots", "mcp", "skills", "memory", "permissions", "sandbox", "network", "appearance", "updates"];
+const SETTINGS_TABS: SettingsTab[] = ["general", "models", "bots", "mcp", "skills", "store", "memory", "permissions", "sandbox", "network", "appearance", "updates"];
 
 // SettingsPanel is the desktop settings centre — a centred modal with left
 // navigation and a right content area. It hosts all settings pages plus MCP,
@@ -130,6 +131,7 @@ export function SettingsPanel({ onClose, onChanged, initialTab }: { onClose: () 
                 {tab === "bots" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><BotsSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
                 {tab === "mcp" && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy ?? false} apply={apply}><MCPServersSettingsPage />{s && <WebSearchSection s={s} busy={busy} apply={apply} />}</SettingsPageShell>}
                 {tab === "skills" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><SkillsSettingsPage /><JiutianSection /></SettingsPageShell>}
+                {tab === "store" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><StorePanel /></SettingsPageShell>}
                 {tab === "memory" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><MemorySettingsPage /></SettingsPageShell>}
                 {tab === "permissions" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><PermissionsSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
                 {tab === "sandbox" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><SandboxSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
@@ -279,6 +281,7 @@ function settingsTabPageTitle(id: SettingsTab, t: ReturnType<typeof useT>): stri
   switch (id) {
     case "mcp": return t("settings.tab.mcp");
     case "skills": return t("settings.tab.skills");
+    case "store": return t("settings.tab.store");
     case "memory": return t("settings.tab.memory");
     default: return settingsTabLabel(id, t);
   }
@@ -308,6 +311,8 @@ function settingsTabLabel(id: SettingsTab, t: ReturnType<typeof useT>): string {
       return t("settings.tab.mcp");
     case "skills":
       return t("settings.tab.skills");
+    case "store":
+      return t("settings.tab.store");
     case "memory":
       return t("settings.tab.memory");
     case "network":
@@ -337,6 +342,8 @@ function settingsTabMeta(id: SettingsTab, s: SettingsView, t: ReturnType<typeof 
       return t("caps.connectorsTab");
     case "skills":
       return t("caps.skillsTab");
+    case "store":
+      return "ClawHub";
     case "memory":
       return t("settings.tabSub.memory");
     case "network":
@@ -1200,9 +1207,6 @@ function BotsSection({ s, busy, apply }: SectionProps) {
                 <div key={connection.id} className="bot-connection-row" role="rowgroup">
                   <div className="bot-connection-row__grid" role="row">
                     <div className="bot-connection-row__channel" role="cell">
-                      <span className={`bot-connection-row__badge bot-connection-row__badge--${connection.provider === "weixin" ? "weixin" : connection.domain === "lark" ? "lark" : "feishu"}`}>
-                        {connection.provider === "weixin" ? "微" : connection.domain === "lark" ? "L" : "@"}
-                      </span>
                       <span>{connection.label || botConnectionLabel(connection, t)}</span>
                     </div>
                     <code role="cell">{botConnectionRemoteLabel(connection)}</code>

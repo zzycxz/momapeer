@@ -611,6 +611,29 @@ func CanonicalSkillPath(path string) string {
 	return path
 }
 
+// SetStoreEnabled toggles the remote skill store master switch.
+func (c *Config) SetStoreEnabled(enabled bool) {
+	c.Skills.Store.Enabled = enabled
+}
+
+// SetStoreSource sets the active store source name (must exist in Sources).
+func (c *Config) SetStoreSource(name string) {
+	c.Skills.Store.Source = strings.TrimSpace(name)
+}
+
+// SetStoreSourceURL adds or updates a named store source.
+func (c *Config) SetStoreSourceURL(name, url string) {
+	name = strings.TrimSpace(name)
+	url = strings.TrimRight(strings.TrimSpace(url), "/")
+	if name == "" || url == "" {
+		return
+	}
+	if c.Skills.Store.Sources == nil {
+		c.Skills.Store.Sources = map[string]string{}
+	}
+	c.Skills.Store.Sources[name] = url
+}
+
 // UpsertPlugin adds e, or replaces an MCP server with the same name (preserving
 // position). The transport-specific required fields are validated: stdio needs
 // a command, http/sse need a url.

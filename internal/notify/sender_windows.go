@@ -2,7 +2,11 @@
 
 package notify
 
-import "os/exec"
+import (
+	"os/exec"
+
+	"github.com/zzycxz/momapeer/internal/proc"
+)
 
 // PlatformSender delivers notifications through the host OS.
 type PlatformSender struct{}
@@ -11,7 +15,7 @@ type PlatformSender struct{}
 func NewPlatformSender() PlatformSender { return PlatformSender{} }
 
 func (PlatformSender) Send(m Message) error {
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", `
+	cmd := exec.Command(proc.ResolvePowerShell(), "-NoProfile", "-Command", `
 if (Get-Command New-BurntToastNotification -ErrorAction SilentlyContinue) {
   New-BurntToastNotification -Text $args[0], $args[1]
 } elseif (Get-Command msg -ErrorAction SilentlyContinue) {

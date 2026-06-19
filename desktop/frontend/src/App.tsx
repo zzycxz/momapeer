@@ -3,7 +3,6 @@ import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } 
 import { ShellExpandProvider, useShellExpand } from "./lib/shellExpand";
 import {
   Activity,
-  Bird,
   Command,
   Download,
   SquarePen,
@@ -13,10 +12,7 @@ import {
   FileJson,
   GitBranch,
   History,
-  MessageCircle,
   MessageSquare,
-  Plus,
-  Send,
   Settings as SettingsIcon,
   Pencil,
   Trash2,
@@ -159,16 +155,6 @@ type SidebarImConnectionDetailProps = {
   onOpenSession: () => void;
   onOpenSettings: () => void;
 };
-
-function PlatformIcon({ platform, size = 14 }: { platform: string; size?: number }) {
-  if (platform === "weixin") {
-    return <MessageCircle size={size} />;
-  }
-  if (platform === "lark") {
-    return <Bird size={size} />;
-  }
-  return <Send size={size} />;
-}
 
 function isSidebarImConnection(connection: BotConnectionView): boolean {
   return connection.provider === "feishu" || connection.provider === "weixin";
@@ -333,9 +319,6 @@ function SidebarImConnectionDetail({ connection, onClose, onOpenSession, onOpenS
   return (
     <div className="bot-detail">
       <section className="bot-detail__summary">
-        <div className={`bot-detail__avatar bot-detail__avatar--${connection.platform}`} aria-hidden="true">
-          <PlatformIcon platform={connection.platform} size={20} />
-        </div>
         <div className="bot-detail__summary-main">
           <span>{translate("botDetail.subtitle")}</span>
           <h2>{connection.title}</h2>
@@ -702,9 +685,7 @@ export default function App() {
   const { showToast } = useToast();
   const [sidebarImConnections, setSidebarImConnections] = useState<SidebarImConnection[]>([]);
   const [imTopicSources, setImTopicSources] = useState<Record<string, SidebarImTopicSource>>({});
-  const [activeSidebarImConnectionId, setActiveSidebarImConnectionId] = useState("");
   const [sidebarImDetailConnectionId, setSidebarImDetailConnectionId] = useState("");
-  const [sidebarImExpanded, setSidebarImExpanded] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [sidebarResizing, setSidebarResizing] = useState(false);
@@ -781,7 +762,6 @@ export default function App() {
 
   const openBotSettings = useCallback(() => {
     closeTransientOverlays();
-    setSidebarImExpanded(false);
     setSidebarImDetailConnectionId("");
     setSettingsTarget("bots");
   }, [closeTransientOverlays]);
@@ -893,14 +873,6 @@ export default function App() {
   }, [applyDesktopPreferences, t]);
 
   useEffect(() => {
-    if (sidebarImConnections.length === 0) {
-      setSidebarImExpanded(false);
-    }
-    setActiveSidebarImConnectionId((current) => {
-      if (sidebarImConnections.length === 0) return "";
-      if (current && sidebarImConnections.some((connection) => connection.id === current)) return current;
-      return sidebarImConnections[0].id;
-    });
     setSidebarImDetailConnectionId((current) => {
       if (!current) return "";
       return sidebarImConnections.some((connection) => connection.id === current) ? current : "";
@@ -1945,21 +1917,15 @@ export default function App() {
     }
   }, [ensureBlankTab, openGlobalTab, openProjectTab, refreshTabMetas, resumeSession, showToast, t]);
 
-  const selectSidebarImConnection = useCallback((connection: SidebarImConnection) => {
-    setActiveSidebarImConnectionId(connection.id);
-    setSidebarImDetailConnectionId(connection.id);
-    setSidebarImExpanded(false);
+  const showSidebarImDetail = useCallback(() => {
     closeTransientOverlays();
-  }, [closeTransientOverlays]);
-
-  const toggleSidebarImPanel = useCallback(() => {
     if (sidebarImConnections.length === 0) {
       openBotSettings();
       return;
     }
-    if (!sidebarImExpanded) quietlyRefreshSidebarImConnections();
-    setSidebarImExpanded((value) => !value);
-  }, [openBotSettings, quietlyRefreshSidebarImConnections, sidebarImConnections.length, sidebarImExpanded]);
+    quietlyRefreshSidebarImConnections();
+    setSidebarImDetailConnectionId(sidebarImConnections[0].id);
+  }, [closeTransientOverlays, openBotSettings, quietlyRefreshSidebarImConnections, sidebarImConnections]);
 
   // History drawer: project menus can open a scoped saved-session list. Idle row
   // clicks resume; running row clicks only preview through PreviewSession.
@@ -2209,14 +2175,7 @@ export default function App() {
     ? [topicbarWorkspaceLabel, topicbarImSourceLabel, sidebarImScopeLabel(sidebarImDetailConnection, t)].filter(Boolean).join(" · ")
     : [topicbarWorkspacePath || topicbarWorkspaceLabel, topicbarImSourceLabel].filter(Boolean).join(" · ");
   const sidebarImConnectedCount = sidebarImConnections.filter((connection) => connection.status === "connected").length;
-  const sidebarImSummaryText = sidebarImConnections.length === 0
-    ? t("sidebar.imEmpty")
-    : sidebarImConnectedCount > 0
-      ? t("sidebar.imOnlineCount", { n: sidebarImConnectedCount })
-      : t("sidebar.imConnectionCount", { n: sidebarImConnections.length });
-  const sidebarImToggleLabel = sidebarImConnections.length === 0
-    ? t("sidebar.imEmpty")
-    : t(sidebarImExpanded ? "common.collapse" : "common.expand");
+  const sidebarImOnline = sidebarImConnectedCount > 0;
 
   return (
     <ShellExpandProvider>
@@ -2291,76 +2250,17 @@ export default function App() {
           </section>
 
           <nav className="sidebar__nav">
-          <div className={`sidebar-im${sidebarImExpanded ? " sidebar-im--expanded" : ""}`} aria-label={t("sidebar.im")}>
-            <button
-              className="sidebar-im__summary"
-              type="button"
-              aria-expanded={sidebarImExpanded}
-              aria-label={sidebarImToggleLabel}
-              title={sidebarImToggleLabel}
-              onPointerDown={(event) => {
-                if (event.button !== 0) return;
-                event.preventDefault();
-                toggleSidebarImPanel();
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                event.preventDefault();
-                toggleSidebarImPanel();
-              }}
-            >
-              <MessageSquare size={15} />
-              <span className="sidebar-im__summary-label">{t("sidebar.im")}</span>
-              <span className="sidebar-im__summary-status">{sidebarImSummaryText}</span>
-            </button>
-            {sidebarImExpanded && sidebarImConnections.length > 0 && (
-              <div className="sidebar-im__panel" role="dialog" aria-label={t("sidebar.imManage")}>
-                <div className="sidebar-im__panel-head">
-                  <span>{t("sidebar.imManage")}</span>
-                  <div className="sidebar-im__panel-actions">
-                    <Tooltip label={t("sidebar.imAdd")} fill side="right" disabled={sidebarNavTooltipDisabled}>
-                      <button
-                        className="sidebar-im__icon-button"
-                        type="button"
-                        onClick={openBotSettings}
-                        aria-label={t("sidebar.imAdd")}
-                      >
-                        <Plus size={13} />
-                      </button>
-                    </Tooltip>
-                  </div>
-                </div>
-                <div className="sidebar-im__list">
-                  {sidebarImConnections.map((connection) => (
-                    <div
-                      key={connection.id}
-                      className={[
-                        "sidebar-im-row-shell",
-                        activeSidebarImConnectionId === connection.id ? "sidebar-im-row-shell--active" : "",
-                        `sidebar-im-row-shell--${connection.status}`,
-                      ].filter(Boolean).join(" ")}
-                    >
-                      <button
-                        className="sidebar-im-row"
-                        type="button"
-                        title={`${connection.platformLabel} · ${connection.statusLabel}`}
-                        onClick={() => void selectSidebarImConnection(connection)}
-                      >
-                        <span className={`sidebar-im-row__platform sidebar-im-row__platform--${connection.platform}`} aria-hidden="true">
-                          <PlatformIcon platform={connection.platform} />
-                        </span>
-                        <span className="sidebar-im-row__main">
-                          <strong>{connection.title}</strong>
-                          <span>{connection.subtitle}</span>
-                        </span>
-                        <span className={`sidebar-im-row__status sidebar-im-row__status--${connection.status}`} title={connection.statusLabel} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+            <Tooltip label={sidebarImConnections.length === 0 ? t("sidebar.imEmpty") : t("sidebar.im")} fill side="right" disabled={sidebarNavTooltipDisabled}>
+              <button
+                className="sidebar__navitem sidebar__navitem--im"
+                type="button"
+                onClick={() => void showSidebarImDetail()}
+              >
+                <MessageSquare size={15} />
+                <span>{t("sidebar.im")}</span>
+                {sidebarImOnline && <span className="sidebar-im-dot" />}
+              </button>
+            </Tooltip>
             <Tooltip label={t("sidebar.allHistory")} fill side="right" disabled={sidebarNavTooltipDisabled}>
               <button
                 className="sidebar__navitem"

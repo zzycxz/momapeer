@@ -337,6 +337,33 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	} else {
 		b.WriteString("# disabled_skills = [\"review\"]   # hide noisy or unwanted skills\n\n")
 	}
+	b.WriteString("[skills.store]\n")
+	if c.Skills.Store.Sources != nil && len(c.Skills.Store.Sources) > 0 {
+		b.WriteString("enabled = ")
+		if c.Skills.Store.Enabled {
+			b.WriteString("true\n")
+		} else {
+			b.WriteString("false\n")
+		}
+		if src := c.StoreSourceName(); src != "clawhub" {
+			fmt.Fprintf(&b, "source = %q\n", src)
+		}
+		b.WriteString("sources = { ")
+		first := true
+		for name, url := range c.Skills.Store.Sources {
+			if !first {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%s = %q", name, url)
+			first = false
+		}
+		b.WriteString(" }\n")
+	} else {
+		b.WriteString("# enabled = true\n")
+		b.WriteString("# source = \"clawhub\"\n")
+		b.WriteString("# sources = { clawhub = \"https://clawhub.ai/api/v1\" }\n")
+	}
+	b.WriteString("\n")
 
 	b.WriteString("[permissions]\n")
 	b.WriteString("# Per-call gating. mode = writer fallback when no rule matches: ask|allow|deny.\n")

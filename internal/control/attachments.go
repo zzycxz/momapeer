@@ -237,7 +237,7 @@ if ($null -eq $img) { [Console]::Error.WriteLine('clipboard has no image'); exit
 $ms = New-Object System.IO.MemoryStream
 $img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
 [Convert]::ToBase64String($ms.ToArray())`
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+	cmd := exec.Command(proc.ResolvePowerShell(), "-NoProfile", "-NonInteractive", "-Command", script)
 	proc.HideWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {

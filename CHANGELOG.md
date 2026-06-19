@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.1.9] — 2026-06-19
+
+### Fixed
+
+- **Windows PowerShell 路径解析修复**：Go 代码中 `exec.Command("powershell", ...)` 使用裸名，
+  依赖 PATH 解析；当用户环境 PATH 不含 `C:\Windows\System32\WindowsPowerShell\v1.0` 时
+  （精简系统、非标准启动器、某些安装方式）会报 "cannot run executable found relative to
+  current directory"。新增 `proc.ResolvePowerShell()`（`proc/powershell_windows.go`），
+  按 `LookPath("powershell")` → `%SystemRoot%\System32\...\powershell.exe` → `%windir%\...`
+  → `LookPath("pwsh")` 顺序解析，保证任何正常 Windows 安装都能找到 PowerShell。
+  影响范围：`notify/sender_windows.go`（通知发送）、`control/attachments.go`（剪贴板图片读取）。
+  非 Windows 平台提供 no-op stub（`proc/powershell_other.go`），交叉编译不受影响。
+
+### Changed
+
+- **侧边栏 IM Bot 区域简化**：移除可展开的连接管理面板（`sidebar-im__panel`），IM 区域改为
+  与「历史记录」「回收站」一致的普通导航项。有在线连接时右侧显示绿色圆点标识，点击打开
+  连接详情或跳转设置页。移除 `sidebarImExpanded`、`activeSidebarImConnectionId`、
+  `toggleSidebarImPanel`、`selectSidebarImConnection` 等状态与回调，精简约 80 行渲染代码
+  + 210 行 CSS。
+- **移除平台图标**：删除设置页 Bot 连接列表渠道列的彩色字母徽章（`@`/`L`/`微`）及侧边栏
+  详情视图的平台头像区域，仅保留文字信息。
+
 ## [0.1.8] — 2026-06-18
 
 ### Fixed
