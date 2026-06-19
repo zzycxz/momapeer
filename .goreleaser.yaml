@@ -67,6 +67,6 @@ changelog:
       - "^style:"
 
 release:
-  prerelease: true
+  prerelease: false
   make_latest: false
   name_template: "momapeer CLI {{ .Tag }}"
