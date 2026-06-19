@@ -190,8 +190,8 @@ jobs:
           MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
         run: |
           if [ -z "$MINISIGN_PRIVATE_KEY" ] || [ -z "$MINISIGN_PASSWORD" ]; then
-            echo "Error: MINISIGN_PRIVATE_KEY or MINISIGN_PASSWORD secret is missing in repository settings!"
-            exit 1
+            echo "MINISIGN secrets not configured, skipping signing"
+            exit 0
           fi
           cd desktop
           go run ./cmd/sign sign ../release-assets/*
@@ -209,6 +209,7 @@ jobs:
           files: release-assets/latest.json
 
       - name: Upload Signatures (separate release)
+        if: hashFiles('release-assets/*.minisig') != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}-sigs
