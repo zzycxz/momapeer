@@ -212,5 +212,5 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}-sigs
           name: ${{ github.ref_name }} signatures
-          prerelease: true
+          prerelease: false
           files: release-assets/*.minisig
