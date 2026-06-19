@@ -180,7 +180,7 @@ jobs:
       - name: Download release artifacts (exclude stale signatures)
         run: |
           mkdir -p release-assets
-          gh release download ${{ github.ref_name }} --dir release-assets --pattern '*.exe' --pattern '*.zip' --pattern '*.tar.gz' --pattern '*.deb' --pattern 'latest.json' || true
+          gh release download ${{ github.ref_name }} --dir release-assets --pattern 'momapeer-*' --pattern 'latest.json' || true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
