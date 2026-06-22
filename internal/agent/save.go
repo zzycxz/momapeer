@@ -46,7 +46,55 @@ func (s *Session) Save(path string) error {
 		os.Remove(tmpPath)
 		return err
 	}
-	return fileutil.ReplaceFile(tmpPath, path)
+	if err := fileutil.ReplaceFile(tmpPath, path); err != nil {
+		return err
+	}
+	// Refresh the turn-count + preview cache in the .meta sidecar so ListSessions
+	// reads the sidecar instead of re-decoding every .jsonl on each render. Load
+	// the existing meta first to preserve its branch/scope/topic fields; only the
+	// cached counts change. PreserveUpdated keeps UpdatedAt stable — Save fires
+	// every turn and would otherwise churn the activity sort key.
+	s.cachePreviewInMeta(path)
+	return nil
+}
+
+// cachePreviewInMeta computes the user-turn count and first-user-message preview
+// from the in-memory snapshot and writes them into the session's .meta sidecar.
+// It is best-effort: a sidecar write failure is logged away, never propagated,
+// because the cache is an optimization — ListSessions falls back to decoding the
+// .jsonl when the cached fields are absent.
+func (s *Session) cachePreviewInMeta(path string) {
+	turns, preview := countTurnsAndPreview(s.Snapshot())
+	meta, ok, err := LoadBranchMeta(path)
+	if err != nil || !ok {
+		meta = BranchMeta{}
+	}
+	if meta.CachedTurns == turns && meta.CachedPreview == preview {
+		return // already current; avoid an unnecessary write
+	}
+	meta.CachedTurns = turns
+	meta.CachedPreview = preview
+	_ = SaveBranchMetaPreserveUpdated(path, meta)
+}
+
+// countTurnsAndPreview mirrors previewSession's logic but reads the in-memory
+// snapshot (under the session lock) instead of re-decoding the .jsonl. Returns
+// the number of user-role messages and a truncated first-user-message preview.
+func countTurnsAndPreview(msgs []provider.Message) (turns int, preview string) {
+	for _, m := range msgs {
+		if m.Role != provider.RoleUser {
+			continue
+		}
+		turns++
+		if preview == "" {
+			s := strings.TrimSpace(HandoffTask(provider.ContentString(m.Content)))
+			if r := []rune(s); len(r) > 80 {
+				s = string(r[:77]) + "…"
+			}
+			preview = s
+		}
+	}
+	return turns, preview
 }
 
 // LoadSession reads a JSONL file written by Save into a fresh Session value.
@@ -75,6 +123,12 @@ func LoadSession(path string) (*Session, error) {
 		}
 		s.Messages = append(s.Messages, m)
 	}
+	// Normalize right after load: repair assistant tool-call turns written by an
+	// older code version or cut short mid-turn (backfill empty tool-call names
+	// from results, close truncated call args, answer interrupted calls with a
+	// placeholder). Well-formed histories pass through unchanged (zero alloc);
+	// the repairs are persisted lazily by the next Save. See NormalizeSession.
+	s.Messages = NormalizeSession(s.Messages)
 	return s, nil
 }
 
@@ -116,7 +170,19 @@ func ListSessions(dir string) ([]SessionInfo, error) {
 			continue
 		}
 		full := filepath.Join(dir, e.Name())
-		preview, turns := previewSession(full)
+		// Read the sidecar once; it carries branch/scope/topic metadata AND the
+		// cached turn-count + preview (refreshed by Session.Save). When the cache
+		// is present, skip the expensive .jsonl decode that previewSession does —
+		// a session list with hundreds of files otherwise re-decodes them all on
+		// every render.
+		meta, metaOK, _ := LoadBranchMeta(full)
+		var preview string
+		var turns int
+		if metaOK && (meta.CachedTurns > 0 || meta.CachedPreview != "") {
+			preview, turns = meta.CachedPreview, meta.CachedTurns
+		} else {
+			preview, turns = previewSession(full)
+		}
 		if turns == 0 {
 			// Skip sessions that have never had user interaction — they are
 			// empty conversations that should not appear in the history panel
@@ -129,7 +195,7 @@ func ListSessions(dir string) ([]SessionInfo, error) {
 		workspaceRoot := ""
 		topicID := ""
 		topicTitle := ""
-		if meta, ok, err := LoadBranchMeta(full); err == nil && ok {
+		if metaOK {
 			if !meta.CreatedAt.IsZero() {
 				createdAt = meta.CreatedAt
 			}

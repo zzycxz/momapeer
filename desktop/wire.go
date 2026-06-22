@@ -1,6 +1,9 @@
 package main
 
-import "github.com/zzycxz/momapeer/internal/event"
+import (
+	"github.com/zzycxz/momapeer/internal/agent"
+	"github.com/zzycxz/momapeer/internal/event"
+)
 
 // wireEvent is the JSON shape an event.Event takes when emitted to the webview.
 // It mirrors the serve transport's SSE wire form field-for-field on purpose: both
@@ -214,6 +217,11 @@ func toWire(e event.Event) wireEvent {
 	case event.Retrying:
 		w.RetryAttempt = e.RetryAttempt
 		w.RetryMax = e.RetryMax
+	case event.Message:
+		// Strip goal protocol markers ([goal:complete]/[goal:continue]/[goal:blocked])
+		// from the live display path so users see natural language. The session
+		// history retains them — the controller parses them to drive the goal loop.
+		w.Text = agent.StripGoalMarkers(e.Text)
 	}
 	return w
 }

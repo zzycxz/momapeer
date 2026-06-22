@@ -27,6 +27,13 @@ type BranchMeta struct {
 	WorkspaceRoot    string    `json:"workspace_root,omitempty"`
 	TopicID          string    `json:"topic_id,omitempty"`
 	TopicTitle       string    `json:"topic_title,omitempty"`
+	// CachedTurns/CachedPreview mirror what previewSession computes by decoding
+	// the .jsonl. Session.Save refreshes them so ListSessions reads the sidecar
+	// instead of re-decoding every session file on each render. Older readers
+	// ignore these fields; older sidecars without them fall back to the decode.
+	// Ported from DeepSeek-Reasonix perf(sessions) work (#4882/#4886).
+	CachedTurns   int    `json:"cached_turns,omitempty"`
+	CachedPreview string `json:"cached_preview,omitempty"`
 }
 
 func (m BranchMeta) DefaultScope() string {

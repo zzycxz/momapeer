@@ -131,6 +131,15 @@ type Controller struct {
 	goalTurns   int
 	goalBlocks  int
 	goalBlock   string
+	// goalIdleTurns counts consecutive goal turns whose assistant reply made no
+	// tool calls — a sign the agent is stuck narrating instead of working.
+	// Reaching maxGoalIdleTurns stops the goal so the user can intervene.
+	// Ported from DeepSeek-Reasonix goal enforcement (idle detection).
+	goalIdleTurns int
+	// goalStrict requires every todo step to be evidenced (complete_step) and a
+	// final self-check before a goal may complete, so a strict goal can't be
+	// declared done on the agent's word alone. Off by default; set via SetGoalStrict.
+	goalStrict bool
 	sessionPath string
 	approvals   map[string]pendingApproval
 	asks        map[string]pendingAsk
@@ -200,6 +209,10 @@ const (
 
 const (
 	maxGoalAutoTurns = 50
+	// maxGoalIdleTurns caps consecutive goal turns with no tool calls. Past this
+	// the goal stops — the agent is narrating rather than making progress, so
+	// surfacing control to the user beats burning the turn budget on talk.
+	maxGoalIdleTurns = 2
 	goalContinueTurn = "Continue pursuing the active goal. If it is complete, provide the concise final result and end with [goal:complete]. If it is truly blocked on a user-owned decision after trying sensible defaults, end with [goal:blocked:<short reason>]. Otherwise do the next useful work and end with [goal:continue]."
 )
 
@@ -524,6 +537,14 @@ func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input any, raw, 
 	c.maybeAutoPlan(ctx, raw)
 	ctx = agent.WithParentSession(ctx, c.parentSessionID())
 	composedText := c.Compose(provider.ContentString(input))
+	// Apply the transient reasoning-language preference (auto|zh|en). It only
+	// steers the visible thinking text and never overrides the final-answer
+	// language. Default "auto" is a no-op (WithReasoningLanguage returns content
+	// unchanged), so this never perturbs turns when unset. Read live so a desktop
+	// settings change takes effect without rebuilding the controller.
+	if cfg, err := config.Load(); err == nil {
+		composedText = agent.WithReasoningLanguage(composedText, cfg.ReasoningLanguage)
+	}
 	startMessages := c.messageCount()
 	defer c.snapshotActivityIfChanged(startMessages)
 	defer c.recordDisplayForNewUser(startMessages, display)
@@ -646,6 +667,19 @@ func (c *Controller) advanceGoalAfterTurn() bool {
 			}
 		}
 		c.mu.Lock()
+		// Strict mode: a goal may not be declared complete unless the agent did
+		// actual tool-backed work toward it this session — a bare-text "I'm done"
+		// is rejected and the loop continues. This pairs with complete_step's
+		// evidence system; it does NOT replace the independent judge above.
+		strict := c.goalStrict
+		if strict && !sessionMadeToolCalls(c.History()) {
+			c.goalBlocks = 0
+			c.goalBlock = ""
+			c.goalIdleTurns = 0
+			c.mu.Unlock()
+			c.notice("goal strict: completion requires tool-backed work; continuing")
+			return true
+		}
 		c.goal = ""
 		c.goalStatus = GoalStatusComplete
 		c.goalBlocks = 0
@@ -669,6 +703,27 @@ func (c *Controller) advanceGoalAfterTurn() bool {
 	default:
 		c.goalBlocks = 0
 		c.goalBlock = ""
+		// Idle detection: a goal turn whose assistant reply made no tool calls
+		// is narrating, not progressing. Count consecutive such turns; past
+		// maxGoalIdleTurns, stop the goal and hand control back to the user
+		// rather than burning the turn budget on talk. Any tool activity or a
+		// marker-bearing reply resets the counter. (PR #4827 goal enforcement.)
+		if !lastAssistantMadeToolCalls(c.History()) {
+			c.goalIdleTurns++
+			if c.goalIdleTurns >= maxGoalIdleTurns {
+				c.goalStatus = GoalStatusBlocked
+				c.goalBlock = "goal idle: no tool activity for consecutive turns"
+				notice = c.goalBlock
+			}
+		} else {
+			c.goalIdleTurns = 0
+		}
+	}
+	// A marker-bearing turn (complete/continue/blocked) always counts as
+	// activity, so reset idle on those branches too. Keep this after the switch
+	// so only the default branch's idle logic above can set notice.
+	if status != "" {
+		c.goalIdleTurns = 0
 	}
 	if notice == "" && c.goalTurns >= maxGoalAutoTurns {
 		c.goalStatus = GoalStatusBlocked
@@ -750,6 +805,31 @@ func lastAssistantText(msgs []provider.Message) string {
 		}
 	}
 	return ""
+}
+
+// lastAssistantMadeToolCalls reports whether the most recent assistant message
+// carried tool calls — i.e. the agent acted this turn rather than only talking.
+// Used by idle detection to spot a goal loop that has stalled into narration.
+func lastAssistantMadeToolCalls(msgs []provider.Message) bool {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != provider.RoleAssistant {
+			continue
+		}
+		return len(msgs[i].ToolCalls) > 0
+	}
+	return false
+}
+
+// sessionMadeToolCalls reports whether any assistant turn in the session
+// dispatched at least one tool call. A strict goal refuses to complete without
+// tool-backed work — a purely conversational "I'm done" does not count.
+func sessionMadeToolCalls(msgs []provider.Message) bool {
+	for _, m := range msgs {
+		if m.Role == provider.RoleAssistant && len(m.ToolCalls) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Submit is the one-call entry for a simple frontend: it takes raw user input
@@ -1333,6 +1413,7 @@ func (c *Controller) SetGoal(goal string) {
 		c.goalTurns = 0
 		c.goalBlocks = 0
 		c.goalBlock = ""
+		c.goalIdleTurns = 0
 		return
 	}
 	if c.goal == goal && c.goalStatus == GoalStatusRunning {
@@ -1343,6 +1424,24 @@ func (c *Controller) SetGoal(goal string) {
 	c.goalTurns = 0
 	c.goalBlocks = 0
 	c.goalBlock = ""
+	c.goalIdleTurns = 0
+}
+
+// SetGoalStrict toggles strict enforcement on the active goal: when on, the goal
+// may not be declared complete unless the session produced tool-backed work, so
+// a bare "I'm done" cannot satisfy it. Setting strict on a stopped/no goal is
+// remembered but has no effect until a goal runs. (PR #4827 goal enforcement.)
+func (c *Controller) SetGoalStrict(strict bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.goalStrict = strict
+}
+
+// GoalStrict reports whether the active goal is under strict enforcement.
+func (c *Controller) GoalStrict() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.goalStrict
 }
 
 func (c *Controller) ClearGoal() {

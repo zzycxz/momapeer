@@ -428,7 +428,7 @@ func (s *Store) parse(path, stem string, scope Scope) (Skill, bool) {
 	return Skill{
 		Name:         name,
 		Description:  desc,
-		Body:         loadBodyWithReferences(path, strings.TrimSpace(body)),
+		Body:         loadBodyWithScripts(path, loadBodyWithReferences(path, strings.TrimSpace(body))),
 		Scope:        scope,
 		Path:         path,
 		AllowedTools: parseAllowedTools(fm["allowed-tools"]),
@@ -522,6 +522,50 @@ func loadBodyWithReferences(skillPath, body string) string {
 		}
 		slug := strings.TrimSuffix(n, filepath.Ext(n))
 		b.WriteString("\n\n## Reference: " + slug + "\n\n" + trimmed)
+	}
+	return b.String()
+}
+
+// loadBodyWithScripts appends a directory-layout skill's sibling scripts/
+// directory listing to the body, so the model knows what scripts are available
+// and can run them via bash (inheriting the sandbox, permission gate, and
+// hooks). Flat skills with no scripts/ dir are returned unchanged.
+//
+// Only the listing is appended — the scripts themselves are never inlined, so
+// large binary or generated files don't bloat the system prompt. Bash reads the
+// path at run time. Hidden files (dotfiles) are filtered so config in scripts/
+// isn't surfaced to the model.
+func loadBodyWithScripts(skillPath, body string) string {
+	if filepath.Base(skillPath) != SkillFile {
+		return body
+	}
+	scriptsDir := filepath.Join(filepath.Dir(skillPath), "scripts")
+	entries, err := os.ReadDir(scriptsDir)
+	if err != nil {
+		return body
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		// Filter hidden files — bash should not see config dotfiles in scripts/.
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return body
+	}
+	sort.Strings(names)
+	scriptsDirAbs, _ := filepath.Abs(scriptsDir)
+	var b strings.Builder
+	b.WriteString(body)
+	b.WriteString("\n\n## Scripts\n\nRun a listed script with bash using the exact path shown below; quote the path if it contains spaces.\n\n")
+	for _, n := range names {
+		b.WriteString("- " + filepath.Join(scriptsDirAbs, n) + "\n")
 	}
 	return b.String()
 }

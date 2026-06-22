@@ -65,6 +65,16 @@ func (e editFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 		return "", fmt.Errorf("old_string is not unique in %s; add more surrounding context", p.Path)
 	}
 
+	// Guard against fuzzy-match fallback returning a region that is not an
+	// exact substring of the file content (e.g. a fully-stripped
+	// indent-normalized version).  strings.Replace would silently replace
+	// zero occurrences, reporting success while making no change.
+	if !strings.Contains(content, region) {
+		return "", fmt.Errorf(
+			"fuzzy match found %q but it does not appear verbatim in %s; "+
+				"please supply the exact text from the file (including indentation)", old, p.Path)
+	}
+
 	updated := strings.Replace(content, region, newStr, 1)
 	if err := writeFileEncoded(p.Path, updated, enc); err != nil {
 		return "", fmt.Errorf("write %s: %w", p.Path, err)

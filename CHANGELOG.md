@@ -23,6 +23,99 @@
 - **移除平台图标**：删除设置页 Bot 连接列表渠道列的彩色字母徽章（`@`/`L`/`微`）及侧边栏
   详情视图的平台头像区域，仅保留文字信息。
 
+### Security
+
+- **移除 ClawHub 公有 skill 市场对接**：v0.1.9 引入的 skill 市场对接第三方公有注册中心
+  ClawHub 存在无法接受的安全风险，予以完全删除。删除范围：`internal/skillstore` 整包、
+  desktop `app.go` 的 Skill Store handler 段、`internal/config` 的 `StoreConfig`/方法/
+  `DefaultClawHubURL`/默认值/`[skills.store]` 渲染/3 个 mutator、前端 `StorePanel.tsx` 及
+  `SettingsPanel`/`bridge`/`types`/`locales` 的 store 引用与 366 行孤儿 CSS。
+  风险点：prompt injection（下载的 SKILL.md 注入模型上下文后可指挥 bash/write_file，
+  恶意 skill 与正常指令无法区分）、SSRF 缺口（`skillstore.Client` 未套用已有 SSRF 防护）、
+  ZIP 路径穿越（`extractZIP` 未校验 `..`）、供应链无签名/完整性校验。
+  保留 `internal/skill` 本地 skill 引擎（手动放 markdown 的本地能力，与市场无关）。
+  后续可基于本地引擎自建带 SSRF 防护 + 签名校验 + URL 白名单的私有市场。
+
+### Added
+
+参照 [DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix) v1.10.0 的能力提升，
+将其中与 MoMA/九天业务零冲突的部分移植进 momapeer（模块名、`.momapeer/` 路径、九天适配全部保留，
+未牺牲任何 momapeer 既有能力）。
+
+- **共享 plugin.Host（修多标签 codegraph 进程爆炸）**：桌面端每个标签页原本各起一个
+  `plugin.Host`，导致同一项目开 N 个标签就启动 N 个 codegraph 等子进程，内存/句柄占用线性增长。
+  改为按 workspace root 共享一个引用计数的 `plugin.Host`（`desktop/shared_host.go` 的
+  `acquireSharedHost`/`releaseSharedHost`/`lookupSharedHost`），同项目多标签复用同一组 MCP 子进程，
+  最后一个标签关闭才真正 `Close`。`boot.Options` 新增 `Host *plugin.Host` 字段，外部传入时 Build
+  不再新建/关闭 host；`plugin.StartAvailableInto` 把 eager 插件并发握手进共享 host 而不另建。
+  标签关闭、模型/effort 切换均按"先 acquire 再 release"配对，refcount 不在切换中瞬间归零。
+  （对应 Reasonix PR #4793）
+
+- **`parallel_tasks` 工具（借 MoMA 多模型按子任务选模型）**：新增并发子代理派发工具
+  `internal/agent/parallel_tasks.go`，一次调用并发跑 N 个子代理并聚合结果，复用 `TaskTool` 的
+  provider/tool/transcript 基础设施。每个子任务支持独立 `model`/`effort` 覆盖，天然契合九天平台
+  多模型体系——例如规划用 `jiutian-lan-35b`、代码生成用 `jiutian-code-8b`、检索路由用
+  `jiutian-lan-8b`。`subagentMetaTools` 加入 `parallel_tasks` 防递归。只读分类，避免并发写竞争。
+  （对应 Reasonix `parallel_tasks` 工具）
+
+- **Goal 执行状态机扩展（idle detection + strict mode，融合现有 goal_judge）**：
+  - **idle detection**：连续 `maxGoalIdleTurns`(=2) 个 goal 回合的 assistant 回复没有发起任何工具调用
+    （只在"念经"不做事）时，停止 goal 并把控制权交回用户，避免空耗回合预算。任何工具活动或带 marker
+    的回复重置计数。
+  - **strict mode**：新增 `SetGoalStrict`/`GoalStrict`，开启后 goal 不得仅凭"我说完了"的纯文本声明
+    完成整个会话若无任何工具调用记录即拒绝 `[goal:complete]`，强制继续。与现有独立 `goalJudge`
+    终判互补而非替代。
+  新增字段 `goalIdleTurns`/`goalStrict`、常量 `maxGoalIdleTurns`、helper `lastAssistantMadeToolCalls`/
+  `sessionMadeToolCalls`。（对应 Reasonix PR #4827 goal enforcement，本次实现最实用的 idle+strict 两项，
+  plan-exec/module routing 留待后续）
+
+- **`code_index` 内置工具**：新增纯 Go AST 的轻量代码符号索引工具
+  `internal/tool/builtin/codeindex.go`，零外部依赖、零 API 成本，作为 `codegraph_*`/`lsp_*` 的本地
+  fallback。支持 `.go`（真 AST）+ `.js/.ts/.py/.java/.rs/.c` 等（正则匹配）的 `outline`（列符号）
+  与 `search`（按名查定义候选）。通过 `Workspace.Tools` 的 overrides 绑定 workDir。
+  （对应 Reasonix `code_index` 工具）
+
+- **skill `scripts/` 目录列出**：`loadBodyWithScripts` 在目录式 skill 的 SKILL.md 旁若存在
+  `scripts/` 目录，把其下非隐藏文件列表追加进 skill body，让模型知道有哪些脚本可经 bash 调用
+  （继承沙盒/权限门/hooks）。与既有 `loadBodyWithReferences`（references/*.md）同模式链式叠加。
+  （对应 Reasonix PR #4871）
+
+- **reasoning_language 思维链语言独立控制**：新增 `Config.ReasoningLanguage`（auto|zh|en，默认 auto
+  为 no-op）与 `agent.WithReasoningLanguage`/`ReasoningLanguageBlock`，作为 **transient 用户回合**
+  注入（不进 cache-stable 系统提示前缀），只引导可见思维/推理文本语言，不覆盖最终答案语言、不改
+  代码/标识符/路径。controller 每 turn 经 `config.Load()` 热读，桌面设置改动即时生效。
+
+- **goal_display 标记剥离**：新增 `agent.StripGoalMarkers`，从**用户可见显示**文本剥离
+  `[goal:complete]`/`[goal:continue]`/`[goal:blocked:...]` 协议标记（blocked 改写为
+  "⚠️ Blocked: ..."）。接入 desktop `wire.go` 的 `event.Message` 分支与 CLI `chat_tui.go` 的
+  assistant 渲染点。会话历史保留 marker，controller 的 `parseGoalStatusMarker` 仍靠它驱动 goal 循环。
+
+### Changed
+
+- **provider 消息归一化统一**：新增 `NormalizeMessages`（wire-safe）/`NormalizeSessionMessages`
+  （session-safe，不丢/不重排历史）统一入口 + fast-path（良构历史零分配原样返回，不扰动 prefix-cache
+  key）。补齐 momapeer 原有 `SanitizeToolPairing` 缺的：`backfillToolCallNames`（从 tool result 回填
+  空 tool-call name）、`tryNormalizeFastPath`/`toolTurnWellFormed`/`needsToolCallArgRepair`、
+  `sessionToolResults`。`agent.LoadSession` 解码后立即调 `NormalizeSession` 修正旧版本写入或中断的
+  会话（空 name 回填、截断 args 闭合、中断调用补占位结果），下次 Save 懒持久化。老 `SanitizeToolPairing`
+  改为 `NormalizeMessages` 的薄别名，wire 与 load 路径共享同一套修复。
+  （对应 Reasonix PR #4811 历史归一化统一 + #4727/#4738 tool-call name 回填）
+
+- **会话性能 sidecar 缓存**：`BranchMeta` 新增 `CachedTurns`/`CachedPreview` 字段（json omitempty，
+  向后兼容），`Session.Save` 末尾经 `cachePreviewInMeta`/`countTurnsAndPreview`（读内存快照，
+  避免重复解码 .jsonl）写入 sidecar；`ListSessions` 优先读缓存，命中即跳过 `previewSession` 的全量
+  解码。会话列表数百文件时每次渲染不再重复解码所有 .jsonl。
+  （对应 Reasonix perf(sessions) PR #4882/#4886）
+
+### Fixed（独立 bugfix，随本批提交）
+
+- **openai provider 图片降级 slice 别名**：`image_understand` 降级路径对 `req.Messages` 做
+  in-place `append` 会因 cap>len 的空闲容量污染调用方的底层数组。改为先深拷贝切片再 append。
+- **bash 工具 PATH 探测重复并发**：`cachedBashShellPATH` 的并发调用各自 spawn 交互式登录 shell
+  探测，引入 `golang.org/x/sync/singleflight` 让同 key 并发共享一次探测结果。
+- **edit_file 零替换误报成功**：模糊匹配 fallback 可能返回一个非 content 精确子串的区域，
+  `strings.Replace` 会静默替换 0 次却报告成功。增加 `strings.Contains` 校验，不命中即报错。
+
 ## [0.1.8] — 2026-06-18
 
 ### Fixed

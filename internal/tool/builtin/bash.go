@@ -18,6 +18,7 @@ import (
 	"github.com/zzycxz/momapeer/internal/jobs"
 	"github.com/zzycxz/momapeer/internal/sandbox"
 	"github.com/zzycxz/momapeer/internal/tool"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -34,9 +35,13 @@ var bashShellPATH = cachedBashShellPATH
 // shell isn't spawned on every bash tool call (the probe runs up to three
 // interactive-login shells with a 2s timeout each). Empty results are cached too,
 // so a host without a usable login shell doesn't re-probe each command.
+//
+// singleflight ensures that concurrent calls with the same key share a single
+// probe invocation instead of each spawning redundant shells.
 var (
 	bashPathMu    sync.Mutex
 	bashPathCache = map[string]string{}
+	bashPathGroup singleflight.Group
 )
 
 func cachedBashShellPATH(ctx context.Context) string {
@@ -48,12 +53,14 @@ func cachedBashShellPATH(ctx context.Context) string {
 	}
 	bashPathMu.Unlock()
 
-	v := defaultBashShellPATH(ctx)
-
-	bashPathMu.Lock()
-	bashPathCache[key] = v
-	bashPathMu.Unlock()
-	return v
+	result, _, _ := bashPathGroup.Do(key, func() (any, error) {
+		v := defaultBashShellPATH(ctx)
+		bashPathMu.Lock()
+		bashPathCache[key] = v
+		bashPathMu.Unlock()
+		return v, nil
+	})
+	return result.(string)
 }
 
 // bash runs a shell command. sb, when it enforces, wraps the command in an OS

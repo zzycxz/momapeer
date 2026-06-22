@@ -81,6 +81,12 @@ type App struct {
 	botInstalls map[string]*botInstallSession
 	botGW       *bot.BotGateway // nil when bot is disabled or not started
 
+	// sharedHosts shares one plugin.Host per workspace root across desktop tabs
+	// so opening N tabs on the same project spawns MCP subprocesses (CodeGraph,
+	// etc.) once, not N times. See desktop/shared_host.go.
+	sharedHosts   map[string]*sharedPluginHost
+	sharedHostsMu sync.Mutex
+
 	metrics atomic.Pointer[metricsAggregator] // non-nil only when desktop.metrics is opted in; swapped live by SetDesktopMetrics
 }
 
@@ -490,6 +496,7 @@ func (a *App) shutdown(context.Context) {
 		if t.Ctrl != nil {
 			_ = t.Ctrl.Snapshot()
 			t.Ctrl.Close()
+			a.releaseSharedHost(t.WorkspaceRoot)
 		}
 	}
 }
@@ -3472,11 +3479,17 @@ func (a *App) SetModelForTab(tabID, name string) error {
 
 	var carried []provider.Message
 	prevPath := ""
+	// Acquire the shared host BEFORE closing the old controller so the refcount
+	// never hits zero mid-switch (which would tear down subprocesses the new
+	// controller is about to reuse). The matching release runs after the old
+	// controller's Close, keeping the net reference count unchanged.
+	sharedHost := a.acquireSharedHost(tab.WorkspaceRoot)
 	if tab.Ctrl != nil {
 		prevPath = tab.Ctrl.SessionPath()
 		_ = tab.Ctrl.Snapshot()
 		carried = tab.Ctrl.History()
 		tab.Ctrl.Close()
+		a.releaseSharedHost(tab.WorkspaceRoot) // drop the old controller's reference
 	}
 
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
@@ -3486,8 +3499,10 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		WorkspaceRoot:  tab.WorkspaceRoot,
 		SessionDir:     tabSessionDir(tab),
 		EffortOverride: cloneStringPtr(effortOverride),
+		Host:           sharedHost,
 	})
 	if err != nil {
+		a.releaseSharedHost(tab.WorkspaceRoot) // Build failed: drop our acquire
 		return err
 	}
 	a.bindControllerDisplayRecorder(newCtrl)
@@ -3567,11 +3582,14 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	}
 	var carried []provider.Message
 	prevPath := ""
+	// Acquire before release so the shared host survives the controller swap.
+	sharedHost := a.acquireSharedHost(tab.WorkspaceRoot)
 	if tab.Ctrl != nil {
 		prevPath = tab.Ctrl.SessionPath()
 		_ = tab.Ctrl.Snapshot()
 		carried = tab.Ctrl.History()
 		tab.Ctrl.Close()
+		a.releaseSharedHost(tab.WorkspaceRoot)
 	}
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:          tab.model,
@@ -3580,8 +3598,10 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		WorkspaceRoot:  tab.WorkspaceRoot,
 		SessionDir:     tabSessionDir(tab),
 		EffortOverride: &effort,
+		Host:           sharedHost,
 	})
 	if err != nil {
+		a.releaseSharedHost(tab.WorkspaceRoot) // Build failed: drop our acquire
 		return err
 	}
 	a.bindControllerDisplayRecorder(newCtrl)

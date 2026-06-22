@@ -230,37 +230,14 @@ type Request struct {
 // responding to each 'tool_call_id'".
 const interruptedToolResult = "[no result: the previous turn was interrupted before this tool call completed]"
 
-// SanitizeToolPairing repairs a history so it satisfies the tool-call contract the
-// OpenAI-compatible and Anthropic APIs enforce: every assistant tool_calls entry
-// must be answered by a following tool message for its id, and a tool message must
-// follow such a call. It backfills a placeholder result for any unanswered call
-// (so the turn stays intact), drops orphan tool messages, and closes truncated
-// call-argument JSON (MoMA 400s on replayed half-streamed args, #3953).
-// Well-formed histories pass through unchanged (results stay in call order).
-// Callers send the result; the stored session keeps the original.
-func SanitizeToolPairing(msgs []Message) []Message {
-	out := make([]Message, 0, len(msgs))
-	for i := 0; i < len(msgs); {
-		m := msgs[i]
-		if m.Role == RoleAssistant && len(m.ToolCalls) > 0 {
-			j := i + 1
-			for j < len(msgs) && msgs[j].Role == RoleTool {
-				j++
-			}
-			out = append(out, repairToolCallArgs(m))
-			out = append(out, pairToolResults(m.ToolCalls, msgs[i+1:j])...)
-			i = j // tool messages consumed here; any non-matching ones are orphans, dropped
-			continue
-		}
-		if m.Role == RoleTool {
-			i++ // orphan tool message (no preceding assistant tool_calls) — drop
-			continue
-		}
-		out = append(out, m)
-		i++
-	}
-	return out
-}
+// SanitizeToolPairing repairs a history for a provider request (every assistant
+// tool_calls answered by a following tool message, orphan tool messages dropped,
+// empty tool-call names backfilled from results, truncated args closed) right
+// before sending it to the wire — without touching the stored session. Kept as a
+// distinct name so call sites read as "defensive wire prep" rather than "session
+// mutation". Now a thin alias over NormalizeMessages so the wire path and the
+// session-load path share one repair implementation.
+func SanitizeToolPairing(msgs []Message) []Message { return NormalizeMessages(msgs) }
 
 // repairToolCallArgs returns m with any undecodable tool-call Arguments closed
 // into valid JSON (copy-on-write; the caller's history is never mutated). Empty

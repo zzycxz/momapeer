@@ -80,6 +80,14 @@ type Options struct {
 	// SessionDir overrides where persisted chat transcripts are written. When
 	// empty, the shared CLI/global session directory is used.
 	SessionDir string
+	// Host is an externally-owned plugin.Host the controller should adopt instead
+	// of allocating its own. When set, Build does NOT create or Close the host —
+	// the caller owns its lifecycle (e.g. desktop shares one host per workspace
+	// root across tabs so a multi-tab project doesn't spawn N codegraph
+	// processes). The host still receives this session's configured plugins via
+	// Add, but Close leaves it untouched. Nil (the default) keeps the legacy
+	// per-session host that Build creates and closes.
+	Host *plugin.Host
 }
 
 // Build loads config, resolves the model(s), and returns a Controller wrapping a
@@ -226,7 +234,14 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	// Always construct a host, even with no plugins configured, so the controller's
 	// host pointer is stable for the session and `/mcp add` can hot-add into it.
-	pluginHost := plugin.NewHost()
+	// When the caller supplies an externally-owned host (desktop shares one per
+	// workspace root across tabs), adopt it instead of allocating — and remember
+	// not to Close it on controller teardown (the owner refcounts it).
+	pluginHost := opts.Host
+	hostOwned := pluginHost == nil
+	if hostOwned {
+		pluginHost = plugin.NewHost()
+	}
 
 	// Partition configured plugins by tier so eager/lazy/background can each
 	// take the path that fits them. User entries default to background: the
@@ -341,17 +356,30 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 
 	// Eager: block until handshake. Failures show up in /mcp.
 	if len(eagerSpecs) > 0 {
-		host, ptools := plugin.StartAvailable(ctx, eagerSpecs)
-		pluginHost = host
-		for _, t := range ptools {
-			reg.Add(t)
-		}
-		// PhaseB (prompts + resources) runs on the boot ctx — which is the
-		// controller's session-scoped PluginCtx — so the auxiliary surfaces
-		// keep streaming in after Start returns without holding up the agent.
-		go host.StartPhaseB(ctx, sink)
-		if text, ok := MCPStartupNotice(host.Failures()); ok {
-			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: text})
+		if hostOwned {
+			// Legacy per-session path: StartAvailable allocates a fresh host and
+			// hands its handshaked plugins back to this controller.
+			host, ptools := plugin.StartAvailable(ctx, eagerSpecs)
+			pluginHost = host
+			for _, t := range ptools {
+				reg.Add(t)
+			}
+			go host.StartPhaseB(ctx, sink)
+			if text, ok := MCPStartupNotice(host.Failures()); ok {
+				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: text})
+			}
+		} else {
+			// Shared-host path (desktop): add eager specs into the externally-owned
+			// host so every tab sharing this workspace root shares one set of MCP
+			// subprocesses. Concurrency mirrors StartAvailable's fan-out.
+			ptools := plugin.StartAvailableInto(ctx, pluginHost, eagerSpecs)
+			for _, t := range ptools {
+				reg.Add(t)
+			}
+			go pluginHost.StartPhaseB(ctx, sink)
+			if text, ok := MCPStartupNotice(pluginHost.Failures()); ok {
+				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: text})
+			}
 		}
 	}
 
@@ -392,7 +420,14 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: msg})
 	}
 
-	cleanup := pluginHost.Close
+	// Close the plugin host only when Build owns it. A shared host (desktop's
+	// per-workspace-root host) is refcounted by its owner; controller teardown
+	// releases the owner's reference instead of tearing down subprocesses other
+	// tabs still depend on.
+	var cleanup func()
+	if hostOwned {
+		cleanup = pluginHost.Close
+	}
 
 	// LSP tools resolve their servers on PATH and spawn lazily on first query, so
 	// registering them is cheap even when no server is installed (a query then
@@ -404,7 +439,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			reg.Add(t)
 		}
 		prev := cleanup
-		cleanup = func() { prev(); lspMgr.Close() }
+		cleanup = func() {
+			if prev != nil {
+				prev()
+			}
+			lspMgr.Close()
+		}
 	}
 
 	maxSteps := cfg.Agent.MaxSteps
@@ -473,12 +513,18 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	taskModel := firstNonEmpty(cfg.Agent.SubagentModels["task"], cfg.Agent.SubagentModel)
 	taskEffort := firstNonEmpty(cfg.Agent.SubagentEfforts["task"], cfg.Agent.SubagentEffort)
-	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps,
+	taskTool := agent.NewTaskTool(execProv, entry.Price, reg, maxSteps,
 		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
 		cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate,
 		taskModel, taskEffort, resolveSubagentProvider).
 		WithTranscripts(subagentStore, root, modelName, entry.Effort).
-		WithTranscriptIdentityResolver(subagentIdentity))
+		WithTranscriptIdentityResolver(subagentIdentity)
+	reg.Add(taskTool)
+	// parallel_tasks dispatches independent sub-agents concurrently, reusing the
+	// task tool's provider/tool/transcript machinery. Each sub-task may override
+	// the model, so a caller can route independent work to different models on the
+	// same platform (e.g. a reasoning model for planning, a code model for impl).
+	reg.Add(agent.NewParallelTasksTool(taskTool, reg))
 
 	// The `remember` tool lets the model persist durable facts to the project's
 	// auto-memory store; `forget` prunes ones that turn out wrong. The saved index

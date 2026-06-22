@@ -205,6 +205,51 @@ func StartAvailable(ctx context.Context, specs []Spec) (*Host, []tool.Tool) {
 	return h, tools
 }
 
+// StartAvailableInto handshakes specs concurrently and adds each into the given
+// (externally-owned) host, returning the union of their tools. It mirrors
+// StartAvailable but does NOT allocate a host — the caller owns the host's
+// lifecycle (desktop shares one host per workspace root across tabs). A failed
+// plugin is recorded on the host via RecordFailure and skipped, matching
+// StartAvailable's non-aborting behavior so one bad server can't block boot.
+func StartAvailableInto(ctx context.Context, h *Host, specs []Spec) []tool.Tool {
+	if h == nil || len(specs) == 0 {
+		return nil
+	}
+	type addResult struct {
+		tools []tool.Tool
+		err   error
+	}
+	concurrency := defaultStartConcurrency
+	if concurrency <= 0 || concurrency > len(specs) {
+		concurrency = len(specs)
+	}
+	sem := make(chan struct{}, concurrency)
+	ch := make(chan addResult, len(specs))
+	for _, s := range specs {
+		go func(spec Spec) {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			callCtx := ctx
+			if defaultStartTimeout > 0 {
+				var cancel context.CancelFunc
+				callCtx, cancel = context.WithTimeout(ctx, defaultStartTimeout)
+				defer cancel()
+			}
+			ts, err := h.Add(callCtx, spec)
+			if err != nil {
+				h.RecordFailure(spec, err)
+			}
+			ch <- addResult{tools: ts, err: err}
+		}(s)
+	}
+	var tools []tool.Tool
+	for range specs {
+		r := <-ch
+		tools = append(tools, r.tools...)
+	}
+	return tools
+}
+
 // Start is the unified batch-startup primitive behind StartAll / StartAvailable.
 // It fans out handshakes in parallel under the policy's concurrency cap, gives
 // each plugin its own per-plugin timeout, and either aborts the batch on first

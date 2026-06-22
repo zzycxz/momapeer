@@ -3772,7 +3772,7 @@ func replaySectionsFor(history []provider.Message, width int, renderer *mdRender
 			content := control.StripComposePrefixes(provider.ContentString(m.Content))
 			out = append(out, renderUserBubble(content, width, false)+"\n\n")
 		case provider.RoleAssistant:
-			body := strings.TrimSpace(provider.ContentString(m.Content))
+			body := strings.TrimSpace(agent.StripGoalMarkers(provider.ContentString(m.Content)))
 			if body == "" {
 				continue
 			}

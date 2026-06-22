@@ -252,6 +252,14 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 			if imageCount > 1 {
 				noun = "images"
 			}
+			// Deep-copy the slice to avoid aliasing the caller's backing array.
+			// req is a value type but req.Messages is a slice header sharing the
+			// same underlying array.  If the original had spare capacity (cap > len),
+			// an in-place append would corrupt the caller's data.
+			msgs := make([]provider.Message, len(req.Messages))
+			copy(msgs, req.Messages)
+			req.Messages = msgs
+
 			statusMsg := fmt.Sprintf("[Analyzing %d %s via LLMImage2Text...]", imageCount, noun)
 			req.Messages = append(req.Messages[:len(req.Messages)-1],
 				provider.Message{Role: provider.RoleAssistant, Content: statusMsg},

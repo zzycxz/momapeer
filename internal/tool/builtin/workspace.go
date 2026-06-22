@@ -53,6 +53,7 @@ func (w Workspace) Tools(enabled ...string) []tool.Tool {
 		"ls":            listDir{workDir: w.Dir},
 		"glob":          globTool{workDir: w.Dir},
 		"grep":          grepTool{workDir: w.Dir, rg: w.Search.RgPath},
+		"code_index":    codeIndex{workDir: w.Dir},
 		"web_fetch":     webFetch{proxySpec: w.ProxySpec},
 	}
 	all := tool.Builtins()

@@ -824,6 +824,7 @@ func (a *App) CloseTab(tabID string) error {
 		tab.Ctrl.Cancel()
 		_ = tab.Ctrl.Snapshot()
 		tab.Ctrl.Close()
+		a.releaseSharedHost(tab.WorkspaceRoot) // drop this tab's shared-host reference
 	}
 	if tab.sink != nil {
 		tab.sink.ctx = nil // stop further emissions (nil ctx → Emit becomes no-op)
@@ -924,8 +925,10 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 		WorkspaceRoot:  root,
 		SessionDir:     sessionDir,
 		EffortOverride: cloneStringPtr(tab.effort),
+		Host:           a.acquireSharedHost(root),
 	})
 	if err != nil {
+		a.releaseSharedHost(root) // Build failed: drop the acquire
 		a.mu.Lock()
 		tab.StartupErr = err.Error()
 		tab.Ready = true
