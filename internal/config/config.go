@@ -558,20 +558,10 @@ func (c *Config) NetworkProxyMode() string {
 // hides named skills from the agent prompt, slash invocation, and skill tools
 // while keeping them manageable.
 type SkillsConfig struct {
-	Paths          []string    `toml:"paths"`
-	ExcludedPaths  []string    `toml:"excluded_paths"`
-	DisabledSkills []string    `toml:"disabled_skills"`
-	MaxDepth       int         `toml:"max_depth"`
-	Store          StoreConfig `toml:"store"`
-}
-
-// StoreConfig configures the remote skill store (技能商店). The default source
-// is ClawHub; users can add additional registries via the Sources map.
-type StoreConfig struct {
-	Enabled bool              `toml:"enabled"`          // master switch; default true
-	Source  string            `toml:"source"`           // active source name (key into Sources); default "clawhub"
-	Sources map[string]string `toml:"sources"`          // name → base URL (e.g. "clawhub" → "https://clawhub.ai/api/v1")
-	MaxAge  int               `toml:"cache_max_age"`    // list cache TTL in seconds; 0 = no cache
+	Paths          []string `toml:"paths"`
+	ExcludedPaths  []string `toml:"excluded_paths"`
+	DisabledSkills []string `toml:"disabled_skills"`
+	MaxDepth       int      `toml:"max_depth"`
 }
 
 // SkillCustomPaths returns the configured custom skill roots with ${VAR}
@@ -649,48 +639,6 @@ func (c *Config) IsSkillDisabled(name string) bool {
 		}
 	}
 	return false
-}
-
-// StoreEnabled reports whether the remote skill store is active.
-func (c *Config) StoreEnabled() bool {
-	if c == nil {
-		return false
-	}
-	return c.Skills.Store.Enabled
-}
-
-// StoreSourceName returns the active store source name; defaults to "clawhub".
-func (c *Config) StoreSourceName() string {
-	if c == nil || strings.TrimSpace(c.Skills.Store.Source) == "" {
-		return "clawhub"
-	}
-	return strings.TrimSpace(c.Skills.Store.Source)
-}
-
-// StoreSourceURL returns the base URL for the active store source.
-// Falls back to the default ClawHub endpoint.
-const DefaultClawHubURL = "https://clawhub.ai/api/v1"
-
-func (c *Config) StoreSourceURL() string {
-	if c == nil {
-		return DefaultClawHubURL
-	}
-	name := c.StoreSourceName()
-	if url, ok := c.Skills.Store.Sources[name]; ok && strings.TrimSpace(url) != "" {
-		return strings.TrimRight(strings.TrimSpace(url), "/")
-	}
-	if name == "clawhub" {
-		return DefaultClawHubURL
-	}
-	return DefaultClawHubURL
-}
-
-// StoreCacheMaxAge returns the list cache TTL in seconds; 0 means no cache.
-func (c *Config) StoreCacheMaxAge() int {
-	if c == nil || c.Skills.Store.MaxAge < 0 {
-		return 0
-	}
-	return c.Skills.Store.MaxAge
 }
 
 // SandboxConfig bounds the blast radius of tool calls (Phase 0: file-writer
@@ -1110,13 +1058,6 @@ func Default() *Config {
 	return &Config{
 		ConfigVersion: 2,
 		DefaultModel:  "moma",
-		Skills: SkillsConfig{
-			Store: StoreConfig{
-				Enabled: false,
-				Source:  "clawhub",
-				Sources: map[string]string{"clawhub": DefaultClawHubURL},
-			},
-		},
 		UI:            UIConfig{Theme: "auto"},
 		Notifications: NotificationsConfig{
 			Enabled:         false,

@@ -42,12 +42,6 @@ import type {
   SettingsView,
   SkillRootView,
   SkillView,
-  InstalledSkill,
-  StoreStatusView,
-  StoreSkillView,
-  StoreSkillDetailView,
-  StoreListResult,
-  StoreUpdateView,
   SlashArgsResult,
   TabMeta,
   TopicMeta,
@@ -165,17 +159,6 @@ export interface AppBindings {
   RemoveSkillPath(path: string): Promise<void>;
   RefreshSkills(): Promise<void>;
   SetSkillEnabled(name: string, enabled: boolean): Promise<void>;
-  // Skill Store
-  StoreStatus(): Promise<StoreStatusView>;
-  SetStoreEnabled(enabled: boolean): Promise<void>;
-  SetStoreSourceURL(name: string, url: string): Promise<void>;
-  StoreSkills(sort: string, cursor: string, limit: number): Promise<StoreListResult>;
-  StoreSearch(query: string, limit: number): Promise<StoreSkillView[]>;
-  StoreSkillDetail(slug: string): Promise<StoreSkillDetailView>;
-  StoreInstallSkill(slug: string, version: string): Promise<void>;
-  StoreUninstallSkill(slug: string): Promise<void>;
-  StoreInstalledSkills(): Promise<InstalledSkill[]>;
-  StoreCheckUpdates(): Promise<StoreUpdateView[]>;
   SetJiutianTool(name: string, enabled: boolean): Promise<void>;
   DreamStatus(): Promise<DreamStatusView>;
   SetDreamEnabled(enabled: boolean): Promise<void>;
@@ -1804,28 +1787,6 @@ function makeMockApp(): AppBindings {
     async SetSkillEnabled(name: string, enabled: boolean) {
       const skill = capSkills.find((s) => s.name === name);
       if (skill) skill.enabled = enabled;
-    },
-    async StoreStatus(): Promise<StoreStatusView> {
-      return { enabled: false, source: "clawhub", baseUrl: "" };
-    },
-    async SetStoreEnabled(_enabled: boolean) {},
-    async SetStoreSourceURL(_name: string, _url: string) {},
-    async StoreSkills(_sort: string, _cursor: string, _limit: number): Promise<StoreListResult> {
-      return { items: [], nextCursor: "" };
-    },
-    async StoreSearch(_query: string, _limit: number): Promise<StoreSkillView[]> {
-      return [];
-    },
-    async StoreSkillDetail(slug: string): Promise<StoreSkillDetailView> {
-      return { slug, displayName: slug, summary: "", stars: 0, installs: 0, latestVersion: "", updatedAt: 0, installed: false, installedVersion: "", ownerHandle: "", ownerName: "", ownerImage: "", changelog: "", isSuspicious: false, verdict: "" };
-    },
-    async StoreInstallSkill(_slug: string, _version: string) {},
-    async StoreUninstallSkill(_slug: string) {},
-    async StoreInstalledSkills(): Promise<InstalledSkill[]> {
-      return [];
-    },
-    async StoreCheckUpdates(): Promise<StoreUpdateView[]> {
-      return [];
     },
     async SetJiutianTool(name: string, enabled: boolean) {
       const jiutian = settings.jiutian ?? { imageUnderstand: true, imageGenerate: false, videoUnderstand: false };
