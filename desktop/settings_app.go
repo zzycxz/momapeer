@@ -77,6 +77,7 @@ type AgentView struct {
 	MaxSteps        int     `json:"maxSteps"`
 	PlannerMaxSteps int     `json:"plannerMaxSteps"`
 	SystemPrompt    string  `json:"systemPrompt"`
+	RPM             int     `json:"rpm"` // max requests/minute; 0 = unlimited
 }
 
 type BotAllowlistView struct {
@@ -157,6 +158,7 @@ type SettingsView struct {
 	Network           NetworkView     `json:"network"`
 	Agent             AgentView       `json:"agent"`
 	Bot               BotSettingsView `json:"bot"`
+	Cowork            CoWorkSettingsView `json:"cowork"`
 	WebSearch         WebSearchView   `json:"webSearch"`
 	Jiutian           JiutianView     `json:"jiutian"`
 	DesktopLanguage   string          `json:"desktopLanguage"`
@@ -332,6 +334,7 @@ func (a *App) Settings() SettingsView {
 			Sandbox: SandboxView{Bash: "enforce", AllowWrite: []string{}},
 			Agent:   AgentView{PlannerMaxSteps: 12},
 			Bot:     botSettingsView(config.BotConfig{}),
+			Cowork:  coworkSettingsView(config.CoworkConfig{}),
 			WebSearch: WebSearchView{
 				BraveKeySet:  os.Getenv("BRAVE_API_KEY") != "" || os.Getenv("BRAVE_SEARCH_API_KEY") != "",
 				ExaKeySet:    os.Getenv("EXA_API_KEY") != "",
@@ -339,7 +342,7 @@ func (a *App) Settings() SettingsView {
 			},
 			AutoPlan:          "off",
 			DesktopTheme:      "light",
-			DesktopThemeStyle: "graphite",
+			DesktopThemeStyle: "slate",
 			CloseBehavior:     "background",
 			DisplayMode:       "minimal",
 			CheckUpdates:      true,
@@ -383,8 +386,9 @@ func (a *App) Settings() SettingsView {
 				Password: cfg.Network.Proxy.Password,
 			},
 		},
-		Agent: AgentView{Temperature: cfg.Agent.Temperature, MaxSteps: cfg.Agent.MaxSteps, PlannerMaxSteps: cfg.Agent.PlannerMaxSteps, SystemPrompt: cfg.Agent.SystemPrompt},
+		Agent: AgentView{Temperature: cfg.Agent.Temperature, MaxSteps: cfg.Agent.MaxSteps, PlannerMaxSteps: cfg.Agent.PlannerMaxSteps, SystemPrompt: cfg.Agent.SystemPrompt, RPM: cfg.LLM.RPM},
 		Bot:   botSettingsView(cfg.Bot),
+		Cowork: coworkSettingsView(cfg.Cowork),
 		WebSearch: WebSearchView{
 			BraveKeySet:  os.Getenv("BRAVE_API_KEY") != "" || os.Getenv("BRAVE_SEARCH_API_KEY") != "",
 			ExaKeySet:    os.Getenv("EXA_API_KEY") != "",
@@ -1388,6 +1392,15 @@ func (a *App) SetAgentParams(temperature float64, maxSteps int, plannerMaxSteps 
 		c.Agent.MaxSteps = maxSteps
 		c.Agent.PlannerMaxSteps = plannerMaxSteps
 		c.Agent.SystemPrompt = systemPrompt
+		return nil
+	})
+}
+
+// SetRPM updates the global LLM requests-per-minute budget. 0 means unlimited.
+// The change takes effect immediately via controller rebuild.
+func (a *App) SetRPM(rpm int) error {
+	return a.applyConfigChange(func(c *config.Config) error {
+		c.LLM.RPM = rpm
 		return nil
 	})
 }

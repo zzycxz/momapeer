@@ -11,7 +11,7 @@ import (
 // and verifies the fact lands in the store and the index.
 func TestRememberToolSaves(t *testing.T) {
 	store := Store{Dir: t.TempDir()}
-	tl := NewRememberTool(store)
+	tl := NewRememberTool(store, nil)
 
 	if tl.Name() != "remember" || tl.ReadOnly() {
 		t.Fatalf("unexpected tool identity: name=%q readonly=%v", tl.Name(), tl.ReadOnly())
@@ -42,7 +42,7 @@ func TestRememberToolSaves(t *testing.T) {
 // TestRememberToolValidates rejects calls missing required fields rather than
 // writing an empty memory.
 func TestRememberToolValidates(t *testing.T) {
-	tl := NewRememberTool(Store{Dir: t.TempDir()})
+	tl := NewRememberTool(Store{Dir: t.TempDir()}, nil)
 	if _, err := tl.Execute(context.Background(), []byte(`{"description":"d"}`)); err == nil {
 		t.Fatal("expected error when body is missing")
 	}
@@ -56,7 +56,7 @@ func TestRememberToolValidates(t *testing.T) {
 func TestRememberToolQueuesNote(t *testing.T) {
 	q := &fakeQueue{}
 	ctx := WithQueue(context.Background(), q)
-	tl := NewRememberTool(Store{Dir: t.TempDir()})
+	tl := NewRememberTool(Store{Dir: t.TempDir()}, nil)
 	if _, err := tl.Execute(ctx, []byte(`{"name":"uses-rmb","description":"balance is RMB","type":"user","body":"b"}`)); err != nil {
 		t.Fatal(err)
 	}

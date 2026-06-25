@@ -105,7 +105,7 @@ func TestComposeIncludesActiveGoal(t *testing.T) {
 	c.SetGoal("ship the approval redesign")
 
 	got := c.Compose("next step?")
-	if !strings.Contains(got, "<active-goal>\nship the approval redesign") {
+	if !strings.Contains(got, "【目标】\nship the approval redesign") {
 		t.Fatalf("Compose should include active goal block, got %q", got)
 	}
 	if !strings.Contains(got, "[goal:complete]") || !strings.Contains(got, "[goal:blocked:<short reason>]") {

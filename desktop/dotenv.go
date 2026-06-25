@@ -4,10 +4,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/zzycxz/momapeer/internal/config"
 	"github.com/zzycxz/momapeer/internal/fileutil"
 )
+
+// dotenvMu serializes read-modify-write of the global credentials file and
+// ~/.env. Multiple desktop tabs boot concurrently and each calls
+// promoteProviderKeysToCredentials; without serialization their interleaved
+// read/modify/write drops whichever write lands in the middle — a configured
+// key silently vanishes. The mutex covers the whole promotion so upsert +
+// remove act as one transaction.
+var dotenvMu sync.Mutex
 
 // credentialsPath is the momapeer-owned global secrets file the settings panel
 // writes API keys to — the same file `momapeer setup` writes and config.loadDotEnv
@@ -174,6 +183,8 @@ func envFileKeys(path string) map[string]bool {
 // credentials file is the single source of truth; a project's own .env is
 // user-owned and left untouched.
 func promoteProviderKeysToCredentials(cfg *config.Config) {
+	dotenvMu.Lock()
+	defer dotenvMu.Unlock()
 	credPath := credentialsPath()
 	have := envFileKeys(credPath)
 	for _, p := range cfg.Providers {

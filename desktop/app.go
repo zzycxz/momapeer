@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -40,6 +41,10 @@ import (
 	"github.com/zzycxz/momapeer/internal/mcpdiag"
 	"github.com/zzycxz/momapeer/internal/memory"
 	"github.com/zzycxz/momapeer/internal/plugin"
+	schedulerpkg "github.com/zzycxz/momapeer/internal/scheduler"
+	ragpkg "github.com/zzycxz/momapeer/internal/rag"
+	expertspkg "github.com/zzycxz/momapeer/internal/experts"
+	"github.com/zzycxz/momapeer/internal/tool/builtin"
 	"github.com/zzycxz/momapeer/internal/provider"
 	"github.com/zzycxz/momapeer/internal/skill"
 )
@@ -79,7 +84,8 @@ type App struct {
 
 	mediaTokens *mediaTokenStore
 	botInstalls map[string]*botInstallSession
-	botGW       *bot.BotGateway // nil when bot is disabled or not started
+	botGW       atomic.Pointer[bot.BotGateway] // nil when bot is disabled or not started; atomic for lock-free reads from Push/hotkey
+	hotkeyMgr   *hotkeyManager  // screenshot hotkey manager; nil when feature off/stopped
 
 	// sharedHosts shares one plugin.Host per workspace root across desktop tabs
 	// so opening N tabs on the same project spawns MCP subprocesses (CodeGraph,
@@ -88,6 +94,24 @@ type App struct {
 	sharedHostsMu sync.Mutex
 
 	metrics atomic.Pointer[metricsAggregator] // non-nil only when desktop.metrics is opted in; swapped live by SetDesktopMetrics
+
+	// scheduler is the app-level scheduled-task engine (coWork). Created once at
+	// startup; bound to the active cowork controller via schedulerRunner so
+	// scheduled prompts fire into whichever tab is active. Persists tasks to
+	// ~/.config/momapeer/scheduled_tasks.json across restarts.
+	scheduler *schedulerpkg.Scheduler
+	// ragStore is the cowork knowledge-base store (FTS5 + structured entities).
+	// ragPipeline is the background deep-extraction engine (chunks → LLM →
+	// entity/relation graph). Both persist to the user config dir.
+	ragStore    *ragpkg.Store
+	ragPipeline *ragpkg.Pipeline
+	// expertStore + expertOrchestrator power the 专家团 (expert-team) panel:
+	// multi-model collaboration with persistent team rosters.
+	expertStore        *expertspkg.Store
+	expertOrchestrator *expertspkg.Orchestrator
+	// screenshotHwnd is the hidden message-only window receiving WM_HOTKEY for
+	// the global screenshot hotkey. 0 when the feature is off.
+	screenshotHwnd uintptr
 }
 
 // mediaTokenEntry holds metadata for a workspace media file served via temporary URL.
@@ -292,6 +316,151 @@ func (a *App) startup(ctx context.Context) {
 	go a.restoreOrBuildTabs()
 	go a.sendStartupPing()
 	go a.flushMetrics()
+	// Load coWork secrets (SMTP/IMAP passwords) from the momapeer-managed .env
+	// into the process environment BEFORE initScheduler/initRAG, so coWork tools
+	// find them via os.Getenv without the user setting system env vars manually.
+	loadCoworkEnvAtStartup()
+	a.initScheduler()
+	a.initRAG()
+	a.initExperts()
+	a.StartScreenshotHotkey()
+}
+
+// initRAG opens the coWork knowledge-base store (FTS5 + structured entities)
+// and binds it to the rag_* tools. It also constructs the deep-extraction
+// pipeline (chunks → LLM → entity/relation graph) from the loaded config — the
+// pipeline's worker goroutines start here and run for the app's lifetime.
+// Safe to call once at startup; a failure to open logs a warning but doesn't
+// block boot (rag_* tools will report "offline").
+func (a *App) initRAG() {
+	dbPath := filepath.Join(desktopConfigDir(), "rag.db")
+	store, err := ragpkg.Open(dbPath)
+	if err != nil {
+		slog.Warn("rag: open failed", "err", err)
+		return
+	}
+	a.ragStore = store
+	builtin.SetRAGStore(store)
+
+	// Build the extraction pipeline from [cowork] extract_* settings (with
+	// conservative defaults: 1 concurrent chunk, 3s between chunks). When no
+	// extract model is configured the pipeline uses a noop extractor — FTS5
+	// still works, but "deep extract" is a no-op until the user sets a model.
+	cfg := ragpkg.DefaultPipelineConfig()
+	var extractor ragpkg.Extractor
+	if c, err := config.Load(); err == nil {
+		if c.Cowork.ExtractInterval != "" {
+			if d, err := time.ParseDuration(c.Cowork.ExtractInterval); err == nil && d > 0 {
+				cfg.Interval = d
+			}
+		}
+		if c.Cowork.ExtractConcurrency > 0 {
+			cfg.Concurrency = c.Cowork.ExtractConcurrency
+		}
+		// Only enable real extraction when an explicit extract_model is set —
+		// the jiutian extractor calls /chat/completions directly with a bare
+		// model name, so we can't safely fall back to "provider/model" refs.
+		if model := strings.TrimSpace(c.Cowork.ExtractModel); model != "" {
+			extractor = ragpkg.NewJiutianExtractor(ragpkg.JiutianExtractorConfig{
+				Model: model,
+			})
+		}
+	}
+	if extractor == nil {
+		slog.Warn("rag: extract model not configured — deep extraction disabled (FTS5 still works)")
+	}
+	a.ragPipeline = ragpkg.NewPipeline(store, extractor, cfg, func(ev ragpkg.ProgressEvent) {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "rag:progress", ev)
+		}
+	})
+	a.ragPipeline.SetLogger(func(format string, args ...any) {
+		slog.Debug("rag: "+format, args...)
+	})
+	a.ragPipeline.Start()
+}
+
+// initScheduler creates the app-level scheduled-task engine, loads persisted
+// tasks, binds the runner bridge to the active cowork controller, and starts
+// firing. The scheduler lives for the app's lifetime; a scheduled prompt runs in
+// whichever tab is active (cowork profile). Safe to call once at startup.
+func (a *App) initScheduler() {
+	storePath := filepath.Join(desktopConfigDir(), "scheduled_tasks.json")
+	a.scheduler = schedulerpkg.New(storePath)
+	a.scheduler.SetLogger(func(format string, args ...any) {
+		slog.Debug("scheduler: "+format, args...)
+	})
+	if err := a.scheduler.Load(); err != nil {
+		slog.Warn("scheduler: load failed", "err", err)
+	}
+	a.scheduler.SetRunner(schedulerRunner{app: a})
+	a.scheduler.SetIMPusher(schedulerIMPusher{app: a})
+	a.scheduler.SetEmailSender(schedulerEmailSender{})
+	a.scheduler.SetNotifier(schedulerNotifier{app: a})
+	a.scheduler.Start()
+	builtin.SetScheduler(a.scheduler)
+}
+
+// schedulerIMPusher implements scheduler.IMPusher by routing through the bot
+// gateway. The gateway is bound lazily (a.botGW is set when the bot starts,
+// which may be after the scheduler init), so we read it at push time. When the
+// bot isn't running, Push returns nil (best-effort — a scheduled task shouldn't
+// fail because IM is offline).
+type schedulerIMPusher struct{ app *App }
+
+func (p schedulerIMPusher) Push(ctx context.Context, dest, text string) error {
+	gw := p.app.botGW.Load()
+	if gw == nil {
+		return nil // bot not running — silent skip
+	}
+	return gw.Push(ctx, dest, text)
+}
+
+// schedulerRunner implements scheduler.Runner by running a prompt in the active
+// cowork tab's controller. A scheduled task fires headlessly into the agent
+// loop; the result text (or error) is returned to the scheduler, which stores it
+// on the task for schedule_list inspection. If no cowork tab is active, the run
+// is skipped with a clear message.
+type schedulerRunner struct{ app *App }
+
+func (r schedulerRunner) Run(ctx context.Context, profile, prompt string) (string, error) {
+	r.app.mu.RLock()
+	tab := r.app.tabs[r.app.activeTabID]
+	r.app.mu.RUnlock()
+	if tab == nil || tab.Ctrl == nil {
+		return "", fmt.Errorf("no active tab to run scheduled prompt (open a cowork tab)")
+	}
+	if !tab.Ready {
+		return "", fmt.Errorf("active tab not ready yet")
+	}
+	if err := tab.Ctrl.Run(ctx, prompt); err != nil {
+		return "", err
+	}
+	// Return a short summary from the final assistant message so schedule_list
+	// shows what the run produced, not just "ok".
+	hist := tab.Ctrl.History()
+	if len(hist) == 0 {
+		return "ran (no output)", nil
+	}
+	last := hist[len(hist)-1]
+	if txt := assistantText(last); txt != "" {
+		return txt, nil
+	}
+	return "ran", nil
+}
+
+// assistantText extracts the text content of an assistant message (empty for
+// non-assistant or tool-call-only messages). Content is typed as any (string or
+// structured parts); we coerce the common string case. Used by the scheduler to
+// summarize a fired prompt's result.
+func assistantText(m provider.Message) string {
+	if m.Role != provider.RoleAssistant {
+		return ""
+	}
+	if s, ok := m.Content.(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return ""
 }
 
 func (a *App) beforeClose(ctx context.Context) bool {
@@ -411,6 +580,7 @@ func (a *App) restoreOrBuildTabs() {
 			if tab.toolApprovalMode == control.ToolApprovalAsk && tabModeHasAutoApproveTools(entry.Mode) {
 				tab.toolApprovalMode = control.ToolApprovalYolo
 			}
+			tab.profile = strings.TrimSpace(entry.Profile)
 			tab.SessionPath = strings.TrimSpace(entry.SessionPath)
 			tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: ctx}
 			a.mu.Lock()
@@ -482,6 +652,10 @@ func (a *App) snapshotAllTabs() {
 func (a *App) shutdown(context.Context) {
 	a.stopBotGateway()
 	a.stopTray()
+	// Stop the screenshot hotkey loop so its goroutine exits cleanly instead of
+	// leaking (it now uses non-blocking PeekMessage + stopCh, so this returns
+	// within one tick).
+	a.StopScreenshotHotkey()
 	// Save window geometry synchronously from Go so it's persisted even if the
 	// frontend's beforeunload promise hasn't resolved yet.
 	a.saveWindowStateSync()
@@ -2142,18 +2316,23 @@ type SkillRootView struct {
 // for the MCP & Skills drawer. Non-nil slices so the frontend can map over them.
 func (a *App) Capabilities() CapabilitiesView {
 	out := CapabilitiesView{Servers: []ServerView{}, Skills: []SkillView{}, SkillRoots: []SkillRootView{}}
+	// Snapshot all tab fields we need under the read lock, THEN release. Reading
+	// tab.disabledMCP (a map) outside the lock races with RemoveMCPServer's
+	// delete() under a write lock — that is a concurrent map read/write crash.
+	var ctrl *control.Controller
+	disabled := map[string]ServerView{}
+	var order []string
+	var workspaceRoot string
 	a.mu.RLock()
-	tab := a.activeTabLocked()
+	if tab := a.activeTabLocked(); tab != nil {
+		ctrl = tab.Ctrl
+		workspaceRoot = tab.WorkspaceRoot
+		for name, s := range tab.disabledMCP {
+			disabled[name] = s
+		}
+		order = append([]string(nil), tab.mcpOrder...)
+	}
 	a.mu.RUnlock()
-	if tab == nil {
-		return out
-	}
-	ctrl := tab.Ctrl
-	disabled := make(map[string]ServerView, len(tab.disabledMCP))
-	for name, s := range tab.disabledMCP {
-		disabled[name] = s
-	}
-	order := append([]string(nil), tab.mcpOrder...)
 	if ctrl == nil {
 		return out
 	}
@@ -2163,7 +2342,7 @@ func (a *App) Capabilities() CapabilitiesView {
 	var loadedCfg *config.Config
 	configured := map[string]config.PluginEntry{}
 	var configuredEntries []config.PluginEntry
-	if cfg, err := config.LoadForRoot(tab.WorkspaceRoot); err == nil {
+	if cfg, err := config.LoadForRoot(workspaceRoot); err == nil {
 		loadedCfg = cfg
 		configuredEntries = append(configuredEntries, cfg.Plugins...)
 		for _, p := range configuredEntries {
@@ -2271,11 +2450,13 @@ func (a *App) Capabilities() CapabilitiesView {
 	out.Servers = orderServerViews(out.Servers, order)
 
 	a.mu.Lock()
-	for name := range connected {
-		delete(retainedDisabled, name)
+	if tab := a.activeTabLocked(); tab != nil {
+		for name := range connected {
+			delete(retainedDisabled, name)
+		}
+		tab.disabledMCP = retainedDisabled
+		tab.mcpOrder = mergeServerOrder(tab.mcpOrder, out.Servers)
 	}
-	tab.disabledMCP = retainedDisabled
-	tab.mcpOrder = mergeServerOrder(tab.mcpOrder, out.Servers)
 	a.mu.Unlock()
 
 	for _, s := range ctrl.AllSkills() {
@@ -2801,19 +2982,24 @@ func (a *App) RemoveMCPServer(name string) error {
 	if name == "codegraph" {
 		return fmt.Errorf("codegraph is built in; it cannot be removed")
 	}
-	tab := a.activeTab()
-	if tab == nil || tab.Ctrl == nil {
+	// Use activeCtrl (self-locking, returns a snapshot) instead of activeTab +
+	// tab.Ctrl: the latter reads tab.Ctrl outside the lock, racing with rebuild()
+	// which sets tab.Ctrl = nil — a nil deref panic.
+	ctrl := a.activeCtrl()
+	if ctrl == nil {
 		return fmt.Errorf("no active session")
 	}
-	disconnected := tab.Ctrl.DisconnectMCPServer(name)
+	disconnected := ctrl.DisconnectMCPServer(name)
 	removed, err := a.removeDesktopMCPServer(name)
 	if err != nil {
 		return err
 	}
 	if disconnected || removed {
 		a.mu.Lock()
-		delete(tab.disabledMCP, name)
-		tab.mcpOrder = removeServerOrder(tab.mcpOrder, name)
+		if tab := a.activeTabLocked(); tab != nil {
+			delete(tab.disabledMCP, name)
+			tab.mcpOrder = removeServerOrder(tab.mcpOrder, name)
+		}
 		a.mu.Unlock()
 		return nil
 	}
@@ -2824,20 +3010,32 @@ func (a *App) RemoveMCPServer(name string) error {
 // a fresh handshake and tool re-registration), then reconnects.  Failures are
 // recorded on the Host so the UI can render them.
 func (a *App) ReconnectMCPServer(name string) error {
-	tab := a.activeTab()
-	if tab == nil || tab.Ctrl == nil {
+	// Snapshot ctrl + workspaceRoot under the lock; accessing tab.Ctrl outside
+	// the lock races rebuild() → nil panic (TOCTOU, same class as RemoveMCPServer).
+	a.mu.RLock()
+	tab := a.activeTabLocked()
+	ctrl := (*control.Controller)(nil)
+	root := ""
+	if tab != nil {
+		ctrl = tab.Ctrl
+		root = tab.WorkspaceRoot
+	}
+	a.mu.RUnlock()
+	if ctrl == nil {
 		return fmt.Errorf("no active session")
 	}
-	if mcpConnected(tab.Ctrl, name) {
-		tab.Ctrl.DisconnectMCPServer(name)
+	if mcpConnected(ctrl, name) {
+		ctrl.DisconnectMCPServer(name)
 	}
-	_, err := a.connectConfiguredMCPServerForTab(tab, name)
+	_, err := a.connectConfiguredMCPServer(ctrl, root, name)
 	if err != nil {
-		recordMCPFailure(tab.Ctrl, config.PluginEntry{Name: name}, err)
+		recordMCPFailure(ctrl, config.PluginEntry{Name: name}, err)
 		return err
 	}
 	a.mu.Lock()
-	delete(tab.disabledMCP, name)
+	if tab := a.activeTabLocked(); tab != nil {
+		delete(tab.disabledMCP, name)
+	}
 	a.mu.Unlock()
 	return nil
 }
@@ -2906,23 +3104,33 @@ func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
 	return nil
 }
 
-func (a *App) connectConfiguredMCPServerForTab(tab *WorkspaceTab, name string) (int, error) {
-	if tab == nil || tab.Ctrl == nil {
+// connectConfiguredMCPServer connects a configured MCP server using an
+// already-snapshotted controller + workspace root, so callers avoid holding a
+// *WorkspaceTab (and its TOCTOU-prone tab.Ctrl) across the call.
+func (a *App) connectConfiguredMCPServer(ctrl *control.Controller, root, name string) (int, error) {
+	if ctrl == nil {
 		return 0, fmt.Errorf("no active session")
 	}
-	cfg, err := config.LoadForRoot(tab.WorkspaceRoot)
+	cfg, err := config.LoadForRoot(root)
 	if err != nil {
 		return 0, err
 	}
 	for _, p := range cfg.Plugins {
 		if p.Name == name {
-			return tab.Ctrl.ConnectMCPServer(p)
+			return ctrl.ConnectMCPServer(p)
 		}
 	}
 	if name == "codegraph" {
-		return tab.Ctrl.ConnectCodegraphMCPServer(cfg)
+		return ctrl.ConnectCodegraphMCPServer(cfg)
 	}
 	return 0, fmt.Errorf("no configured MCP server named %q", name)
+}
+
+func (a *App) connectConfiguredMCPServerForTab(tab *WorkspaceTab, name string) (int, error) {
+	if tab == nil {
+		return 0, fmt.Errorf("no active session")
+	}
+	return a.connectConfiguredMCPServer(tab.Ctrl, tab.WorkspaceRoot, name)
 }
 
 // SetMCPServerTier is kept for old desktop bindings. New config writes drop the
@@ -3525,6 +3733,196 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		newCtrl.SetSessionPath(path)
 	}
 	a.persistTabSessionPath(tab, path)
+	return nil
+}
+
+// ProfileInfo describes one selectable product profile for the frontend picker.
+type ProfileInfo struct {
+	Name          string `json:"name"`
+	DisplayName   string `json:"displayName"`
+	WorkspaceType string `json:"workspaceType,omitempty"`
+}
+
+// Profile returns the active profile name for the current tab ("dev" | "cowork").
+// Empty/unprofiled resolves to "dev" so the frontend always sees a concrete mode.
+func (a *App) Profile() string {
+	return a.ProfileForTab("")
+}
+
+// ProfileForTab returns the active profile name for the given tab (current tab
+// when tabID is ""). Empty resolves to "dev".
+func (a *App) ProfileForTab(tabID string) string {
+	tab := a.tabByID(tabID)
+	if tab == nil {
+		return config.ProfileDev
+	}
+	name := strings.TrimSpace(tab.profile)
+	if name == "" {
+		return config.ProfileDev
+	}
+	return strings.ToLower(name)
+}
+
+// Profiles lists every profile the user can switch to (builtins + configured),
+// for the profile picker. Names are lowercased to match resolution.
+func (a *App) Profiles() []ProfileInfo {
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		cfg = config.Default()
+	}
+	seen := map[string]bool{}
+	var out []ProfileInfo
+	// Builtins first so dev is always available even with an empty config.
+	for _, b := range config.DefaultProfiles() {
+		k := strings.ToLower(b.Name)
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, ProfileInfo{Name: k, DisplayName: b.DisplayName, WorkspaceType: b.WorkspaceType})
+		}
+	}
+	for _, p := range cfg.Profiles {
+		k := strings.ToLower(strings.TrimSpace(p.Name))
+		if k == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		disp := strings.TrimSpace(p.DisplayName)
+		if disp == "" {
+			disp = k
+		}
+		out = append(out, ProfileInfo{Name: k, DisplayName: disp, WorkspaceType: p.WorkspaceType})
+	}
+	return out
+}
+
+// SwitchProfile switches the current tab to a product profile (dev/cowork) and
+// rebuilds its controller so the new model/prompt/skill/plugin bundle takes
+// effect immediately, carrying the conversation history across. Equivalent to
+// SetModel but for a whole profile bundle instead of a single model. No-op when
+// the profile is already active; refuses while a turn is running.
+func (a *App) SwitchProfile(name string) error {
+	return a.SwitchProfileForTab("", name)
+}
+
+// SwitchProfileForTab switches a specific tab (current when tabID is "") to the
+// named profile. The rebuild flow mirrors SetModelForTab: acquire the shared MCP
+// host so subprocesses survive, snapshot history, close the old controller,
+// boot.Build with the profile, rebind, and Resume the history onto the fresh
+// session. Emits "profile:changed" so the frontend swaps layouts.
+func (a *App) SwitchProfileForTab(tabID, name string) error {
+	if a.ctx == nil {
+		return nil
+	}
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		name = config.ProfileDev
+	}
+	tab := a.tabByID(tabID)
+	if tab == nil {
+		return nil
+	}
+	current := strings.ToLower(strings.TrimSpace(tab.profile))
+	if current == "" {
+		current = config.ProfileDev
+	}
+	if name == current {
+		return nil
+	}
+	if tab.Ctrl != nil && tab.Ctrl.Running() {
+		return fmt.Errorf("finish or cancel the current turn before switching profile")
+	}
+	cfg, err := config.LoadForRoot(tab.WorkspaceRoot)
+	if err != nil {
+		return err
+	}
+	prof, err := cfg.ResolveProfile(name)
+	if err != nil {
+		return err
+	}
+
+	// Resolve the effective model: keep the tab's current model unless the profile
+	// pins one. We pass BOTH to boot.Build — Profile for the bundle, Model as the
+	// explicit winner. This lets a user pick a model inside cowork and keep it on
+	// switch-back, while a profile that pins a model still overrides the default.
+	modelName := strings.TrimSpace(tab.model)
+	if modelName == "" {
+		if strings.TrimSpace(prof.Model) != "" {
+			modelName = prof.Model
+		} else {
+			modelName = cfg.DefaultModel
+		}
+	}
+	// Normalize effort against the resolved model, mirroring SetModelForTab. A
+	// profile switch can change the model (via prof.Model), so an effort level
+	// valid for the old model (e.g. "high" on a MoMA model) may be unsupported on
+	// the new one — drop it then rather than passing an invalid level that boot
+	// would silently keep.
+	effortOverride := cloneStringPtr(tab.effort)
+	if entry, ok := cfg.ResolveModel(modelName); ok && effortOverride != nil {
+		if normalized, err := config.NormalizeEffort(entry, config.EffortDisplay(&config.ProviderEntry{Effort: *effortOverride})); err != nil {
+			effortOverride = nil
+		} else {
+			effortOverride = &normalized
+		}
+	}
+
+	var carried []provider.Message
+	prevPath := ""
+	// Acquire the shared host BEFORE closing the old controller so the refcount
+	// never hits zero mid-switch (subprocess teardown). Same invariant as
+	// SetModelForTab — the matching release runs after the old Close.
+	sharedHost := a.acquireSharedHost(tab.WorkspaceRoot)
+	if tab.Ctrl != nil {
+		prevPath = tab.Ctrl.SessionPath()
+		_ = tab.Ctrl.Snapshot()
+		carried = tab.Ctrl.History()
+		tab.Ctrl.Close()
+		a.releaseSharedHost(tab.WorkspaceRoot)
+	}
+
+	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
+		Model:          modelName,
+		RequireKey:     false,
+		Sink:           tab.sink,
+		WorkspaceRoot:  tab.WorkspaceRoot,
+		SessionDir:     tabSessionDir(tab),
+		EffortOverride: effortOverride, // already cloned+normalized above; no double-clone
+		Host:           sharedHost,
+		Profile:        prof,
+	})
+	if err != nil {
+		a.releaseSharedHost(tab.WorkspaceRoot)
+		return err
+	}
+	a.bindControllerDisplayRecorder(newCtrl)
+	a.mu.Lock()
+	tab.Ctrl = newCtrl
+	tab.profile = name
+	tab.effort = cloneStringPtr(effortOverride) // persist the normalized effort
+	tab.Label = newCtrl.Label()
+	a.saveTabsLocked()
+	a.mu.Unlock()
+	newCtrl.EnableInteractiveApproval()
+	applyTabModeToController(newCtrl, tab.mode)
+	applyTabToolApprovalModeToController(newCtrl, tab.toolApprovalMode)
+	newCtrl.SetGoal(tab.goal)
+
+	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
+	if len(carried) > 0 {
+		newCtrl.Resume(&agent.Session{Messages: carried}, path)
+	} else if path != "" {
+		newCtrl.SetSessionPath(path)
+	}
+	a.persistTabSessionPath(tab, path)
+
+	// Tell the frontend this tab's profile changed so it swaps the layout. The
+	// payload carries the tab id + normalized profile name.
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "profile:changed", map[string]string{
+			"tabId":   tab.ID,
+			"profile": name,
+		})
+	}
 	return nil
 }
 
@@ -4310,12 +4708,23 @@ type MemoryDoc struct {
 }
 
 // MemoryFact is one saved auto-memory, surfaced read-only in the panel.
+// The bitemporal fields (ValidFrom/ValidTo/Status/SupersededBy/CreatedAt)
+// are populated from the store's Memory struct so the timeline view can show
+// when a fact became true, whether it has expired, and what superseded it.
 type MemoryFact struct {
-	Name        string `json:"name"`
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description"`
-	Type        string `json:"type"`
-	Body        string `json:"body"`
+	Name        string   `json:"name"`
+	Title       string   `json:"title,omitempty"`
+	Description string   `json:"description"`
+	Type        string   `json:"type"`
+	Body        string   `json:"body"`
+	ValidFrom    string   `json:"validFrom,omitempty"`
+	ValidTo      string   `json:"validTo,omitempty"`
+	Status       string   `json:"status,omitempty"`
+	Category     string   `json:"category,omitempty"`
+	Tags         []string `json:"tags,omitempty"`
+	SupersededBy string   `json:"supersededBy,omitempty"`
+	CreatedAt    string   `json:"createdAt,omitempty"`
+	UpdatedAt    string   `json:"updatedAt,omitempty"`
 }
 
 // MemoryScope is one writable quick-add target (scope id + the file it writes to).
@@ -4360,14 +4769,65 @@ func (a *App) Memory() MemoryView {
 		view.Docs = append(view.Docs, MemoryDoc{Path: d.Path, Scope: string(d.Scope), Body: d.Body})
 	}
 	for _, f := range set.Store.List() {
-		view.Facts = append(view.Facts, MemoryFact{
-			Name: f.Name, Title: f.Title, Description: f.Description, Type: string(f.Type), Body: f.Body,
-		})
+		view.Facts = append(view.Facts, memoryFactView(f))
 	}
 	for _, sc := range writableScopes {
 		if p := set.DocPath(sc); p != "" { // user scope yields "" when no config dir
 			view.Scopes = append(view.Scopes, MemoryScope{Scope: string(sc), Path: p})
 		}
+	}
+	return view
+}
+
+// memoryFactView maps a memory.Memory onto the panel's MemoryFact DTO,
+// carrying the bitemporal fields through. time.Time values are formatted
+// RFC3339 (Go's default) so the frontend can parse them with new Date().
+// Empty/zero times yield "" via the Format guard so the panel's "expired at"
+// badges don't render bogus dates.
+func memoryFactView(f memory.Memory) MemoryFact {
+	out := MemoryFact{
+		Name:         f.Name,
+		Title:        f.Title,
+		Description:  f.Description,
+		Type:         string(f.Type),
+		Body:         f.Body,
+		ValidFrom:    f.ValidFrom,
+		ValidTo:      f.ValidTo,
+		Status:       f.Status,
+		Category:     f.Category,
+		Tags:         f.Tags,
+		SupersededBy: f.SupersededBy,
+	}
+	if !f.CreatedAt.IsZero() {
+		out.CreatedAt = f.CreatedAt.UTC().Format(time.RFC3339)
+	}
+	if !f.UpdatedAt.IsZero() {
+		out.UpdatedAt = f.UpdatedAt.UTC().Format(time.RFC3339)
+	}
+	return out
+}
+
+// MemoryHistory returns the full bitemporal surface — active, dormant, and
+// superseded records (the latter pulled from .archive/) — for the timeline
+// view. Unlike Memory() this includes docs/scopes metadata as well so the
+// panel can render a self-contained history tab without a second round-trip.
+// Read-only; never mutates state.
+func (a *App) MemoryHistory() MemoryView {
+	view := MemoryView{Docs: []MemoryDoc{}, Facts: []MemoryFact{}, Scopes: []MemoryScope{}}
+	a.mu.RLock()
+	ctrl := a.activeCtrlLocked()
+	a.mu.RUnlock()
+	if ctrl == nil {
+		return view
+	}
+	set := ctrl.Memory()
+	if set == nil {
+		return view
+	}
+	view.StoreDir = set.Store.Dir
+	view.Available = true
+	for _, f := range set.Store.ListTimeline() {
+		view.Facts = append(view.Facts, memoryFactView(f))
 	}
 	return view
 }
@@ -4395,6 +4855,32 @@ func (a *App) Forget(name string) error {
 		return nil
 	}
 	return ctrl.ForgetMemory(name)
+}
+
+// PromoteMemory confirms an auto-captured "pending" memory (from the passive
+// capture hook), flipping it to active so it enters the prompt/profile. The
+// timeline panel's "confirm" button calls this. Returns whether a pending
+// record was actually promoted (false = nothing to promote).
+func (a *App) PromoteMemory(name string) (bool, error) {
+	a.mu.RLock()
+	ctrl := a.activeCtrlLocked()
+	a.mu.RUnlock()
+	if ctrl == nil {
+		return false, nil
+	}
+	return ctrl.PromoteMemory(name), nil
+}
+
+// RejectMemory dismisses an auto-captured "pending" memory, deleting it. Only
+// pending records are affected. The timeline panel's "ignore" button calls this.
+func (a *App) RejectMemory(name string) (bool, error) {
+	a.mu.RLock()
+	ctrl := a.activeCtrlLocked()
+	a.mu.RUnlock()
+	if ctrl == nil {
+		return false, nil
+	}
+	return ctrl.RejectMemory(name), nil
 }
 
 // SaveDoc overwrites a memory doc with the panel editor's contents. The controller

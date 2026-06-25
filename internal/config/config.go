@@ -65,6 +65,18 @@ type Config struct {
 	Statusline    StatuslineConfig    `toml:"statusline"`
 	LSP           LSPConfig           `toml:"lsp"`
 	Bot           BotConfig           `toml:"bot"`
+	// Cowork holds coWork (office) profile settings — currently just the browser
+	// path override. Empty means auto-detect; a non-empty path is tried first
+	// (and the user is guided to set it when no browser is found).
+	Cowork        CoworkConfig        `toml:"cowork"`
+	// LLM holds the global request budget (rate limiting) applied to all
+	// providers. RPM=0 (the default) disables limiting for backward compat.
+	LLM           LLMConfig           `toml:"llm"`
+	// Profiles holds optional [[profiles]] entries that override the built-in
+	// dev/cowork profiles by name. A name collision with a builtin replaces it,
+	// so users can customise a profile's model/prompt/skills without code. Empty
+	// means only the builtins are available (dev + cowork).
+	Profiles []Profile `toml:"profiles"`
 }
 
 // UIConfig controls CLI presentation-only settings. Desktop appearance is kept in
@@ -399,6 +411,109 @@ type BotConfig struct {
 	Feishu      FeishuBotConfig       `toml:"feishu"`
 	Weixin      WeixinBotConfig       `toml:"weixin"`
 	Connections []BotConnectionConfig `toml:"connections"`
+}
+
+// CoworkConfig holds coWork (office) profile settings. BrowserPath overrides
+// the auto-detected Chromium-based browser; when empty, browser_* tools probe
+// the standard Chrome/Edge/Brave install locations and fall back to CHROME_PATH.
+// Users set this when the browser isn't in a standard location — the agent
+// surfaces a clear error guiding them to fill [cowork] browser_path.
+type CoworkConfig struct {
+	BrowserPath string `toml:"browser_path"` // absolute path to a Chromium-based browser exe; empty = auto-detect
+	// WPSPPTServerPath points at the wps-ppt-mcp-server's server.py. When set,
+	// cowork registers a "wps-ppt" MCP server (PPT generation via WPS COM).
+	// Empty disables the PPT capability (the rest of cowork still works).
+	// The server needs Python + fastmcp + pywin32 installed (see cowork.WPSPPTEntry).
+	WPSPPTServerPath string `toml:"wps_ppt_server_path"`
+	// WPSPPTPython overrides the python executable used to launch the server
+	// (default: "python" on PATH). Set when your fastmcp/pywin32 live in a
+	// specific interpreter.
+	WPSPPTPython string `toml:"wps_ppt_python"`
+	// SMTP configures outbound email (email_send). All fields required to enable
+	// sending; empty SMTPHost disables email_send (it returns a config error).
+	SMTP SMTPConfig `toml:"smtp"`
+	// EmbeddingModel enables semantic RAG reranking. When set to a provider model
+	// ref that supports embeddings, rag_search computes a query embedding and
+	// reranks FTS5 hits by cosine similarity. Empty = FTS5-only (the default,
+	// works offline). Set to a real embedding model (e.g. a provider with kind
+	// "embedding") to upgrade RAG to hybrid.
+	EmbeddingModel string `toml:"embedding_model"`
+	// VLMBackend selects the visual-language model backend for screen_perceive
+	// (desktop automation). "jiutian" (default, 九天 LLMImage2Text) or "provider"
+	// (走 provider 多模态聊天, 用 VLMModel 指定模型).
+	VLMBackend string `toml:"vlm_backend"`
+	// VLMModel is the provider model ref for VLM when VLMBackend="provider".
+	// E.g. "minimax/minimax-m2.7", "moonshotai/kimi-k2.6". Must be vision-capable.
+	VLMModel string `toml:"vlm_model"`
+	// IMAP configures inbound email (email_read/search). Empty Host = read tools
+	// return "not configured". Reading uses go-imap + go-message (protocol-level
+	// correct: full SEARCH, RFC 2047 header decoding, multipart MIME).
+	IMAP IMAPConfig `toml:"imap"`
+	// ExtractModel is the LLM used by the RAG deep-extraction pipeline (turns
+	// imported documents into a structured entity/relation graph). Empty = fall
+	// back to the active profile's main model. Pair with ExtractInterval /
+	// ExtractConcurrency to tune request cadence; the pipeline is conservative
+	// by default (1 concurrent chunk, 3s between chunks) to avoid rate limits.
+	ExtractModel string `toml:"extract_model"`
+	// ExtractInterval is the pause between chunk extractions (default "3s").
+	// Raise it on rate-limited endpoints; lower on generous local models.
+	ExtractInterval string `toml:"extract_interval"`
+	// ExtractConcurrency is how many chunks extract in parallel (default 1).
+	// Keep low to avoid tripping rate limits — extraction is a background task
+	// where throughput matters less than "no errors".
+	ExtractConcurrency int `toml:"extract_concurrency"`
+
+	// ScreenshotEnabled turns on the global-hotkey screenshot-to-VLM feature.
+	// When true, pressing ScreenshotHotkey anywhere (even when MoMAPeer is in
+	// the background) captures the screen, sends it to ScreenshotVLMModel for
+	// recognition, and replies via IM bot + in-app toast. Default false — the
+	// user opts in via the cowork settings tab.
+	ScreenshotEnabled bool `toml:"screenshot_enabled"`
+	// ScreenshotHotkey is the global hotkey combination (e.g. "Ctrl+Shift+S").
+	// Registered via Win32 RegisterHotKey so it fires even when MoMAPeer isn't
+	// focused. Default "Ctrl+Shift+S".
+	ScreenshotHotkey string `toml:"screenshot_hotkey"`
+	// ScreenshotVLMModel is the model used for screenshot recognition. Default
+	// "qwen/qwen3.6-27b" (lightweight multimodal). Alternative: "qwen/qwen3.5-
+	// 397b-a17b". This is the SINGLE place all image-recognition config lives
+	// — set it once in the cowork settings page.
+	ScreenshotVLMModel string `toml:"screenshot_vlm_model"`
+}
+
+// LLMConfig holds the global LLM request budget (rate limiting). It applies
+// across ALL providers via a decorator, so main-agent + subagent + RAG
+// extraction + IM bot responses all share the same per-API-key RPM quota.
+//
+// RPM reflects the user's real API-key rate limit (MoMA defaults to 5/min;
+// higher tiers or other providers may allow more). Leave at 0 to disable
+// rate limiting entirely (unlimited, backward-compatible).
+//
+// ReserveMain keeps main-agent requests always answerable even when background
+// tasks (expert teams, extraction) have consumed most of the per-minute quota:
+// background requests wait for the next window when remaining <= reserve.
+type LLMConfig struct {
+	RPM         int `toml:"rpm"`          // max requests/minute per API key (0 = unlimited)
+	TPM         int `toml:"tpm"`          // max tokens/minute (0 = unlimited; reserved, not enforced yet)
+	ReserveMain int `toml:"reserve_main"` // requests reserved for main-agent priority (default 2)
+}
+
+// IMAPConfig holds inbound mail server settings for email_read/search.
+type IMAPConfig struct {
+	Host        string `toml:"host"`         // IMAP server host, e.g. imap.example.com
+	Port        int    `toml:"port"`         // IMAP port (993 for implicit TLS, 143 for STARTTLS/plain)
+	Username    string `toml:"username"`     // mailbox login
+	PasswordEnv string `toml:"password_env"` // env var holding the password
+}
+
+// SMTPConfig holds outbound mail server settings. Secrets come from the env via
+// PasswordEnv (never stored in the TOML).
+type SMTPConfig struct {
+	Host        string `toml:"host"`         // SMTP server host, e.g. smtp.example.com
+	Port        int    `toml:"port"`         // SMTP port (587 for STARTTLS, 465 for implicit TLS, 25 plain)
+	From        string `toml:"from"`         // sender address, e.g. agent@example.com
+	Username    string `toml:"username"`     // SMTP auth username (often = From); empty = no auth
+	PasswordEnv string `toml:"password_env"` // env var holding the SMTP password (never stored)
+	UseTLS      bool   `toml:"use_tls"`      // implicit TLS (port 465); false = STARTTLS/plain
 }
 
 // BotAllowlist 控制哪些用户可以使用 bot。
@@ -1115,6 +1230,7 @@ func Default() *Config {
 			Feishu:     FeishuBotConfig{Domain: "feishu", AppSecretEnv: "FEISHU_BOT_APP_SECRET", Mode: "webhook", WebhookPort: 8080, RequireMention: true},
 			Weixin:     WeixinBotConfig{AccountID: "default", TokenEnv: "WEIXIN_BOT_TOKEN", APIBase: "https://ilinkai.weixin.qq.com"},
 		},
+		LLM:       LLMConfig{ReserveMain: 2},
 		Providers: []ProviderEntry{
 			{Name: "moma", Kind: "openai", BaseURL: "https://jiutian.10086.cn/largemodel/moma/api/v3", Models: BuiltinMoMAModels, Default: "qwen/qwen3.6-35b", APIKeyEnv: "JIUTIAN_API_KEY", ContextWindow: 200_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},
 		},
@@ -1193,6 +1309,7 @@ func LoadForRoot(root string) (*Config, error) {
 	normalizeLegacyProviderModels(cfg)
 	normalizeDesktopOfficialProviderAccess(cfg)
 	normalizeEffortConfig(cfg)
+	normalizeCoworkDefaults(cfg)
 	// First run (no config file anywhere): keep CodeGraph off until the user opts
 	// in. An existing config — even one without a [codegraph] section — keeps the
 	// built-in default (on), so an upgrade never silently drops code intelligence.
@@ -1218,6 +1335,19 @@ func normalizeLegacyEffort(c *Config) {
 		if strings.EqualFold(strings.TrimSpace(c.Providers[i].Effort), "off") {
 			c.Providers[i].Effort = ""
 		}
+	}
+}
+
+// normalizeCoworkDefaults fills in cowork defaults that the user hasn't set.
+// ScreenshotVLMModel defaults to qwen/qwen3.6-27b (lightweight multimodal);
+// ScreenshotHotkey defaults to Ctrl+Shift+S. These are only applied when the
+// TOML didn't specify them (empty → default), so explicit user config always wins.
+func normalizeCoworkDefaults(c *Config) {
+	if strings.TrimSpace(c.Cowork.ScreenshotVLMModel) == "" {
+		c.Cowork.ScreenshotVLMModel = "qwen/qwen3.6-27b"
+	}
+	if strings.TrimSpace(c.Cowork.ScreenshotHotkey) == "" {
+		c.Cowork.ScreenshotHotkey = "Ctrl+Shift+S"
 	}
 }
 

@@ -48,6 +48,22 @@ import (
 // removed provider. Callers can detect it (errors.Is) to re-run setup.
 var ErrUnknownModel = errors.New("unknown model")
 
+// globalBudget is the process-level LLM request budget, set once per Build from
+// [llm] config. NewProviderWithProxy wraps every provider with it so main-agent
+// + subagent + background tasks share one per-API-key RPM quota. nil/zero-RPM
+// disables limiting (RateLimitedProvider passes through unwrapped).
+var globalBudget *provider.RequestBudget
+
+// buildingMainProvider is true while Build constructs the main executor's
+// provider, so NewProviderWithProxy marks it high-priority (always granted RPM
+// slots). Subagent/spawned providers are built with this false (background
+// priority, respect reserve).
+var buildingMainProvider bool
+
+// GlobalBudget exposes the budget for the desktop layer (status display, cost
+// estimates). May be nil when limiting is off.
+func GlobalBudget() *provider.RequestBudget { return globalBudget }
+
 // Options carries the per-run knobs a frontend chooses; everything else is read
 // from configuration. Model "" falls back to the configured default_model;
 // MaxSteps 0 uses the config/default. RequireKey forces the executor's API key to
@@ -88,6 +104,15 @@ type Options struct {
 	// Add, but Close leaves it untouched. Nil (the default) keeps the legacy
 	// per-session host that Build creates and closes.
 	Host *plugin.Host
+	// Profile layers product-mode overrides on top of the resolved config: a
+	// different model/effort, an appended/replaced system prompt, a skill
+	// whitelist/blacklist, and a plugin whitelist. It is the mechanism behind
+	// app.SwitchProfile("cowork") — the same rebuild flow as model switching,
+	// generalized to a bundle. Nil means "dev" / unprofiled behaviour (Model,
+	// prompt, skills, plugins all come from config unchanged). When both Model
+	// and Profile.Model are set, Model wins (caller's explicit knob beats the
+	// profile default); same for EffortOverride vs Profile.Effort.
+	Profile *config.Profile
 }
 
 // Build loads config, resolves the model(s), and returns a Controller wrapping a
@@ -109,6 +134,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		return nil, err
 	}
 	modelName := opts.Model
+	// A profile can pin a model (e.g. cowork uses a cheaper office model). The
+	// caller's explicit opts.Model wins over the profile default, so a manual
+	// model pick inside a profile is respected.
+	if modelName == "" && opts.Profile != nil && strings.TrimSpace(opts.Profile.Model) != "" {
+		modelName = opts.Profile.Model
+	}
 	if modelName == "" {
 		modelName = cfg.DefaultModel
 	}
@@ -118,6 +149,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	if opts.EffortOverride != nil {
 		entry.Effort = *opts.EffortOverride
+		if entry.Kind == "anthropic" && strings.TrimSpace(entry.Effort) != "" && strings.TrimSpace(entry.Thinking) == "" {
+			entry.Thinking = "adaptive"
+		}
+	} else if opts.Profile != nil && strings.TrimSpace(opts.Profile.Effort) != "" {
+		// No explicit caller effort: adopt the profile's effort as the base before
+		// the normal anthropic thinking heuristic applies.
+		entry.Effort = opts.Profile.Effort
 		if entry.Kind == "anthropic" && strings.TrimSpace(entry.Effort) != "" && strings.TrimSpace(entry.Thinking) == "" {
 			entry.Thinking = "adaptive"
 		}
@@ -153,12 +191,23 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if err := netclient.Validate(proxySpec); err != nil {
 		return nil, err
 	}
+
+	// Initialize the global LLM request budget from [llm] config. RPM=0 (the
+	// default) disables limiting; NewProviderWithProxy then passes providers
+	// through unwrapped, preserving backward compatibility.
+	globalBudget = provider.NewRequestBudget(cfg.LLM.RPM, cfg.LLM.ReserveMain)
 	balanceClient, err := netclient.NewHTTPClient(proxySpec, netclient.TransportOptions{})
 	if err != nil {
 		return nil, err
 	}
 
+	// The executor's provider is the main-agent provider — mark it
+	// high-priority so it's always granted RPM slots (reserve_main protects it
+	// from background tasks). Subagent providers built later default to
+	// background priority.
+	buildingMainProvider = true
 	execProv, err := NewProviderWithProxy(entry, proxySpec, cfg.Jiutian.ImageUnderstand)
+	buildingMainProvider = false
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +215,24 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	sysPrompt, err := cfg.ResolveSystemPrompt()
 	if err != nil {
 		return nil, err
+	}
+	// A profile can replace the resolved system prompt wholesale (file) or
+	// append to it (addon). File takes precedence and reads the file the same way
+	// cfg.ResolveSystemPrompt does, so a profile's system_prompt_file is an
+	// override of agent.system_prompt_file, not a third prompt. The addon is
+	// folded early so it precedes instruction/output-style/memory/skill appends —
+	// a profile's mode bias should be part of the base, not the tail.
+	if opts.Profile != nil {
+		if pf := strings.TrimSpace(opts.Profile.SystemPromptFile); pf != "" {
+			b, rerr := os.ReadFile(pf)
+			if rerr != nil {
+				return nil, fmt.Errorf("profile %q system_prompt_file: %w", opts.Profile.Name, rerr)
+			}
+			sysPrompt = strings.TrimSpace(string(b))
+		}
+		if addon := strings.TrimSpace(opts.Profile.SystemPromptAddon); addon != "" {
+			sysPrompt += "\n\n" + addon
+		}
 	}
 	// Model-specific prompt addon (thinking encouragement, serial constraint, etc.)
 	if addon := instruction.ForModel(entry.Model); addon != "" {
@@ -193,25 +260,44 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// one-liner index into the same cache-stable prefix — names + descriptions
 	// only; bodies load on demand via run_skill or "/<name>". Bodies never enter
 	// the prefix, so the index costs a fixed, small amount per turn.
+	//
+	// Profile skill filtering: a profile can disable additional skills and/or
+	// expose a whitelist (only those skills stay callable). We resolve the merged
+	// disabled set once here and pass it to BOTH stores so the live store and the
+	// "all skills" index agree on what a profile hides.
+	disabledNames := cfg.DisabledSkillNames()
+	if opts.Profile != nil {
+		disabledNames = applyProfileToSkillDisabled(opts.Profile, disabledNames)
+	}
+	// The LIVE store filters by disabledNames so disabled/profile-hidden skills
+	// are uncallable. The ALL store deliberately does NOT filter — it lists every
+	// discovered skill (including disabled) so the pinned index can tag them as
+	// [关闭] for management (re-enable hints). Profile whitelist hiding for the
+	// index is applied in the loop below via the Disabled flag.
 	skillStore := skill.New(skill.Options{
 		ProjectRoot:   root,
 		CustomPaths:   cfg.SkillCustomPaths(),
 		ExcludedPaths: cfg.SkillExcludedPaths(),
-		DisabledNames: cfg.DisabledSkillNames(),
+		DisabledNames: disabledNames,
 		MaxDepth:      cfg.SkillMaxDepth(),
 		Stderr:        opts.Stderr,
 	})
 	skills := skillStore.List()
 	allSkillStore := skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), ExcludedPaths: cfg.SkillExcludedPaths(), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard})
 	allSkills := allSkillStore.List()
-	// Build the pinned skills index from the FULL set (including disabled ones)
-	// so the model knows every available skill and can suggest re-enabling one
-	// when a task fits. Disabled entries are tagged in the index and stay
-	// uncallable (run_skill/subagent tools bind to skillStore, which filters
-	// them out). This keeps disabled skills to a one-line index footprint.
+	// A profile whitelist can only be enforced once we know every skill name:
+	// anything not whitelisted is disabled. We compute the effective disabled
+	// status per skill here — config-disabled OR profile-additive-disabled OR
+	// (whitelist active AND not whitelisted). The store already hid the first two
+	// from the live Skills() list; this re-marks them for the index tags.
+	whitelist := profileSkillWhitelist(opts.Profile)
 	indexedSkills := make([]skill.Skill, 0, len(allSkills))
 	for _, s := range allSkills {
-		s.Disabled = cfg.IsSkillDisabled(s.Name)
+		disabled := cfg.IsSkillDisabled(s.Name) || isSkillDisabledByName(disabledNames, s.Name)
+		if !disabled && whitelist != nil && !whitelist[config.SkillNameKey(s.Name)] {
+			disabled = true
+		}
+		s.Disabled = disabled
 		indexedSkills = append(indexedSkills, s)
 	}
 	sysPrompt = skill.ApplyIndex(sysPrompt, indexedSkills)
@@ -231,6 +317,75 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// can be toggled per-capability in [jiutian] config section).
 	for _, t := range builtin.JiutianTools(&cfg.Jiutian) {
 		reg.Add(t)
+	}
+	// coWork-only browser automation tools. These spawn a Chromium subprocess on
+	// first browser_open and are intentionally absent from the dev tool list — a
+	// coding session has no use for them and should never pay the process cost.
+	// Phase 1: the full browser_* set. Later cowork capabilities (screen/doc/rag)
+	// register here the same way.
+	// Browser automation is a general capability (on par with web_search),
+	// available in both dev and cowork — a developer needs it to check docs,
+	// debug frontends, and inspect API responses. browser path is read from
+	// [cowork] browser_path for backward compat (existing configs keep working);
+	// empty = auto-detect Chrome/Edge/Brave.
+	builtin.SetConfiguredBrowserPath(cfg.Cowork.BrowserPath)
+	for _, t := range builtin.BrowserTools() {
+		reg.Add(t)
+	}
+
+	// coWork-only capabilities: desktop automation, scheduled tasks, email,
+	// RAG, PPT. These are office-specific and stay gated to the cowork profile
+	// so the dev tool list stays focused on coding.
+	if opts.Profile != nil && strings.EqualFold(opts.Profile.Name, config.ProfileCowork) {
+		// Desktop automation tools (screenshot, screen_click/type/scroll,
+		// get_ui_tree). Windows-native (Win32 BitBlt/SendInput); on other
+		// platforms ScreenTools returns nil so nothing registers and cowork
+		// still works minus desktop control.
+		for _, t := range builtin.ScreenTools() {
+			reg.Add(t)
+		}
+		// Scheduled-task tools. The scheduler instance is injected by the
+		// desktop app (see app.go) via builtin.SetScheduler; boot just
+		// registers the tool surface here. When no scheduler is bound (CLI/TUI
+		// cowork), the tools return a clear "offline" error.
+		for _, t := range builtin.SchedulerTools() {
+			reg.Add(t)
+		}
+		// Email tools (SMTP send + IMAP read/search). Config injected from
+		// [cowork.smtp] and [cowork.imap]; when a side is unset, that side's
+		// tool returns a config error (the other still works).
+		builtin.SetEmailConfig(&cfg.Cowork.SMTP)
+		builtin.SetIMAPConfig(&cfg.Cowork.IMAP)
+		for _, t := range builtin.EmailTools() {
+			reg.Add(t)
+		}
+		// RAG knowledge-base tools. The store is injected by the desktop app
+		// (app.go) via builtin.SetRAGStore; boot registers the tool surface.
+		for _, t := range builtin.RAGTools() {
+			reg.Add(t)
+		}
+		// VLM backend for screen_perceive (desktop automation). Default 九天,
+		// switchable to provider multimodal (minimax/kimi) via [cowork] vlm_*.
+		builtin.SetVLMConfig(builtin.VLMConfig{
+			Backend: cfg.Cowork.VLMBackend,
+			Model:   cfg.Cowork.VLMModel,
+		})
+		// Hybrid RAG: when an embedding model is configured, inject an embedder so
+		// rag_search reranks FTS5 hits with semantic similarity. Empty model =
+		// FTS5-only (the default, works offline).
+		builtin.SetRAGEmbedder(builtin.ResolveRAGEmbedder(cfg.Cowork.EmbeddingModel))
+		// Document tools (csv/json/md/txt read + write + convert). Text-based
+		// formats only; binary Office handled elsewhere (ppt via WPS MCP).
+		for _, t := range builtin.DocumentTools() {
+			reg.Add(t)
+		}
+		// Expert-team tools. The orchestrator + store are injected by the
+		// desktop app (app.go) via builtin.SetExpertOrchestrator/SetExpertStore;
+		// boot registers the tool surface here. When unbound (CLI/TUI cowork),
+		// the tools return a clear "offline" error.
+		for _, t := range builtin.ExpertTools() {
+			reg.Add(t)
+		}
 	}
 	// Always construct a host, even with no plugins configured, so the controller's
 	// host pointer is stable for the session and `/mcp add` can hot-add into it.
@@ -252,6 +407,41 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		cfg.BuiltInMCP.EnabledNames(),
 		pluginSpecNames(opts.ExtraPlugins)...,
 	)
+	// coWork PPT capability: when the user configured the wps-ppt-mcp-server
+	// path, register it as a session MCP server so ppt_create/from_template/etc.
+	// are reachable. The server is a separate Python project (FastMCP + pywin32);
+	// deps are checked separately (agent surfaces an install hint if missing).
+	if opts.Profile != nil && strings.EqualFold(opts.Profile.Name, config.ProfileCowork) && strings.TrimSpace(cfg.Cowork.WPSPPTServerPath) != "" {
+		if entry, err := builtinmcp.WPSPPTEntry(cfg.Cowork.WPSPPTServerPath, cfg.Cowork.WPSPPTPython); err == nil {
+			// Avoid duplicate if the user also declared it in [[plugins]].
+			already := false
+			for _, e := range autoStartEntries {
+				if e.Name == builtinmcp.WPSPPTName {
+					already = true
+					break
+				}
+			}
+			if !already {
+				autoStartEntries = append(autoStartEntries, entry)
+			}
+		} else {
+			fmt.Fprintf(stderr, "warning: cowork wps-ppt server not registered: %v\n", err)
+		}
+	}
+	// A profile plugin whitelist hides MCP servers not named in it. Empty list =
+	// all plugins (dev default). We filter after AppendEnabled so built-in MCPs
+	// (time, …) and session ExtraPlugins are also subject to the whitelist — a
+	// coWork profile that lists only its office servers should not quietly expose
+	// the dev codegraph server. Names match case-insensitively via PluginAllowedByProfile.
+	if opts.Profile != nil && len(opts.Profile.Plugins) > 0 {
+		kept := autoStartEntries[:0]
+		for _, e := range autoStartEntries {
+			if config.PluginAllowedByProfile(opts.Profile, e.Name) {
+				kept = append(kept, e)
+			}
+		}
+		autoStartEntries = kept
+	}
 	eagerEntries, lazyEntries, bgEntries := partitionByTier(autoStartEntries)
 
 	// Auto-demote: any eager plugin that has been chronically slow (recent
@@ -425,6 +615,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// releases the owner's reference instead of tearing down subprocesses other
 	// tabs still depend on.
 	var cleanup func()
+	// memSearchSvc holds the bitemporal search/index service when one could be
+	// opened; built before the memory tools so its index can be attached to the
+	// store, and reused by memory_query below.
+	var memSearchSvc *memory.SearchService
 	if hostOwned {
 		cleanup = pluginHost.Close
 	}
@@ -529,8 +723,58 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// The `remember` tool lets the model persist durable facts to the project's
 	// auto-memory store; `forget` prunes ones that turn out wrong. The saved index
 	// loads into the prefix on the next session.
-	reg.Add(memory.NewRememberTool(mem.Store))
+	// ConflictDetector uses the main provider for LLM-based contradiction detection.
+	// Open the bitemporal index (FTS + facts) BEFORE constructing the memory
+	// tools so it can be attached to the store: writes then keep it in sync and
+	// queries (ListAsOf / ListActiveByType) prefer the SQL path. Falls back to
+	// file scans when no index can be opened.
+	if mem.Store.Dir != "" {
+		if svc, err := memory.NewSearchService(mem.Store); err == nil {
+			_ = svc.EnsureSchema() // migrate FTS/facts schema if needed
+			// Recover from any crash that left the index mid-write: re-sync the
+			// whole index with disk so List/ListAsOf/ListActiveByType (which read
+			// the index directly, without the lazy Reconcile that Search runs)
+			// never observe a drifted state carried over from the last session.
+			_ = svc.Reconcile()
+			mem.Store = mem.Store.AttachIndex(svc.Index())
+			// Chain FTS DB cleanup so the file handle is released on session end.
+			prev := cleanup
+			cleanup = func() {
+				if prev != nil {
+					prev()
+				}
+				svc.Close()
+			}
+			// Keep a handle so memory_query can use the same service instance.
+			memSearchSvc = svc
+		}
+	}
+
+	// Same-name overwrites are handled by Save() inline supersede (Phase 2);
+	// the detector catches different-name contradictions (Phase 4).
+	chatFn := providerChatFunc(execProv)
+	conflictDetector := memory.NewLLMConflictDetector(chatFn)
+	reg.Add(memory.NewRememberTool(mem.Store, conflictDetector))
 	reg.Add(memory.NewForgetTool(mem.Store))
+	reg.Add(memory.NewRecallTool(mem.Store))
+	// Phase 8-9: compact, profile, status tools.
+	memCfg := memory.DefaultDecayConfig()
+	reg.Add(memory.NewCompactTool(mem.Store, memCfg))
+	reg.Add(memory.NewProfileTool(mem.Store))
+	reg.Add(memory.NewStatusTool(mem.Store, memCfg))
+
+	// Passive memory capture (P1): after each turn, a lightweight LLM pass
+	// extracts durable facts from the conversation and saves them as Status
+	// "pending" for the user to confirm in the timeline panel. The extractor
+	// is fire-and-forget (10s timeout, swallows errors) so it never blocks the
+	// turn. Wired into the controller's OnTurnEnd hook below.
+	factExtractor := memory.NewLLMFactExtractor(chatFn)
+
+	// The `memory_query` tool lets the model search saved memories with optional
+	// keyword and time-point filtering (e.g. "where did I live in March?").
+	if memSearchSvc != nil {
+		reg.Add(memory.NewMemoryQueryTool(mem.Store, memSearchSvc))
+	}
 
 	// The `ask` tool puts structured multiple-choice questions to the user. It
 	// reaches them through the Asker on the call context, which interactive
@@ -803,6 +1047,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		OnRemember: func(rule string) control.RememberResult {
 			return rememberPermissionRule(root, rule)
 		},
+		OnTurnEnd: buildTurnEndExtractor(factExtractor, mem.Store),
 	}
 	if classifier != nil {
 		ctrlOpts.Classifier = classifier
@@ -874,6 +1119,46 @@ func rememberPermissionRule(workspaceRoot, rule string) control.RememberResult {
 	}
 	result.Saved = true
 	return result
+}
+
+// buildTurnEndExtractor wires the passive-memory-capture hook: it returns the
+// OnTurnEnd closure the controller calls after each turn, or nil if extraction
+// is disabled (no extractor configured, or the store is unavailable). The
+// closure extracts candidate facts and saves each as Status "pending" so they
+// surface in the timeline panel for user confirmation without polluting the
+// active prompt. All errors are logged and swallowed — auto-capture is purely
+// best-effort background work and must never affect the foreground turn.
+func buildTurnEndExtractor(extractor memory.FactExtractor, store memory.Store) func(ctx context.Context, lastUserMsg, lastAssistant string) {
+	if extractor == nil || store.Dir == "" && store.GlobalDir == "" {
+		return nil // nothing to capture into
+	}
+	return func(ctx context.Context, lastUserMsg, lastAssistant string) {
+		// Extract handles its own timeout/error-degradation, so this won't
+		// propagate failures; the only thing left to guard is the save loop.
+		candidates := extractor.Extract(ctx, lastUserMsg, lastAssistant)
+		saved := 0
+		for _, m := range candidates {
+			// Save assigns CreatedAt/UpdatedAt and persists with our Status
+			// "pending" intact (Save only defaults empty Status to "active").
+			if _, err := store.Save(m); err != nil {
+				slog.Debug("auto-memory save failed", "name", m.Name, "err", err)
+				continue
+			}
+			saved++
+		}
+		if saved > 0 {
+			slog.Info("auto-memory captured", "count", saved, "from_turn", truncateForLog(lastUserMsg, 60))
+		}
+	}
+}
+
+// truncateForLog keeps a string to roughly n runes for a concise log line.
+func truncateForLog(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 func rememberPermissionConfigPath(workspaceRoot string) string {
@@ -1067,13 +1352,14 @@ func NewProvider(e *config.ProviderEntry) (provider.Provider, error) {
 }
 
 // NewProviderWithProxy builds a provider.Provider with the configured ordinary
-// network proxy settings.
+// network proxy settings, and wraps it with the global request-budget decorator
+// (when [llm] rpm > 0) so it shares the per-API-key RPM quota.
 func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec, opts ...bool) (provider.Provider, error) {
 	imageUnderstand := false
 	if len(opts) > 0 {
 		imageUnderstand = opts[0]
 	}
-	return provider.New(e.Kind, provider.Config{
+	p, err := provider.New(e.Kind, provider.Config{
 		Name:    e.Name,
 		BaseURL: e.BaseURL,
 		Model:   e.Model,
@@ -1092,6 +1378,14 @@ func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec, op
 			"jiutian_image_understand": imageUnderstand,
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+	if globalBudget != nil && globalBudget.Status("").RPM > 0 {
+		key := provider.BudgetKeyForConfig(e.Name, e.BaseURL, e.APIKey())
+		return provider.NewRateLimitedProvider(p, globalBudget, key, buildingMainProvider), nil
+	}
+	return p, nil
 }
 
 // addBuiltins adds enabled built-in tools to reg. An empty list means all of
@@ -1164,6 +1458,64 @@ func pluginSpecNames(specs []plugin.Spec) []string {
 		names[i] = s.Name
 	}
 	return names
+}
+
+// applyProfileToSkillDisabled merges a profile's additive skill-disables into the
+// config-wide disabled list, returning a new slice. Whitelist enforcement (the
+// profile's EnabledSkills) is handled separately in Build via profileSkillWhitelist
+// because it needs the full discovered skill set. The result preserves first
+// spelling and dedupes by SkillNameKey, matching cfg.DisabledSkillNames semantics.
+func applyProfileToSkillDisabled(p *config.Profile, configDisabled []string) []string {
+	if p == nil || len(p.DisabledSkills) == 0 {
+		return configDisabled
+	}
+	seen := make(map[string]bool, len(configDisabled)+len(p.DisabledSkills))
+	out := make([]string, 0, len(configDisabled)+len(p.DisabledSkills))
+	for _, name := range append(append([]string{}, configDisabled...), p.DisabledSkills...) {
+		name = strings.TrimSpace(name)
+		if !config.IsValidSkillName(name) {
+			continue
+		}
+		key := config.SkillNameKey(name)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+// profileSkillWhitelist returns the profile's EnabledSkills as a SkillNameKey set,
+// or nil if the profile defines no whitelist (meaning "all skills allowed").
+func profileSkillWhitelist(p *config.Profile) map[string]bool {
+	if p == nil || len(p.EnabledSkills) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(p.EnabledSkills))
+	for _, n := range p.EnabledSkills {
+		if k := config.SkillNameKey(n); k != "" {
+			out[k] = true
+		}
+	}
+	return out
+}
+
+// isSkillDisabledByName reports whether name appears in a DisabledNames slice
+// (case-insensitive via SkillNameKey). Used to keep the skills index in sync with
+// a profile's additive disables without going through cfg.IsSkillDisabled (which
+// only knows the config-level set).
+func isSkillDisabledByName(disabled []string, name string) bool {
+	key := config.SkillNameKey(name)
+	if key == "" {
+		return false
+	}
+	for _, d := range disabled {
+		if config.SkillNameKey(d) == key {
+			return true
+		}
+	}
+	return false
 }
 
 // PluginSpecs maps configured plugin entries to plugin.Spec, expanding ${VAR}
@@ -1253,4 +1605,36 @@ func providerNames(cfg *config.Config) string {
 		names[i] = p.Name
 	}
 	return strings.Join(names, "/")
+}
+
+// providerChatFunc wraps a provider.Provider into a simple synchronous chat
+// function suitable for lightweight one-shot prompts (conflict detection,
+// compression, etc.). It sends the prompt as a single user message, streams
+// the response, and returns the accumulated text.
+func providerChatFunc(prov provider.Provider) func(ctx context.Context, prompt string) (string, error) {
+	if prov == nil {
+		return nil
+	}
+	return func(ctx context.Context, prompt string) (string, error) {
+		req := provider.Request{
+			Messages: []provider.Message{
+				{Role: provider.RoleUser, Content: prompt},
+			},
+			MaxTokens: 256,
+		}
+		ch, err := prov.Stream(ctx, req)
+		if err != nil {
+			return "", err
+		}
+		var sb strings.Builder
+		for chunk := range ch {
+			if chunk.Err != nil {
+				return sb.String(), chunk.Err
+			}
+			if chunk.Type == provider.ChunkText {
+				sb.WriteString(chunk.Text)
+			}
+		}
+		return sb.String(), nil
+	}
 }

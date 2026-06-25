@@ -18,6 +18,7 @@ import type {
   BotSettingsView,
   CapabilitiesView,
   CheckpointMeta,
+  CoWorkSettingsView,
   CommandInfo,
   ContextInfo,
   ContextPanelInfo,
@@ -35,15 +36,30 @@ import type {
   ModelInfo,
   NetworkView,
   ProjectNode,
+  ProfileInfo,
   ProviderView,
   QuestionAnswer,
+  BudgetStatusView,
+  CollabEvent,
+  RagCollectionView,
+  RagETAView,
+  RagImportResult,
+  RagNodeView,
+  RagProgressEvent,
+  RagSearchHitView,
+  RunRecordView,
   ServerView,
   SessionMeta,
   SettingsView,
+  SchedulePreview,
   SkillRootView,
   SkillView,
   SlashArgsResult,
   TabMeta,
+  TaskInput,
+  TaskView,
+  TeamView,
+  TemplateView,
   TopicMeta,
   UpdateInfo,
   UpdateProgress,
@@ -190,13 +206,23 @@ export interface AppBindings {
   SetModel(name: string): Promise<void>;
   ModelsForTab(tabID: string): Promise<ModelInfo[]>;
   SetModelForTab(tabID: string, name: string): Promise<void>;
+  // Product profile (dev | cowork). SwitchProfile rebuilds the tab's controller
+  // with the profile's model/prompt/skill/plugin bundle (see app.SwitchProfileForTab).
+  Profile(): Promise<string>;
+  ProfileForTab(tabID: string): Promise<string>;
+  Profiles(): Promise<ProfileInfo[]>;
+  SwitchProfile(name: string): Promise<void>;
+  SwitchProfileForTab(tabID: string, name: string): Promise<void>;
   Effort(): Promise<EffortInfo>;
   SetEffort(level: string): Promise<void>;
   EffortForTab(tabID: string): Promise<EffortInfo>;
   SetEffortForTab(tabID: string, level: string): Promise<void>;
   Memory(): Promise<MemoryView>;
+  MemoryHistory(): Promise<MemoryView>;
   Remember(scope: string, note: string): Promise<string>;
   Forget(name: string): Promise<void>;
+  PromoteMemory(name: string): Promise<boolean>;
+  RejectMemory(name: string): Promise<boolean>;
   SaveDoc(path: string, body: string): Promise<string>;
   Settings(): Promise<SettingsView>;
   SetDefaultModel(ref: string): Promise<void>;
@@ -217,6 +243,13 @@ export interface AppBindings {
   SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]): Promise<void>;
   SetNetwork(n: NetworkView): Promise<void>;
   SetBotSettings(b: BotSettingsView): Promise<void>;
+  // coWork profile settings (browser/PPT/email/RAG). Secrets go to a managed
+  // .env via SetCoWorkSettings; CheckCoworkBrowser/CheckWPSPPTDeps/InstallWPSPPTDeps
+  // power the panel's detect/status/install buttons.
+  SetCoWorkSettings(v: CoWorkSettingsView): Promise<void>;
+  CheckCoworkBrowser(): Promise<string>;
+  CheckWPSPPTDeps(): Promise<string[]>;
+  InstallWPSPPTDeps(): Promise<string>;
   SetBotSecret(envName: string, value: string): Promise<void>;
   ClearBotSecret(envName: string): Promise<void>;
   StartBotConnectionInstall(provider: string, domain: string): Promise<BotInstallStartResult>;
@@ -233,6 +266,7 @@ export interface AppBindings {
   SetExpandThinking(on: boolean): Promise<void>;
   MigrateDesktopPreferences(language: string, theme: string, style: string): Promise<void>;
   SetAgentParams(temperature: number, maxSteps: number, plannerMaxSteps: number, systemPrompt: string): Promise<void>;
+  SetRPM(rpm: number): Promise<void>;
   SetTrayLocale(locale: "en" | "zh"): Promise<void>;
   // SetBypass is the legacy Wails name for YOLO/full-access tool auto-approval
   // (ask questions and plan approvals still wait; deny rules still apply).
@@ -266,6 +300,46 @@ export interface AppBindings {
   // New native-feel bindings (added with the desktop native-feel plan).
   ConfirmAction(req: NativeConfirmRequest): Promise<boolean>;
   SaveWindowState(state: DesktopWindowState): Promise<void>;
+  // --- Scheduled tasks (coWork automation panel) ---------------------------
+  // Backed by desktop/scheduler_app.go. The UI re-lists on the
+  // "scheduler:changed" event (onSchedulerChanged) so cards stay live without
+  // each component polling. "scheduler:notice" (onSchedulerNotice) carries a
+  // fired task's {name, result} for an in-app toast.
+  ListScheduledTasks(): Promise<TaskView[]>;
+  CreateScheduledTask(input: TaskInput): Promise<TaskView>;
+  UpdateScheduledTask(input: TaskInput): Promise<TaskView>;
+  DeleteScheduledTask(id: string): Promise<void>;
+  PauseScheduledTask(id: string): Promise<void>;
+  ResumeScheduledTask(id: string): Promise<void>;
+  RunScheduledTaskNow(id: string): Promise<string>;
+  ScheduledTaskHistory(taskID: string): Promise<RunRecordView[]>;
+  ScheduledTaskTemplates(): Promise<TemplateView[]>;
+  PreviewSchedule(text: string): Promise<SchedulePreview>;
+  // --- RAG knowledge base (coWork RAG panel) -------------------------------
+  // Backed by desktop/rag_app.go. The panel re-fetches the tree on the
+  // "rag:changed" event (onRagChanged) and updates per-node progress bars on
+  // "rag:progress" (onRagProgress).
+  ListRagCollections(): Promise<RagCollectionView[]>;
+  ListRagTree(collection: string): Promise<RagNodeView[]>;
+  RagImportPaths(collection: string, paths: string[]): Promise<RagImportResult>;
+  RagStartExtract(collection: string, path: string): Promise<void>;
+  RagCancelExtract(jobId: string): Promise<void>;
+  RagRemovePath(collection: string, path: string): Promise<void>;
+  RagSearch(collection: string, query: string, topK: number): Promise<RagSearchHitView>;
+  RagPreviewETA(jobId: string): Promise<RagETAView>;
+  RagListTemplates(): Promise<string[]>;
+  // --- Expert team (multi-model collaboration) -----------------------------
+  // Backed by desktop/experts_app.go. The panel subscribes to "experts:collab"
+  // (onExpertsCollab) for streamed expert outputs and "experts:changed"
+  // (onExpertsChanged) for team-list refresh.
+  ListExpertTeams(): Promise<TeamView[]>;
+  CreateExpertTeam(team: TeamView): Promise<TeamView>;
+  UpdateExpertTeam(team: TeamView): Promise<TeamView>;
+  DeleteExpertTeam(id: string): Promise<void>;
+  RunExpertTeam(teamId: string, task: string, mode: string, rounds: number): Promise<string>;
+  ExpertBudgetStatus(): Promise<BudgetStatusView>;
+  StartScreenshotHotkey(): Promise<void>;
+  StopScreenshotHotkey(): Promise<void>;
 }
 
 // Compile-time drift check. Exclude<A, B> extracts keys in A that are missing
@@ -386,7 +460,102 @@ export function onProjectTreeChanged(cb: () => void): () => void {
   return () => {};
 }
 
-// app proxies each call to the live binding (or the dev mock only when truly
+// onProfileChanged fires when a tab's product profile (dev/cowork) changes after
+// a SwitchProfile rebuild. The payload carries {tabId, profile}; cb receives it
+// so the layout can swap for the affected tab only.
+export function onProfileChanged(cb: (e: { tabId: string; profile: string }) => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("profile:changed", (...data: unknown[]) => {
+      const e = (data?.[0] ?? {}) as { tabId?: string; profile?: string };
+      cb({ tabId: e.tabId ?? "", profile: e.profile ?? "dev" });
+    });
+  }
+  return () => {};
+}
+
+// onSchedulerChanged fires when the scheduled-task list mutates (create/update/
+// delete/run). Payload-free — the automation panel re-lists on this event to
+// keep cards live without polling.
+export function onSchedulerChanged(cb: () => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("scheduler:changed", () => cb());
+  }
+  return () => {};
+}
+
+// onSchedulerNotice fires when a task with OutputMode="notify" runs (in-app
+// desktop toast). Payload: {name, result}. The toast layer subscribes once at
+// app root so notices surface even when the user isn't on the automation tab.
+export function onSchedulerNotice(cb: (e: { name: string; result: string }) => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("scheduler:notice", (...data: unknown[]) => {
+      const e = (data?.[0] ?? {}) as { name?: string; result?: string };
+      cb({ name: e.name ?? "", result: e.result ?? "" });
+    });
+  }
+  return () => {};
+}
+
+// onRagChanged fires when the RAG tree/collections mutate (import/remove/status
+// change). Payload-free — the panel re-fetches the tree.
+export function onRagChanged(cb: () => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("rag:changed", () => cb());
+  }
+  return () => {};
+}
+
+// onRagProgress fires on each chunk extraction completion. Payload is a
+// RagProgressEvent; the panel updates the matching tree node's progress bar.
+export function onRagProgress(cb: (e: RagProgressEvent) => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("rag:progress", (...data: unknown[]) => {
+      const e = (data?.[0] ?? {}) as Partial<RagProgressEvent>;
+      cb({
+        jobId: e.jobId ?? "",
+        collection: e.collection ?? "",
+        path: e.path ?? "",
+        status: e.status ?? "",
+        doneChunks: e.doneChunks ?? 0,
+        totalChunks: e.totalChunks ?? 0,
+        avgLatencyMs: e.avgLatencyMs ?? 0,
+        message: e.message ?? "",
+      });
+    });
+  }
+  return () => {};
+}
+
+// onExpertsCollab fires during an expert-team run (expert chunks, synthesis,
+// completion). Payload is a CollabEvent; the panel appends text deltas.
+export function onExpertsCollab(cb: (e: CollabEvent) => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("experts:collab", (...data: unknown[]) => {
+      const e = (data?.[0] ?? {}) as Partial<CollabEvent>;
+      cb({
+        runId: e.runId ?? "",
+        teamId: e.teamId ?? "",
+        teamName: e.teamName ?? "",
+        phase: e.phase ?? "",
+        expertIdx: e.expertIdx ?? 0,
+        expertName: e.expertName ?? "",
+        round: e.round ?? 0,
+        text: e.text ?? "",
+        message: e.message ?? "",
+        mode: e.mode ?? "",
+      });
+    });
+  }
+  return () => {};
+}
+
+// onExpertsChanged fires when the team list mutates. Payload-free — re-list.
+export function onExpertsChanged(cb: () => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("experts:changed", () => cb());
+  }
+  return () => {};
+}
 // outside the shell), so a late-injected window.go is picked up transparently.
 export const app: AppBindings = new Proxy({} as AppBindings, {
   get(_t, prop) {
@@ -475,6 +644,51 @@ function makeMockApp(): AppBindings {
   let cwd = freshMock ? globalWorkspaceRoot : "~/projects/joyquant-db"; // mutable so PickWorkspace is visible in dev
   let workspaces = freshMock ? [] : ["~/projects/joyquant-db", "~/projects/joyquant-sys", "~/projects/momapeer", "~/projects/blade"];
   let mockEffort = "auto";
+  // In-memory RAG state for browser dev. Seeded with one file mid-extraction so
+  // the panel shows a live progress bar + ETA outside the Wails shell.
+  let mockRagDocs = 3;
+  let mockRagEntities = 12;
+  let mockRagTree: RagNodeView[] = freshMock ? [] : [
+    {
+      key: "/mock/doc.md", label: "会议纪要.md", kind: "file", path: "/mock/doc.md", relPath: "会议纪要.md",
+      isDir: false, collection: "default", status: "extracting", hasFts5: true,
+      jobId: "rag_job_mock_demo", doneChunks: 3, totalChunks: 10, entityCount: 0, errorMsg: "",
+    },
+  ];
+  // simulateRagProgress advances a mock node's doneChunks every ~1.5s until done.
+  // jobId is kept in the signature for parity with the real backend's events.
+  const simulateRagProgress = (_jobId: string, node: RagNodeView) => {
+    const h = setInterval(() => {
+      if (node.doneChunks >= node.totalChunks) {
+        node.status = "enriched"; node.entityCount = Math.floor(Math.random() * 8) + 2;
+        mockRagEntities += node.entityCount;
+        clearInterval(h);
+        return;
+      }
+      node.doneChunks++;
+    }, 1500);
+  };
+  // In-memory scheduled-task store for browser dev. Seeded with one sample so
+  // the automation panel isn't empty outside the Wails shell.
+  let mockSchedulerTasks: TaskView[] = freshMock ? [] : [
+    {
+      id: "sched_mock_demo",
+      name: "日报提醒",
+      expression: "daily 18:00 Mon-Fri",
+      prompt: "请整理今日工作日报，按三段式汇总。",
+      profile: "cowork",
+      enabled: true,
+      oneShot: false,
+      lastRun: "2026-06-21 18:00",
+      nextRun: "2026-06-22 18:00",
+      runCount: 12,
+      lastResult: "日报已生成",
+      outputMode: "notify",
+      outputDest: "",
+      humanSchedule: "工作日 18:00",
+    },
+  ];
+  const cloneTask = (t: TaskView): TaskView => JSON.parse(JSON.stringify(t)) as TaskView;
   const day = 86_400_000;
   const t0 = Date.now();
   // Mutable so MCP add/remove/retry are observable in browser dev.
@@ -660,7 +874,22 @@ function makeMockApp(): AppBindings {
       noProxy: "",
       proxy: { type: "socks5", server: "127.0.0.1", port: 7890, username: "", password: "" },
     },
-    agent: { temperature: 0.2, maxSteps: 0, plannerMaxSteps: 12, systemPrompt: "You are momapeer, a coding agent." },
+    agent: { temperature: 0.2, maxSteps: 0, plannerMaxSteps: 12, systemPrompt: "You are momapeer, a coding agent.", rpm: 0 },
+    cowork: {
+      browserPath: "",
+      wpsPptServerPath: "",
+      wpsPptPython: "",
+      embeddingModel: "",
+      smtp: { host: "", port: 0, from: "", username: "", passwordEnv: "COWORK_SMTP_PASSWORD", useTLS: false },
+      imap: { host: "", port: 0, username: "", passwordEnv: "COWORK_IMAP_PASSWORD" },
+      smtpPassword: "",
+      imapPassword: "",
+      detectedBrowser: "",
+      wpsPptDepsMissing: [],
+      screenshotEnabled: false,
+      screenshotHotkey: "Ctrl+Shift+S",
+      screenshotVlmModel: "qwen/qwen3.6-27b",
+    },
     bot: {
       enabled: !freshMock,
       model: "",
@@ -1120,6 +1349,23 @@ function makeMockApp(): AppBindings {
     });
     if (!applied && mockTabs.length > 0) {
       mockTabs = mockTabs.map((tab, index) => (index === 0 ? { ...tab, label } : tab));
+    }
+  };
+  // Profile mock helpers: profile lives on TabMeta.profile (absent = dev). The
+  // mock emits a profile:changed event so the dev-shell layout swap can be
+  // exercised without the Go backend.
+  const mockProfileOf = (tab?: TabMeta): string => (tab?.profile ?? "dev").toLowerCase() || "dev";
+  const setMockTabProfile = (tabID: string | undefined, name: string) => {
+    const profile = (name || "dev").toLowerCase();
+    let affectedId: string | undefined;
+    mockTabs = mockTabs.map((tab) => {
+      const match = tabID ? tab.id === tabID : tab.active;
+      if (!match) return tab;
+      affectedId = tab.id;
+      return { ...tab, profile };
+    });
+    if (affectedId) {
+      listeners.forEach((cb) => cb({ type: "notice", text: `profile: ${profile}` } as unknown as WireEvent));
     }
   };
   return {
@@ -2031,6 +2277,26 @@ function makeMockApp(): AppBindings {
         async SetModelForTab(tabID, name) {
           setMockTabModel(tabID, name);
         },
+        async Profile() {
+          const active = mockTabs.find((tab) => tab.active) ?? mockTabs[0];
+          return mockProfileOf(active);
+        },
+        async ProfileForTab(tabID) {
+          const tab = mockTabs.find((item) => item.id === tabID) ?? mockTabs.find((item) => item.active) ?? mockTabs[0];
+          return mockProfileOf(tab);
+        },
+        async Profiles() {
+          return [
+            { name: "dev", displayName: "编码", workspaceType: "code" },
+            { name: "cowork", displayName: "办公", workspaceType: "document" },
+          ];
+        },
+        async SwitchProfile(name) {
+          setMockTabProfile(undefined, name);
+        },
+        async SwitchProfileForTab(tabID, name) {
+          setMockTabProfile(tabID, name);
+        },
         async Effort() {
           return { supported: true, current: mockEffort, default: "high", levels: ["auto", "high", "max"] };
         },
@@ -2065,6 +2331,25 @@ function makeMockApp(): AppBindings {
             description: "User prefers tabs",
             type: "user",
             body: "Indent with tabs.",
+            status: "active",
+            category: "style",
+            tags: ["indent", "code-style"],
+            validFrom: "2026-01-15",
+            createdAt: "2026-01-15T09:30:00Z",
+            updatedAt: "2026-01-15T09:30:00Z",
+          },
+          {
+            name: "lives-in-shanghai",
+            description: "User currently lives in Shanghai (moved from Beijing)",
+            type: "user",
+            body: "User moved to Shanghai in May 2026. Previously lived in Beijing.",
+            status: "active",
+            category: "temporal",
+            tags: ["location"],
+            validFrom: "2026-05-01",
+            supersededBy: "",
+            createdAt: "2026-05-01T08:00:00Z",
+            updatedAt: "2026-05-01T08:00:00Z",
           },
         ],
         scopes: [
@@ -2074,12 +2359,64 @@ function makeMockApp(): AppBindings {
         ],
       };
     },
+    async MemoryHistory() {
+      // Dev-seam mock: shows the full version chain including a superseded
+      // record (the Beijing address that the Shanghai move replaced).
+      return {
+        available: true,
+        storeDir: "~/.config/momapeer/projects/-mock/memory",
+        docs: [],
+        facts: [
+          {
+            name: "lives-in-shanghai",
+            description: "User currently lives in Shanghai (moved from Beijing)",
+            type: "user",
+            body: "User moved to Shanghai in May 2026. Previously lived in Beijing.",
+            status: "active",
+            category: "temporal",
+            validFrom: "2026-05-01",
+            createdAt: "2026-05-01T08:00:00Z",
+          },
+          {
+            name: "lives-in-beijing",
+            description: "User lived in Beijing",
+            type: "user",
+            body: "User lives in Beijing.",
+            status: "superseded",
+            category: "temporal",
+            validFrom: "2026-03-01",
+            validTo: "2026-04-30",
+            supersededBy: "lives-in-shanghai",
+            createdAt: "2026-03-01T10:00:00Z",
+          },
+          {
+            name: "prefers-tabs",
+            description: "User prefers tabs",
+            type: "user",
+            body: "Indent with tabs.",
+            status: "active",
+            category: "style",
+            validFrom: "2026-01-15",
+            createdAt: "2026-01-15T09:30:00Z",
+          },
+        ],
+        scopes: [],
+      };
+    },
     async Remember(scope: string, note: string) {
       emit({ kind: "notice", level: "info", text: `remembered → ${scope}` });
       return `${scope} momapeer.md (mock): ${note}`;
     },
     async Forget(name: string) {
       emit({ kind: "notice", level: "info", text: `forgot → ${name}` });
+    },
+    async PromoteMemory(name: string) {
+      emit({ kind: "notice", level: "info", text: `promoted → ${name}` });
+      return true;
+    },
+    async RejectMemory(name: string) {
+      emit({ kind: "notice", level: "info", text: `rejected → ${name}` });
+      return true;
     },
     async SaveDoc(path: string, _body: string) {
       emit({ kind: "notice", level: "info", text: `saved → ${path}` });
@@ -2275,7 +2612,10 @@ function makeMockApp(): AppBindings {
           }
         },
     async SetAgentParams(temperature: number, maxSteps: number, plannerMaxSteps: number, systemPrompt: string) {
-      settings.agent = { temperature, maxSteps, plannerMaxSteps, systemPrompt };
+      settings.agent = { temperature, maxSteps, plannerMaxSteps, systemPrompt, rpm: settings.agent?.rpm ?? 0 };
+    },
+    async SetRPM(rpm: number) {
+      if (settings.agent) settings.agent.rpm = rpm;
     },
     async SetTrayLocale(_locale: "en" | "zh") {},
     async SetAutoApproveTools(on: boolean) {
@@ -2512,6 +2852,176 @@ function makeMockApp(): AppBindings {
     async SaveWindowState(_state) {
       // no-op in browser dev — no real window geometry to persist
     },
+    // --- Scheduled tasks mock (browser dev only) -----------------------------
+    // A small in-memory store seeded with one sample task so the automation
+    // panel looks alive outside the Wails shell. The real backend persists to
+    // JSON; here we just keep the array.
+    async ListScheduledTasks(): Promise<TaskView[]> {
+      return mockSchedulerTasks.map(cloneTask);
+    },
+    async CreateScheduledTask(input: TaskInput): Promise<TaskView> {
+      const view: TaskView = {
+        id: `sched_mock_${Date.now()}`,
+        name: input.name || "未命名任务",
+        expression: input.expression,
+        prompt: input.prompt,
+        profile: "cowork",
+        enabled: true,
+        oneShot: input.expression.toLowerCase().startsWith("at "),
+        lastRun: "",
+        nextRun: input.expression.toLowerCase().startsWith("at ") ? input.expression.slice(3) : "明天 09:00",
+        runCount: 0,
+        lastResult: "",
+        outputMode: input.outputMode,
+        outputDest: input.outputDest,
+        humanSchedule: input.expression,
+      };
+      mockSchedulerTasks.unshift(view);
+      return cloneTask(view);
+    },
+    async UpdateScheduledTask(input: TaskInput): Promise<TaskView> {
+      const idx = mockSchedulerTasks.findIndex((t) => t.id === input.id);
+      if (idx < 0) throw new Error("task not found");
+      mockSchedulerTasks[idx] = {
+        ...mockSchedulerTasks[idx],
+        name: input.name,
+        expression: input.expression,
+        prompt: input.prompt,
+        outputMode: input.outputMode,
+        outputDest: input.outputDest,
+        humanSchedule: input.expression,
+      };
+      return cloneTask(mockSchedulerTasks[idx]);
+    },
+    async DeleteScheduledTask(id: string): Promise<void> {
+      mockSchedulerTasks = mockSchedulerTasks.filter((t) => t.id !== id);
+    },
+    async PauseScheduledTask(id: string): Promise<void> {
+      const t = mockSchedulerTasks.find((t) => t.id === id);
+      if (t) { t.enabled = false; t.nextRun = ""; }
+    },
+    async ResumeScheduledTask(id: string): Promise<void> {
+      const t = mockSchedulerTasks.find((t) => t.id === id);
+      if (t) { t.enabled = true; t.nextRun = "稍后"; }
+    },
+    async RunScheduledTaskNow(id: string): Promise<string> {
+      const t = mockSchedulerTasks.find((t) => t.id === id);
+      if (!t) throw new Error("task not found");
+      t.runCount++;
+      t.lastRun = new Date().toISOString().slice(0, 16).replace("T", " ");
+      t.lastResult = "（mock）已运行";
+      return t.lastResult;
+    },
+    async ScheduledTaskHistory(_taskID: string): Promise<RunRecordView[]> {
+      return [
+        { taskId: _taskID || "demo", name: "日报提醒", at: "2026-06-21 18:00", status: "ok", result: "日报已生成并发送", outputMode: "notify" },
+      ];
+    },
+    async ScheduledTaskTemplates(): Promise<TemplateView[]> {
+      return [
+        { id: "daily_report_reminder", name: "日报提醒", category: "reminder", desc: "每个工作日下班前提醒整理日报", expression: "daily 18:00 Mon-Fri", prompt: "请整理今日工作日报，按三段式汇总。", outputMode: "notify", outputHint: "", oneShot: false },
+        { id: "weekly_report_reminder", name: "周报提醒", category: "reminder", desc: "每周五提醒提交周报到邮箱", expression: "daily 17:00 Fri", prompt: "生成本周工作周报。", outputMode: "email", outputHint: "填写收件人邮箱", oneShot: false },
+        { id: "meeting_reminder", name: "会议提醒", category: "reminder", desc: "一次性会议开始前提醒", expression: "at 2026-06-24 14:45", prompt: "15分钟后有会议，请准备材料。", outputMode: "notify", outputHint: "", oneShot: true },
+        { id: "data_scrape", name: "定时数据抓取", category: "data", desc: "每天早上抓取数据存为 CSV", expression: "daily 09:00", prompt: "抓取昨日关键业务数据并保存为 CSV。", outputMode: "file", outputHint: "填写保存路径", oneShot: false },
+        { id: "system_check", name: "系统巡检", category: "ops", desc: "每小时检查系统状态，异常告警", expression: "every 1h", prompt: "检查磁盘/内存/进程，异常时告警。", outputMode: "im", outputHint: "填写飞书会话标识", oneShot: false },
+      ];
+    },
+    async PreviewSchedule(text: string): Promise<SchedulePreview> {
+      const low = (text || "").trim().toLowerCase();
+      if (!low) return { inputText: text, expression: "", absoluteTime: "", kind: "unknown", note: "输入时间或计划" };
+      if (/^(后天|明天|大后天|下周|今天|周|星期)/.test(text) || /点|：|:/.test(text)) {
+        return { inputText: text, expression: "at 2026-06-24 15:00", absoluteTime: "2026-06-24 15:00", kind: "oneshot", note: "一次性任务（mock 预览）" };
+      }
+      if (low.startsWith("at ") || low.startsWith("in ") || low.startsWith("daily") || low.startsWith("every") || low === "hourly") {
+        return { inputText: text, expression: text, absoluteTime: "", kind: "recurring", note: "下次：稍后（mock）" };
+      }
+      return { inputText: text, expression: "", absoluteTime: "", kind: "unknown", note: "无法识别（mock）" };
+    },
+    // --- RAG mock (browser dev only) ------------------------------------------
+    // In-memory tree seeded with one sample collection + a file mid-extraction
+    // so the panel shows a progress bar outside the Wails shell.
+    async ListRagCollections(): Promise<RagCollectionView[]> {
+      return [
+        { name: "default", documents: mockRagDocs, chunks: mockRagDocs * 4, entities: mockRagEntities },
+      ];
+    },
+    async ListRagTree(_collection: string): Promise<RagNodeView[]> {
+      return mockRagTree;
+    },
+    async RagImportPaths(_collection: string, paths: string[]): Promise<RagImportResult> {
+      const jobIds: string[] = [];
+      let files = 0;
+      for (const p of paths) {
+        files++;
+        const jid = `rag_job_mock_${Date.now()}_${files}`;
+        jobIds.push(jid);
+        const node: RagNodeView = {
+          key: p, label: p.split(/[\\/]/).pop() || p, kind: "file", path: p, relPath: p,
+          isDir: false, collection: _collection || "default", status: "extracting",
+          hasFts5: true, jobId: jid, doneChunks: 0, totalChunks: 8, entityCount: 0, errorMsg: "",
+        };
+        mockRagTree.push(node);
+        // Simulate progress for browser dev.
+        simulateRagProgress(jid, node);
+      }
+      mockRagDocs += files;
+      return { jobIds, files, ftsChunks: files * 4, message: `mock：已导入 ${files} 个文件` };
+    },
+    async RagStartExtract(_collection: string, path: string): Promise<void> {
+      const node = mockRagTree.find((n) => n.path === path);
+      if (node) { node.status = "extracting"; node.doneChunks = 0; node.totalChunks = node.totalChunks || 8; simulateRagProgress(node.jobId, node); }
+    },
+    async RagCancelExtract(jobId: string): Promise<void> {
+      for (const n of mockRagTree) { if (n.jobId === jobId) { n.status = "cancelled"; } }
+    },
+    async RagRemovePath(_collection: string, path: string): Promise<void> {
+      mockRagTree = mockRagTree.filter((n) => n.path !== path);
+    },
+    async RagSearch(_collection: string, query: string, _topK: number): Promise<RagSearchHitView> {
+      return {
+        entities: [{ name: query + "（示例实体）", type: "person", description: "mock 命中" }],
+        relations: [],
+        snippets: [{ collection: "default", path: "/mock/doc.md", chunk: 0, snippet: `…包含「${query}」的片段…`, score: 0.9 }],
+      };
+    },
+    async RagPreviewETA(jobId: string): Promise<RagETAView> {
+      const n = mockRagTree.find((x) => x.jobId === jobId);
+      const remaining = n ? Math.max(0, n.totalChunks - n.doneChunks) : 0;
+      return { jobId, doneChunks: n?.doneChunks ?? 0, totalChunks: n?.totalChunks ?? 0, avgLatencyMs: 2800, etaSeconds: remaining * 3 };
+    },
+    async RagListTemplates(): Promise<string[]> {
+      return [".txt", ".md", ".csv", ".json", ".html", ".py", ".go", ".js", ".ts", ".yaml"];
+    },
+    // --- Expert team mock (browser dev only) -------------------------------
+    async ListExpertTeams(): Promise<TeamView[]> {
+      return [
+        { id: "t1", name: "方案评审团", defaultMode: "debate", defaultRounds: 2, experts: [
+          { name: "批判者", model: "", perspective: "从风险角度批判性审视" },
+          { name: "建设者", model: "", perspective: "从改进落地角度给建议" },
+        ]},
+      ];
+    },
+    async CreateExpertTeam(team: TeamView): Promise<TeamView> {
+      return { ...team, id: `team_mock_${Date.now()}` };
+    },
+    async UpdateExpertTeam(team: TeamView): Promise<TeamView> { return team; },
+    async DeleteExpertTeam(_id: string): Promise<void> {},
+    async RunExpertTeam(_teamId: string, _task: string, _mode: string, _rounds: number): Promise<string> {
+      const runId = `run_mock_${Date.now()}`;
+      // In browser dev there's no runtime.EventsOn, so the mock can't stream
+      // CollabEvents. Real runs stream via onExpertsCollab; here we just return
+      // a runId so the panel's "start" handler doesn't crash.
+      return runId;
+    },
+    async ExpertBudgetStatus(): Promise<BudgetStatusView> {
+      return { rpm: 0, used: 0, remaining: 0, reserveMain: 0, windowSecs: 0 };
+    },
+    async StartScreenshotHotkey() {},
+    async StopScreenshotHotkey() {},
+    async SetCoWorkSettings(v: any) { settings.cowork = { ...v, detectedBrowser: settings.cowork.detectedBrowser }; },
+    async CheckCoworkBrowser() { return "Chrome"; },
+    async CheckWPSPPTDeps() { return []; },
+    async InstallWPSPPTDeps() { return "installed"; },
     async ContextPanel(_tabID: string) {
       const now = Date.now();
       return {

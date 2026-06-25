@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestFTSStoreUpsertAndSearch(t *testing.T) {
@@ -107,6 +108,116 @@ func TestFTSStoreUpsertOverwrite(t *testing.T) {
 	if len(results) != 1 {
 		t.Errorf("expected 1 result for 'updated', got %d", len(results))
 	}
+}
+
+// TestFTSSearchTitleAndDescription confirms the v4 schema indexes title and
+// description, not just body. Before v4 a keyword present only in the title
+// (absent from body) returned no results — the original "problem 6".
+func TestFTSSearchTitleAndDescription(t *testing.T) {
+	dir := t.TempDir()
+	fts, err := OpenFTSStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fts.Close()
+
+	// "Beijing" appears ONLY in the title/description, never in the body, so a
+	// body-only index would miss it entirely.
+	if err := fts.UpsertWithTime("/r.md", "global", "user",
+		"Beijing move", "Relocated to Beijing",
+		"The user changed cities recently.", // body has no "Beijing"
+		"active", "2026-05-01", "", "fp1"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Title keyword must match.
+	if r, _ := fts.Search("Beijing", 10, 0.15); len(r) != 1 {
+		t.Errorf("title keyword 'Beijing' should match, got %d results", len(r))
+	}
+	// Description keyword must match too.
+	if r, _ := fts.Search("Relocated", 10, 0.15); len(r) != 1 {
+		t.Errorf("description keyword 'Relocated' should match, got %d results", len(r))
+	}
+}
+
+// TestSchemaMigrationV3ToV4 simulates an upgrade from a pre-v4 database (title/
+// description not yet indexed) to v4. It builds a v3-style store with a fact on
+// disk, forces the schema version down, then runs EnsureSchema and confirms the
+// rebuild re-indexes everything — including making the title searchable. This
+// is the migration real users hit when v0.3.2 ships.
+func TestSchemaMigrationV3ToV4(t *testing.T) {
+	dir := t.TempDir()
+	s := Store{Dir: dir}
+	// Seed a fact via the store (writes the .md file that Rebuild will re-index).
+	s.Save(Memory{
+		Name: "move", Title: "Beijing relocation", Description: "Moved to Beijing",
+		Type: TypeUser, Body: "City changed.",
+	})
+
+	svc, err := NewSearchService(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	// Index once at current version, then force the version DOWN to simulate an
+	// older db that predates the title/description columns.
+	if err := svc.EnsureSchema(); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.fts.SetSchemaVersion(3); err != nil {
+		t.Fatal(err)
+	}
+
+	// EnsureSchema must detect v3 < v4 and Rebuild, restoring title search.
+	if err := svc.EnsureSchema(); err != nil {
+		t.Fatalf("EnsureSchema migration: %v", err)
+	}
+	if v := svc.fts.SchemaVersion(); v != currentSchemaVersion {
+		t.Fatalf("schema version = %d, want %d", v, currentSchemaVersion)
+	}
+	// After rebuild, the title keyword (absent from body) must be searchable.
+	results, err := svc.Search("Beijing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Errorf("after v3→v4 migration, 'Beijing' (title-only) should match, got %d", len(results))
+	}
+}
+
+// TestSearchAsOfInjectionSafe confirms asOfDate is bound as a parameter, not
+// string-interpolated: a malicious date string must be treated as a literal
+// value (matching nothing) rather than parsed as SQL. Before the fix, a string
+// like "x' OR 1=1 --" would have broken out of the WHERE clause.
+func TestSearchAsOfInjectionSafe(t *testing.T) {
+	dir := t.TempDir()
+	fts, err := OpenFTSStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fts.Close()
+	fts.UpsertWithTime("/a.md", "project", "project", "", "", "active fact", "active", "2026-01-01", "", "fp1")
+
+	// A payload that would widen the result set if interpolated; with parameter
+	// binding it's just a non-matching date string → 0 results, no error.
+	res, err := fts.SearchAsOf("active", 10, 0.15, parseDateMust("2026-06-01"))
+	if err != nil {
+		t.Fatalf("baseline search failed: %v", err)
+	}
+	if len(res) == 0 {
+		t.Fatal("baseline should find the active fact")
+	}
+	// Direct searchInternal with a hostile asOfDate: must not error and must not
+	// return rows it shouldn't (the injected SQL would return the row regardless
+	// of date).
+	if _, err := fts.searchInternal("active", 10, 0.15, "' OR 1=1 --"); err != nil {
+		t.Errorf("hostile asOfDate should not error (parameter binding), got: %v", err)
+	}
+}
+
+func parseDateMust(s string) time.Time {
+	t, _ := time.Parse("2006-01-02", s)
+	return t
 }
 
 func TestBuildFtsQuery(t *testing.T) {

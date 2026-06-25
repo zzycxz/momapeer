@@ -1,0 +1,158 @@
+import { useState, type ReactNode } from "react";
+import { BookOpen, Clock, Inbox, Puzzle, SquarePen } from "lucide-react";
+
+import { useT } from "../lib/i18n";
+import { app } from "../lib/bridge";
+import { AutomationPanel } from "../components/cowork/AutomationPanel";
+import { RagPanel } from "../components/cowork/RagPanel";
+import { ExpertPanel } from "../components/cowork/ExpertPanel";
+
+export type CoWorkPanel = "taskCenter" | "experts" | "automation" | "rag";
+
+export function CoWorkLayout({
+  mainNode,
+  footerNode,
+  projectTreeNode,
+  sidebarFooter,
+  rightDockOpen = false,
+  sidebarCollapsed = false,
+}: {
+  mainNode?: ReactNode;
+  footerNode?: ReactNode;
+  projectTreeNode?: ReactNode;
+  // sidebarFooter renders the shared IM/History/Trash/Settings controls at the
+  // bottom of the cowork sidebar, mirroring the coding sidebar. Passed in from
+  // App.tsx so the cowork layout stays decoupled from App-level callbacks.
+  sidebarFooter?: ReactNode;
+  rightDockOpen?: boolean;
+  sidebarCollapsed?: boolean;
+}) {
+  const t = useT();
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysis, setAnalysis] = useState<string>("");
+  const [activePanel, setActivePanel] = useState<CoWorkPanel>("taskCenter");
+
+  const screenshotAnalyze = async () => {
+    setAnalyzing(true);
+    setAnalysis("");
+    try {
+      await app.Submit("分析当前屏幕内容并总结");
+    } catch {
+      setAnalysis(t("cowork.screenshotFailed"));
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  return (
+    <div className={`cowork-layout ${sidebarCollapsed ? "cowork-layout--sidebar-collapsed" : ""}`}>
+      {/* Left: workspace / knowledge / scheduled / skills */}
+      {!sidebarCollapsed && (
+        <aside className="cowork-sidebar">
+        <div className="cowork-sidebar__scroll">
+          <button
+            className="sidebar__new"
+            style={{ marginBottom: '24px' }}
+            onClick={() => setActivePanel("taskCenter")}
+          >
+            <SquarePen size={18} />
+            <span>{t("cowork.newTask") || "新建任务"}</span>
+          </button>
+
+          <section className="cowork-sidebar__group">
+            <button
+              className={`cowork-sidebar__item ${activePanel === "taskCenter" ? "cowork-sidebar__item--active" : ""}`}
+              onClick={() => setActivePanel("taskCenter")}
+            >
+              <Inbox size={14} />
+              <span>{t("cowork.taskCenter") || "助理"}</span>
+            </button>
+          </section>
+
+          <section className="cowork-sidebar__group">
+            <button
+              className={`cowork-sidebar__item ${activePanel === "experts" ? "cowork-sidebar__item--active" : ""}`}
+              onClick={() => setActivePanel("experts")}
+            >
+              <Puzzle size={14} />
+              <span>{t("cowork.skills") || "专家"}</span>
+            </button>
+          </section>
+
+          <section className="cowork-sidebar__group">
+            <button
+              className={`cowork-sidebar__item ${activePanel === "automation" ? "cowork-sidebar__item--active" : ""}`}
+              onClick={() => setActivePanel("automation")}
+            >
+              <Clock size={14} />
+              <span>{t("cowork.scheduled") || "自动化"}</span>
+            </button>
+          </section>
+
+          <section className="cowork-sidebar__group">
+            <button
+              className={`cowork-sidebar__item ${activePanel === "rag" ? "cowork-sidebar__item--active" : ""}`}
+              onClick={() => setActivePanel("rag")}
+            >
+              <BookOpen size={14} />
+              <span>{t("cowork.knowledgeBase") || "资料库"}</span>
+            </button>
+          </section>
+
+          <section className="sidebar__section sidebar__section--projects" style={{ marginTop: '16px', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            {projectTreeNode}
+          </section>
+        </div>
+
+        {/* Shared IM/History/Trash/Settings controls — same as the coding
+            sidebar, so office mode has the same entry points. */}
+        {sidebarFooter}
+      </aside>
+      )}
+
+      {/* Center: dynamic panel based on selection */}
+      <section className="cowork-main">
+        {activePanel === "taskCenter" && (
+          <>
+            <header className="cowork-main__header">
+              <h2>{t("cowork.taskCenter") || "助理任务看板"}</h2>
+              <button
+                className="btn btn--primary btn--small"
+                onClick={() => void screenshotAnalyze()}
+                disabled={analyzing}
+                title={t("cowork.screenshotHint")}
+              >
+                {analyzing ? t("cowork.analyzing") : t("cowork.screenshotAnalyze")}
+              </button>
+            </header>
+            {analysis && <div className="cowork-main__analysis">{analysis}</div>}
+            <div className="cowork-main__transcript">{mainNode}</div>
+            <div className="cowork-main__composer">{footerNode}</div>
+          </>
+        )}
+        
+        {activePanel === "experts" && (
+          <ExpertPanel />
+        )}
+
+        {activePanel === "automation" && (
+          <AutomationPanel />
+        )}
+
+        {activePanel === "rag" && (
+          <RagPanel />
+        )}
+      </section>
+
+      {/* Right: artifacts / preview */}
+      {rightDockOpen && (
+        <aside className="cowork-dock">
+          <section className="cowork-dock__group">
+            <h3>{t("cowork.artifacts") || "产物预览"}</h3>
+            <div className="cowork-empty">{t("cowork.noArtifacts") || "暂无产物"}</div>
+          </section>
+        </aside>
+      )}
+    </div>
+  );
+}

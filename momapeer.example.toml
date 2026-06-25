@@ -173,3 +173,61 @@ bash_timeout_seconds = 120   # foreground safety cap; set 0 for no tool-local ca
 # account_id = "default"
 # token_env = "WEIXIN_BOT_TOKEN"
 # api_base  = "https://ilinkai.weixin.qq.com"   # Tencent iLink Bot API base URL
+
+# [cowork] configures the coWork (office) profile's capabilities. All fields are
+# optional — empty means "auto-detect" or "disabled".
+#
+# [cowork]
+# # Browser path for the browser_* automation tools. Empty = auto-detect Chrome
+# # → Edge → Brave. Set when your browser isn't in a standard location. The agent
+# # surfaces a clear error (and a browser_set_path tool) when nothing is found.
+# browser_path = ""
+#
+# # PPT generation via the wps-ppt-mcp-server (WPS COM automation). Set to the
+# # server's server.py to enable ppt_create / ppt_from_template / etc. Requires
+# # Python + `pip install fastmcp pywin32` and WPS Office installed. Empty = PPT
+# # capability off (the rest of cowork still works).
+# wps_ppt_server_path = ""
+# # Python interpreter to launch the server (default: "python" on PATH). Set when
+# # your fastmcp/pywin32 live in a venv.
+# wps_ppt_python = ""
+#
+# # Outbound email (email_send). Nested under [cowork], so the table is
+# # [cowork.smtp] — NOT a top-level [smtp]. password_env names an env var holding
+# # the password (never stored in the TOML). use_tls = true for implicit TLS
+# # (port 465); false for STARTTLS (587) or plain (25).
+# [cowork.smtp]
+# host        = "smtp.example.com"
+# port        = 587
+# from        = "agent@example.com"
+# username    = "agent@example.com"   # often = from; empty = no auth
+# password_env = "COWORK_SMTP_PASSWORD"
+# use_tls     = false                 # true for port 465; false for 587/25
+#
+# # Inbound email (email_read / email_search via go-imap). Empty host = read
+# # tools disabled. Port 993 = implicit TLS (default), 143 = STARTTLS/plain.
+# [cowork.imap]
+# host         = "imap.example.com"
+# port         = 993
+# username     = "agent@example.com"
+# password_env = "COWORK_IMAP_PASSWORD"
+#
+# # RAG semantic reranking (optional). When set, rag_search blends FTS5 BM25 with
+# # embedding cosine similarity for better recall. Empty = FTS5-only (offline).
+# embedding_model = ""
+#
+# # RAG deep extraction (optional). Turns imported documents into a structured
+# # entity/relation knowledge graph in the background, so queries like "who is X"
+# # return precise facts instead of chunk snippets. FTS5 (instant text search)
+# # always works; this adds the structured layer on top.
+# #   extract_model        = LLM chat model name (e.g. "qwen-plus"). Empty =
+# #                          deep extract disabled (FTS5 still works).
+# #   extract_interval     = pause between chunks; default "3s". Raise on
+# #                          rate-limited endpoints.
+# #   extract_concurrency  = parallel chunks; default 1. Keep low to avoid
+# #                          tripping rate limits.
+# extract_model = ""
+# extract_interval = "3s"
+# extract_concurrency = 1
+
+

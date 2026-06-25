@@ -11,9 +11,13 @@ import (
 // TestModelRefsFromConfig verifies the /model picker enumerates configured
 // provider/model refs (built-in defaults when no momapeer.toml is present), and
 // only those whose provider API key is set.
+//
+// Uses isolateUserConfig (not just t.Chdir) because modelRefs() reads the USER
+// config dir (~/.config/momapeer or %AppData%\momapeer), not the CWD. Without
+// isolating it, a real user config on the machine would override the built-in
+// defaults and make this test flaky (machine-dependent refs).
 func TestModelRefsFromConfig(t *testing.T) {
-	t.Chdir(t.TempDir()) // no momapeer.toml → built-in default providers
-	t.Setenv("JIUTIAN_API_KEY", "test-key")
+	isolateUserConfig(t) // no momapeer.toml → built-in default providers
 	t.Setenv("JIUTIAN_API_KEY", "test-key")
 	refs := modelRefs()
 	if len(refs) == 0 {
@@ -29,8 +33,7 @@ func TestModelRefsFromConfig(t *testing.T) {
 // TestModelRefsSkipsUnconfigured verifies that with no provider keys set, the
 // picker offers nothing rather than listing models the user can't select.
 func TestModelRefsSkipsUnconfigured(t *testing.T) {
-	t.Chdir(t.TempDir())
-	t.Setenv("JIUTIAN_API_KEY", "")
+	isolateUserConfig(t)
 	t.Setenv("JIUTIAN_API_KEY", "")
 	if refs := modelRefs(); len(refs) != 0 {
 		t.Errorf("no keys set → no refs, got %v", refs)
@@ -40,7 +43,7 @@ func TestModelRefsSkipsUnconfigured(t *testing.T) {
 // TestModelArgCompletion verifies "/model " completes to the configured refs
 // through the shared completion path.
 func TestModelArgCompletion(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolateUserConfig(t)
 	t.Setenv("JIUTIAN_API_KEY", "test-key")
 	m := newTestChatTUI()
 	items, _, ok := m.slashArgItems("/model ")

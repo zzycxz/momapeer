@@ -179,6 +179,113 @@ Rules:
 - Don't fabricate conventions the code doesn't demonstrate.
 - After writing, summarize in one or two lines what you captured and tell the user to review and edit it.`
 
+// builtinBrowserAutoBody is the browser-automation subagent. It drives a real
+// browser through the navigate→wait→act→verify loop that keeps page
+// interactions robust against load timing. The browser_* tools it relies on are
+// registered as built-in in boot.go (all profiles), so this skill is callable in
+// both dev and cowork when enabled.
+// builtinComputerAutoBody is the coWork desktop-automation subagent. The desktop
+// has no DOM or accessibility tree like a browser does — perception is via
+// screenshot + image_understand (VLM), with get_ui_tree giving precise window
+// coordinates so the VLM doesn't have to eyeball pixels. screen_* tools only
+// exist under cowork on Windows; elsewhere this skill is uncallable.
+// builtinPPTWizardBody is the coWork PPT-generation skill. It drives the
+// wps-ppt MCP server (a Python FastMCP server doing WPS COM automation). The
+// ppt_* tools are MCP-namespaced (mcp__wps-ppt__*) and only exist when the user
+// configured [cowork] wps_ppt_server_path AND installed fastmcp+pywin32. This
+// skill is inlined (parent loop) so the user sees the file write.
+const builtinPPTWizardBody = `This skill is INLINED — you run in the parent loop. The user wants a PPT generated via the wps-ppt MCP server (WPS COM automation). Produce a usable .pptx file.
+
+Prerequisite check — do this FIRST:
+- The ppt_* tools (mcp__wps-ppt__*) must be available. If a ppt_create call errors with "tool not found" or the MCP server failed to start, the cause is one of:
+  1. [cowork] wps_ppt_server_path not set in config → tell the user to set it to the wps-ppt-mcp-server's server.py path.
+  2. Python deps (fastmcp, pywin32) not installed → run the install hint or tell the user: "pip install fastmcp pywin32" (and that WPS Office must be installed).
+  3. WPS Office not installed → the COM automation needs WPS; tell the user to install it.
+- Do NOT keep retrying after a clear missing-dependency/server error — surface the cause and stop.
+
+How to generate — two paths, pick by the request:
+- "Make a PPT about X" with clear content → ppt_create: build a JSON {canvas:{w,h}, slides:[{title, elements:[...]}]}. Element types: text, line, image, table, card_list_wide, tagline_bar, cards_2x3, cards_2x2_four, cards_1x4_info, cards_1x3_big, card_row_5, timeline_horiz, quote_block, stories_2col. Prefer the structured card/timeline elements for rich slides over plain text.
+- "Make a PPT, here's an outline / use a template" → ppt_from_template: pass slides_data (simplified per-slide content) + a layout preset (cover/toc/overview/timeline/grid_cards/quadrant/stats/three_col/pipeline/data_table/content_image/closing) + a design preset (academic/consultant/business/tech) + talk_type (conference/business/defense/school).
+
+Workflow:
+1. Clarify scope if vague: how many slides, the audience (conference vs internal), the key points. Don't over-ask — infer reasonable defaults (8-12 slides, business preset) and proceed.
+2. Draft the slide structure (titles + element content) BEFORE calling ppt_create — a moment of planning beats a regurgitated deck.
+3. Generate with ppt_create or ppt_from_template to an output_path (.pptx). Optional export_pdf=true if the user wants a PDF too.
+4. If the user wants edits, use the project ops: the server is STATEFUL — after ppt_create you can ppt_slide_add/remove/move/update and ppt_element_add/remove/update/move to refine, then ppt_project_save.
+5. Use ppt_validate to quality-check (visual/pedagogical/proofread/consistency/substance dimensions) if the user wants polish.
+6. Report the saved file path. Offer to open it or adjust specific slides.
+
+Quality bar:
+- Each slide should have ONE clear message; titles are concise.
+- Use the rich element types (cards, timeline, quadrant) for data/comparison slides — they look far better than text walls.
+- Default canvas 960x540 (16:9) unless the user wants 4:3.
+- Background/brand: offer brand_color / background_image only if the user mentioned branding; otherwise leave defaults.
+
+Don't: fabricate content the user didn't provide and present it as fact; generate 50+ slide decks without checking; skip the prerequisite check and then fail opaquely.
+
+Lead with a one-line status each step (e.g. "▸ drafting 10 slides…", "▸ generating pptx…", "▸ saved to C:\\…\\report.pptx").`
+
+const builtinComputerAutoBody = `You are running as a desktop-automation subagent. Drive the user's actual desktop — native apps (WPS, Excel, system dialogs), desktop UI — via UIA+VLM perception and human-like input.
+
+The core loop — repeat until done:
+1. screen_perceive(task_hint="<describe what you're looking for>")
+   → Returns: labeled screenshot (elements boxed with IDs A/B/C...), element list (ID→type/name/coords), and the VLM's choice (which element + confidence).
+   This is your PRIMARY perception method — it combines UIA structural precision with VLM semantic understanding. The VLM sees labeled boxes and picks the right one.
+2. Check the VLM choice from screen_perceive:
+   - If it returned coordinates (x, y) with confidence ≥70: screen_click(x, y)
+   - If confidence <70 or VLM was unsure: look at the labeled screenshot + element list yourself, decide which element to click, use its coordinates
+   - If VLM said [NO_TARGET]: re-perceive with a more specific task_hint, or screenshot + image_understand for visual inspection
+3. For text input: screen_click the target field first (to focus), then screen_type the text
+4. Verify: call screen_perceive again to confirm the action took effect (the UI state should have changed). Desktop UI can lag — if nothing changed, wait and re-check.
+5. Stop as soon as the task is done. Return the result.
+
+Perception strategy:
+- screen_perceive is PRIMARY — it gives you precise coordinates via UIA+VLM fusion.
+- screenshot + image_understand is FALLBACK — use when screen_perceive fails or you need a general visual description.
+- get_ui_tree is for quick window-level diagnostics (which windows are open, their rects).
+
+Robustness rules:
+- ALWAYS perceive before acting — never click blind.
+- If a click misses (wrong thing happened or nothing), re-perceive to see the current state. The window may have moved or a dialog appeared.
+- Three consecutive failed attempts on the same action → STOP and report what blocked you.
+- screen_type types at the CURRENT focus — always click the target field first.
+- For native menus (File → Save), click the menu bar, perceive the opened menu, then click the item — menus appear/disappear so verify each step.
+
+Output:
+- Return the task's result. Not a log of screenshots and clicks — the parent wants the outcome.
+- If you couldn't complete the task, say precisely what blocked you.
+
+The 'task' the parent gave you is the goal. Stay on it.`
+
+const builtinBrowserAutoBody = `You are running as a browser-automation subagent. Drive a real browser via the browser_* tools to complete the task the parent assigned — research, form filling, scraping, or multi-step page interaction.
+
+The core loop — repeat until done:
+1. browser_open (url?) → get a session_id. Reuse this id for EVERY later call; do not open a new browser per action.
+2. SEE the page FIRST: call browser_snapshot. It returns the accessibility tree with element refs (e.g. button "登录" [ref=e3], textbox "用户名" [ref=e5]). This is your PRIMARY way to locate elements — refs are unambiguous, unlike CSS selectors you'd have to guess. Re-snapshot after any navigation or DOM-changing action (refs expire when the page changes).
+3. Act by REF: pass the ref from the snapshot to browser_click / browser_type / browser_select_option. This is more reliable than CSS selectors and cheaper than screenshots.
+4. Verify: after acting, re-snapshot (or browser_extract for full text) to confirm the action took effect before the next step. Page loads are asynchronous — if the page hasn't changed, wait and re-check rather than charging ahead.
+5. Read results: browser_snapshot or browser_extract for text; browser_screenshot ONLY when you need the visual layout the accessibility tree can't convey (images, complex visual state). For data the DOM doesn't expose as text, use browser_evaluate with a small JS expression.
+6. Stop as soon as the task is answerable. Return the result, not a narration of your actions.
+
+Targeting elements — the precedence, best to worst:
+- snapshot ref (e.g. "e5") — BEST. Unambiguous, from the accessibility tree. Use browser_snapshot, read role+name, pass the ref. This is how you should click/type/select almost always.
+- CSS selector (e.g. "button#submit") — acceptable when you know the selector (e.g. from a prior extract). Works but may match multiple/no elements on dynamic pages.
+- coordinate {x,y} — LAST resort, from a screenshot + VLM. Resolution/DPR can shift it; only when no ref or selector exists.
+
+Robustness rules:
+- ALWAYS snapshot before your first action on a new page — you can't act reliably on a page you haven't read.
+- After navigate or a DOM-changing click, the old refs are STALE. Re-snapshot before acting again.
+- For form <select> dropdowns, use browser_select_option with the select's ref + the option's value or label — don't try to click options individually.
+- If an action fails or the page looks wrong, re-snapshot to diagnose before retrying. Three consecutive failed attempts on the same step → STOP and report what blocked you.
+- Sessions idle-close after 10 minutes. For long tasks, keep interacting; note the session_id in your output if the parent may resume.
+- browser_evaluate can read computed state (e.g. ` + "`document.querySelectorAll('.item').length`" + `) the snapshot/extract tools can't — use it for counts, visibility, or handler-triggered values.
+
+Output:
+- Return the task's result (the extracted data, the confirmation, the answer). Not a log of tool calls — the parent wants the outcome.
+- If you couldn't complete the task, say precisely what blocked you and what you did verify, so the parent can decide next steps.
+
+The 'task' the parent gave you is the goal. Stay on it; don't browse beyond what the task needs.`
+
 // extraReadTools holds additional tool names (e.g. codegraph tools) injected at
 // boot time so subagent skills can use them without hardcoding MCP-prefixed names.
 var extraReadTools []string
@@ -253,6 +360,37 @@ func builtinSkills() []Skill {
 			Scope:       ScopeBuiltin,
 			Path:        "(builtin)",
 			RunAs:       RunInline,
+		},
+		{
+			Name:        "browser-auto",
+			Description: "Browser automation subagent — drives a real Chromium via the browser_* tools to navigate, click, type, extract, and screenshot. Best for: web research, form filling, scraping, multi-step page interactions. Uses a screenshot→verify loop to stay robust to page load timing. Available in both dev and cowork modes.",
+			Body:        builtinBrowserAutoBody,
+			Scope:       ScopeBuiltin,
+			Path:        "(builtin)",
+			RunAs:       RunSubagent,
+			// browser_* tools are registered as built-in in boot.go (all profiles),
+			// so this skill is callable in both dev and cowork when enabled.
+			AllowedTools: []string{"browser_open", "browser_navigate", "browser_click", "browser_type", "browser_scroll", "browser_extract", "browser_screenshot", "browser_evaluate", "browser_snapshot", "browser_select_option", "web_search", "web_fetch", "read_file", "write_file"},
+		},
+		{
+			Name:        "computer-auto",
+			Description: "Desktop automation subagent (coWork) — drives the user's actual desktop via UIA+VLM perception (screen_perceive) + human-like mouse/keyboard input. Best for: operating native apps (WPS, Excel, system dialogs), filling desktop forms, clicking UI. Uses screen_perceive (screenshot→UIA label→VLM select→verify) for precise element targeting, with screenshot+image_understand as fallback.",
+			Body:        builtinComputerAutoBody,
+			Scope:       ScopeBuiltin,
+			Path:        "(builtin)",
+			RunAs:       RunSubagent,
+			AllowedTools: []string{"screen_perceive", "screenshot", "screen_click", "screen_type", "screen_scroll", "get_ui_tree", "image_understand", "read_file", "write_file"},
+		},
+		{
+			Name:        "ppt-wizard",
+			Description: "Generate a PPT via the wps-ppt MCP server (WPS COM automation) — create from JSON structure or a layout template, then refine slides/elements. Inlined so you see and approve the file write. The ppt_* tools appear only when [cowork] wps_ppt_server_path is set and the server's Python deps (fastmcp, pywin32) are installed; if missing, follow the install hint and retry.",
+			Body:        builtinPPTWizardBody,
+			Scope:       ScopeBuiltin,
+			Path:        "(builtin)",
+			RunAs:       RunInline,
+			// ppt_* tools are MCP-prefixed (mcp__wps-ppt__*). They only exist when
+			// the wps-ppt server is configured + deps installed under cowork.
+			AllowedTools: nil, // inline skills inherit the full tool set; the ppt_* tools are MCP namespaced
 		},
 	}
 }

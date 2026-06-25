@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zzycxz/momapeer/internal/proc"
@@ -42,10 +43,20 @@ type Shell struct {
 // ResolveShell picks the interpreter the shell tool runs commands under. It
 // prefers a real bash so the model's POSIX habits work; on Windows, where bash
 // is usually absent from PATH, it probes the Git-for-Windows install locations
-// and only then falls back to PowerShell so the tool still functions.
+// and only then falls back to PowerShell so the tool still functions. The
+// result is cached for the process lifetime since the shell path does not
+// change once the process is running.
 func ResolveShell() Shell {
-	return resolveShell(runtime.GOOS, exec.LookPath, fileExists, windowsBashCandidates(), probeBash, isWindowsWSLBash)
+	resolveShellOnce.Do(func() {
+		cachedShell = resolveShell(runtime.GOOS, exec.LookPath, fileExists, windowsBashCandidates(), probeBash, isWindowsWSLBash)
+	})
+	return cachedShell
 }
+
+var (
+	resolveShellOnce sync.Once
+	cachedShell      Shell
+)
 
 // resolveShell is ResolveShell with its environment lookups injected — including
 // the Git-for-Windows bash candidates, which derive from %ProgramFiles% and so

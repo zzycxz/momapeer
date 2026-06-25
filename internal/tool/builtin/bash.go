@@ -60,7 +60,11 @@ func cachedBashShellPATH(ctx context.Context) string {
 		bashPathMu.Unlock()
 		return v, nil
 	})
-	return result.(string)
+	// singleflight.Do returns (nil, nil) if a peer call panicked or the fn
+	// returned nil; a bare type assertion would panic then. Use the comma-ok
+	// form so a future change to the closure can't crash the bash tool.
+	s, _ := result.(string)
+	return s
 }
 
 // bash runs a shell command. sb, when it enforces, wraps the command in an OS
@@ -227,6 +231,15 @@ func hasUnquotedSeq(s, seq string) bool {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if quote != 0 {
+			// Inside a double-quoted string, a backslash escapes the next
+			// byte (e.g. "\""), so a `\"` must not close the quote region —
+			// otherwise a command like echo "a\" && b" is mis-bracketed and
+			// the trailing && is flagged as an unquoted chain. Single quotes
+			// have no escape in POSIX shells, so only honor backslash for '"'.
+			if quote == '"' && c == '\\' && i+1 < len(s) {
+				i++ // skip the escaped byte
+				continue
+			}
 			if c == quote {
 				quote = 0
 			}

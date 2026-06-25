@@ -1,5 +1,380 @@
 # Changelog
 
+## [0.3.1] — 2026-06-25
+
+**记忆能力升级：双时间 UI 打通 + 被动记忆捕获 + 技能市场入口。** v0.3.0 把双时间引擎做对了，但能力被困在后端——`desktop/app.go` 的 `MemoryFact` DTO 只透传 5 个字段，前端永远看不到「这条已失效」「被谁取代」；记忆捕获完全依赖 Agent 主动调 `remember`，用户说了偏好但模型没调就丢；内置技能混在扁平列表里没有「发现」入口。本版对标 Trae Work / WorkBuddy 补齐这三块。**memory 包 119→131 测试，desktop 新增 DTO 测试，control/boot 零回归，`tsc --noEmit` 干净**。
+
+### Added — 双时间 UI 暴露（P0：发动机装上方向盘）
+
+v0.3.0 的 `MemoryFact` DTO 只透传了 5 个基础字段，**18 个字段里的 ValidFrom/ValidTo/Status/Category/CreatedAt 全被丢弃**——前端永远感知不到「这条已失效」「被谁取代」。本段打通最后一公里。
+
+- **DTO 扩展（`app.go` + `types.ts`）**：`MemoryFact` 补 ValidFrom/ValidTo/Status/Category/Tags/SupersededBy/CreatedAt/UpdatedAt（`time.Time`→RFC3339，零值输出空串避免 `0001-01-01`）。新增 `memoryFactView()` 纯映射函数，`Memory()` 和 `MemoryHistory()` 共用。
+- **历史查询 API（`store.go` + `app.go`）**：新增 `Store.ListTimeline()`——返回 active + dormant + `.archive/` superseded + pending 的完整双时间面，按 ValidFrom 降序（timeless 落底）。`App.MemoryHistory()` 暴露给前端，是时间线视图的数据源（`List()` 仍只给 active，prompt/profile 不受影响）。
+- **时间线视图（`MemoryPanel.tsx`）**：`MemorySettingsPage` tab 扩为 `memories | timeline | docs`。时间线按日分组（复用 `HistoryPanel` 的 `dayLabel`/`dateBucket` + `.hist-group__title`），卡片显示状态徽章（superseded/expired/dormant/pending）、有效区间（日历图标 + From/Until）、「已被 X 取代」链接。
+- **时间点查询（`MemoryPanel.tsx`）**：时间线顶部日期选择器，前端按 `[validFrom, validTo]` 语义过滤——这就是双时间「某天我们知道什么」的可交互 demo。每张卡片显示「当日为真 / 尚未生效 / 已失效」徽章。
+
+### Added — 被动记忆捕获（P1：从「Agent 主动记」到「系统自动抽」）
+
+对标 Trae Work / WorkBuddy 的 auto-capture：每轮对话结束后后台自动抽取值得记的事实，用户在面板 review。此前完全依赖模型自己判断「该调 remember」，用户说了偏好但模型没调就丢了。
+
+- **事实抽取器（`extractor.go`，新文件）**：`LLMFactExtractor` 仿 `LLMConflictDetector` 模式——注入 `Chat` func，10s 超时，出错降级返回空（fire-and-forget，绝不阻塞 turn）。prompt 要求 JSON 数组输出（type/description/body/valid_from/category/tags），容忍 markdown 代码块和 prose 前缀。跳过 trivial turn（空消息或 <40 字回复）省 LLM 调用。抽取结果标记 `Status: "pending"`（不进 prompt/profile）。
+- **Turn-end hook（`controller.go`）**：`Options` 加 `OnTurnEnd func(ctx, lastUserMsg, lastAssistant)`（仿 `OnRemember`/`GoalJudge`），交互式 + headless 两路径在 `defer c.hooks.Stop` 旁挂 `defer c.onTurnEnd(...)`。用 `context.Background()` 防 turn 取消中止抽取。
+- **boot 装配（`boot.go`）**：复用 `providerChatFunc(execProv)` 构造 extractor，`buildTurnEndExtractor` 闭包调 extractor → 逐条 `store.Save`（pending 状态保留）→ `slog.Info` 计数。
+- **Promote/Reject API（`store.go` + `controller.go` + `app.go`）**：`PromoteMemory`（pending→active，仅 pending 可提升，防误复活 superseded）、`RejectMemory`（删 pending，仅 pending 可删，保护 confirmed 事实）。`App.PromoteMemory/RejectMemory` 暴露前端，`ListTimeline` 含 pending（排最后）。
+- **待确认 UI（`MemoryPanel.tsx`）**：时间线卡片 pending 时显示虚线边框 + 警告色徽章，展开后显示「确认/忽略」按钮（调 PromoteMemory/RejectMemory）。
+
+### Added — 技能市场入口（P2：对标 Trae Work 技能市场）
+
+让用户能浏览内置技能、一键启用，而非面对一个扁平列表。
+
+- **市场分区（`CapabilitiesPanel.tsx`）**：`SkillsSettingsPage` 把技能按 `scope` 分成「内置技能」（市场卡片网格）和「我的技能」（原有管理列表）。数据复用现有 `Capabilities().skills`，零后端新增。
+- **市场卡片（`SkillMarketCard`，新组件）**：紧凑卡片（名称 + 描述 + subagent 徽章 + 启用/已启用按钮），`auto-fill minmax(220px)` 网格布局。启用调现有 `SetSkillEnabled`（内置技能「安装」本质是 enable）。
+- **CSS + i18n**：`.cap-market-card` 系列样式 + `caps.marketTitle/marketSummary/install/installed` 中英文 key。
+
+### Not Done（经评估）
+
+- **远程技能市场 registry**：P2 暂只展示内置技能（builtins.go 的 10 个）。真正的远程 catalog 需引入网络依赖 + 来源信任模型 + `install_source` 的两阶段 plan/apply 提升，评估为独立大功能，不在此批次。
+- **被动捕获的自动 promote**：当前 pending 事实需用户手动确认。N 轮后自动 promote（带置信度阈值）是后续可选项，但需防 LLM 幻觉导致的错误记忆固化为 active。
+
+### 测试
+
+memory 包从 119 增至 131 测试（+12：`extractor_test.go` 8 个——JSON 解析、错误降级、trivial 跳过、markdown fence、prose 前缀、空数组、malformed 过滤、nil 禁用；bitemporal_test.go 补 4 个——ListTimeline 含 superseded/pending、排序、Promote/Reject 守卫）。desktop 新增 `memory_view_test.go`（3 个 DTO 映射测试：双时间字段透传、零值时间省略、基础字段保留）。control 包零回归（OnTurnEnd 注入不破坏现有测试）。前端 `tsc --noEmit` 干净。
+
+---
+
+## [0.3.0] — 2026-06-25
+
+**记忆模块重构：双时间机制真正打通 + SQLite 时序索引层 + 用户画像全量注入 + 生产硬化。** 针对 v0.2.0 声明但未兑现的能力做系统性修复——"3月住北京、5月搬上海"在任何时刻都能答对（经文件路径与 SQL 索引双重验证）；冲突检测从"只查同名"升级为"同 Type 全扫描"，根治不同名矛盾导致的记忆错乱；在现有 FTS db 上新增 `facts` 时序表（零新依赖），实现"文件为真相源 + SQL 索引为加速层"的混合架构（Zep/Graphiti 轻量平替）；并补齐工业级运维能力——消除 SQL 注入隐患、堵住读路径崩溃漂移盲区、接入结构化日志。**memory 包从 21 测试增至 119，boot/control/cli 零回归，`go vet` 干净**。
+
+### Fixed — 致命缺陷（双时间机制假象）
+
+- **ListAsOf 时间回溯是假的（`store.go`）**：v0.2.0 的 `ListAsOf` 直接遍历 `List()`（仅 active），而被 Supersede 的历史记录（住北京）已进 `.archive/` 且 `status=superseded`——回溯查询永远查不到它。原测试 `TestListAsOfTimePoint` 能过，是因为它**手动构造了不触发 Supersede 的场景**（用不同 name 让两条都留 active），制造了正确性假象。重写为扫描 active + dormant + `.archive/` 的 superseded，day-granular 时间过滤。`TestListAsOfAfterRealSupersede` 用真实同名覆盖路径验证 March→北京、June→上海。
+- **冲突检测只查同名（`remember.go` + `store.go` + `conflict.go`）**：v0.2.0 的 `remember.Execute` 只 `Get(slug(name))`，"住北京(name=address)" vs "住上海(name=location)" **检测不到**，两条共存 → Agent 随机读到一条。`boot.go:724` 注释声称"catches different-name contradictions"但实现从没兑现。新增 `Store.ListActiveByType(t)`，remember 改为遍历同 Type 全部 active 记录做 LLM 检测，首条冲突即 Supersede 并 break（防 LLM 调用爆炸）。`TestConflictDetectionDifferentName` 验证不同名矛盾被检测、北京归档为 superseded 且 `superseded_by` 链完整。
+- **ExpireTTL 从未被调用（`compact.go`）**：v0.2.0 的 `memory_compact` 只调 `Decay()` + `archiveDormant()`，设了 TTL 的事实永不自动过期（与 v0.2.0 changelog "TTL 自动过期" 声明矛盾）。现加 Step 0：`store.ExpireTTL()`，先归档过期 TTL 再 Decay。
+- **ExpireTTL 字符串比较日期（`store.go`）**：`m.TTL <= today` 用字符串比较，格式错会静默归档或漏归档。改 `parseDate` 后时间比较，格式非法跳过。`TestExpireTTLMalformedSkipped` 验证 `not-a-date` 不被误处理。
+
+### Fixed — 数据一致性
+
+- **Supersede 替代链断裂（`store.go`）**：`Supersede()` 显式 `m.SupersededBy=""` 依赖调用方设置 → 链可能断。签名加 `replacedBy string` 参数强制传入新名。
+- **Decay 跨目录永久删除（`store.go`）**：v0.2.0 用 `os.Remove` 删跨目录副本，违背"旧事实不丢失"。改 `archiveInDir` 归档保留。`TestDecayArchivesNotDeletes` 验证。
+- **Get 访问追踪竞态（`store.go`）**：loadMemory 在锁外、写入在锁内，两个并发 Get 读同一份旧 AccessCount 各自+1 写回，丢一次计数。改为读改写全程在 `fileLockFor` 锁内原子。
+- **降级路径漏 dormant（`store.go`，v0.3.0 引入的回归）**：索引路径 `QueryAsOf` 含 dormant（仍是当前真），但降级路径 `activeAndSuperseded()` 只取 active+archive，dormant 被两边漏掉——同查询两路径结果不同。`activeAndSuperseded` 合并 `ListDormant()` 对齐。
+
+### Fixed — 生产硬化（安全 / 一致性 / 健壮性）
+
+- **SQL 注入隐患（`fts.go`）**：`searchInternal` 时间点查询的 `asOfDate` 原用 `fmt.Sprintf` 直拼 WHERE 子句——虽当前调用方只传受控的 `time.Format()` 值，但这是脆弱保证，任何未来调用方传用户输入即中招。改为参数化 `?` + 动态 `args` 切片，与同文件其它查询风格一致。`TestSearchAsOfInjectionSafe` 传 `' OR 1=1 --` 验证不爆不漏。
+- **读路径崩溃漂移（`boot.go` + `service.go`）**：启动流程原只跑 `EnsureSchema`（仅 schema 落后时 Rebuild），**不跑常规 Reconcile**。后果：上次会话若崩溃留下"索引比文件新"的中间态，`List/ListAsOf/ListActiveByType` 这些走索引的读会读到幽灵行——因为它们不经 Search 的 lazy Reconcile。现启动时强制 `svc.Reconcile()`，运行时崩溃由下次启动兜底（无需脏标记机制，评估为过度工程）。`TestBootReconcileRecoversFromCrash` 模拟文件被删留孤儿行、新进程启动后读路径恢复正确。
+- **archiveTimeFromName 脆弱解析（`store.go`）**：原 `name[:20]` 硬编码取时间戳，归档文件名格式一旦有前缀即错位。改正则 `^\d{8}-\d{6}\.\d{3}-` 锚定提取；原有 mtime fallback 保留。
+- **scope 判断 Windows/前缀误判（`store.go`）**：`indexUpsert` 用 `strings.HasPrefix(path, GlobalDir)` 判 scope，Windows 盘符大小写（`C:` vs `c:`）、同名目录前缀（`/cfg/global` vs `/cfg/global-backup`）会误标。新增 `hasPathPrefixFold`：`filepath.Clean` 归一 + `EqualFold` 大小写不敏感 + 分隔符边界检查。**有意不用 `EvalSymlinks`**——它在写路径引入 I/O，而 Reconcile 全量扫描是权威兜底。`TestScopeDetectionBoundary` 覆盖 5 种边界。
+
+### Added — 时序索引层（阶段二）
+
+在现有 FTS db（`modernc.org/sqlite`，零新依赖）新增 `facts` 时序表，实现混合架构：**文件为真相源（人可读/手改/git 友好）+ SQLite 索引为派生加速层（可 Rebuild 重建）**。
+
+- **facts 时序表（`fts.go`）**：18 列覆盖全部双时间字段 + `body_hash` + 三个索引（status/name/type+status）。schema v2→v3，`EnsureSchema` 自动 rebuild。`FactRow` 结构 + `UpsertFact`。
+- **写入即时同步（`store.go`）**：`Save/Archive/Supersede/Decay/Activate` 每个写操作后 `indexUpsert`/`indexRemove`，索引不滞后真相源。`archiveAsSuperseded` 改返回路径以便 Save 同步归档行（否则同名覆盖后历史记录查不到——`TestIndexResolvesSupersededHistory` 抓到）。
+- **查询走 SQL（`store.go`）**：`ListAsOf`/`ListActiveByType` 在索引可用时走 `QueryAsOf`/`QueryActiveByType`（廉价 SQL 过滤），仅加载命中 path 的完整 Memory；索引不可用时降级走文件扫描。
+- **Reconcile 扩展（`reconcile.go`）**：扫描范围扩到 `.archive/`，superseded 历史进 facts 表；fingerprint 双表比对（FTS + facts 都一致才跳过）。`QueryAsOf` 含 active+superseded+dormant（排除 archived）。
+- **FTS 索引扩展（`fts.go`）**：title/description 从 UNINDEXED 改为可索引列，schema v3→v4。原"问题6"——搜标题关键词无结果——修复。`TestFTSSearchTitleAndDescription` 验证 title-only 关键词可搜。
+- **Store 持索引句柄（`store.go` + `boot.go`）**：`Store` 加可选 `*FTSStore` 字段（值类型复制共享指针），`AttachIndex` 方法。boot 调整初始化顺序：先建 SearchService → AttachIndex → 再建工具，所有工具绑定的 Store 自带索引能力。
+
+### Added — 用户画像全量注入
+
+- **画像块注入系统提示词（`store.go` + `memory.go`）**：`Store.ProfileBlock()` 把 active TypeUser 事实按 Category（identity/style/belief/temporal/feedback）渲染成结构化画像块；`Block()` 全量注入系统提示词，模型默认就知道用户是谁（角色/偏好/环境），无需调 `memory_profile`。空画像时整段省略（不污染缓存前缀）。`memory_profile` 工具复用同一渲染，保证注入与工具输出一致。
+- **remember 补 category/tags（`remember.go` + `store.go`）**：Schema 加 `category`（enum）+ `tags`（string[]）；`NormalizeCategory` 校验。修复 v0.2.0 的画像分组断裂——remember 写不进 category，`memory_profile` 输出全落 "Other" 桶。
+
+### Added — 工程质量
+
+- **Index 合并保留分组（`store.go`）**：`Index()` 按 global 组 + project 组分组输出（组内字母序），不再全局 sort.Strings 重排——保留"我是谁"vs"我在做什么"的结构。
+- **中文变量名清理（`query.go` + `profile.go`）**：`时效` → `validity`。
+
+### Added — 可观测性（`log/slog`）
+
+索引层此前完全静默：同步失败是 `_ =` 吞掉、schema 迁移无提示、Reconcile 修复量不可见，生产排障无信号。现接入结构化日志：
+
+- **索引同步失败**（`store.go` `indexUpsert`/`indexRemove`）：FTS/facts 写失败打 `slog.Warn`（自愈于下次 lazy Reconcile，但持续失败如 db 锁死会浮现）。
+- **schema 迁移**（`service.go` `EnsureSchema`）：版本升级时打 `slog.Info("memory: migrating index schema", from, to)`——一次性、可能较慢，需可见。
+- **Reconcile 修复量**（`reconcile.go`）：仅 `pruned>0 || reindexed>0` 时打 `slog.Info("memory: index reconciled", pruned, reindexed)`，正常启动不刷屏。
+
+### Not Done（经评估）
+
+- **Get 访问追踪异步化**：保留同步实现（锁内读改写，计数准确）。异步化需引入后台 worker + 与 Save 的写冲突处理，复杂度高；且 Get 非真实热点（List/query 已走索引）。**无 profiling 数据支撑前判为过早优化**，正确性优先。
+
+### 测试
+
+memory 包从 21 增至 119 测试，新增覆盖：真实 Supersede 后的 ListAsOf 回溯（证伪旧假象测试）、不同名冲突检测、ExpireTTL 接入/格式容错、Decay 跨目录归档保留、remember category/tags 落盘、facts 索引一致性、Rebuild 幂等、崩溃恢复自愈、v3→v4 schema 迁移、FTS title 搜索、跨目录 GlobalDir+Dir 路由、降级路径正确性、SQL 注入防御、启动崩溃恢复、scope 边界（Windows 盘符/同名前缀）。
+
+---
+
+## [0.2.5] — 2026-06-23
+
+**记忆模块首版落地：双时间机制 + 衰减压缩生命周期。** 这是记忆系统的初始实现——给 `remember` 加上 ValidFrom/ValidTo（现实生效时间）+ CreatedAt/UpdatedAt（系统时间）的双时间模型，旧事实覆盖后移入 `.archive/` 而非删除；并建立 Hot（活跃）→ Warm（休眠）→ Cold（归档）的三层生命周期。注：本版的 ListAsOf 回溯、冲突检测（仅同名）、ExpireTTL 接入在 v0.3.0 被发现存在致命缺陷并系统性修复，详见 v0.3.0 changelog。
+
+### Added — 双时间记忆机制（Bitemporal Memory）
+
+解决记忆系统「覆盖即丢失」问题：用户3月说住北京、5月说搬到上海，`remember` 覆盖后旧事实静默消失。
+实施 6 个 Phase，~9 工作日压缩为一次提交。
+
+- **Memory 结构体扩展（`store.go`）**：新增 7 个字段 `CreatedAt`/`UpdatedAt`（系统写入时间）/`ValidFrom`/`ValidTo`（现实生效时间，YYYY-MM-DD）/`Status`（active/superseded/archived）/`Supersedes`/`SupersededBy`（替代链）。
+  `render()` 写入 frontmatter，`loadMemory()` 解析 + 向后兼容（缺 CreatedAt 回退 file mtime，缺 Status 默认 active）。
+- **Supersede 机制（`store.go`）**：`Save()` 同名覆盖时自动将旧记录移入 `.archive/`（Status=superseded），新记录带 `Supersedes` 链。
+  新增 `Supersede(name, validTo)` 方法供冲突检测调用；`Get(name)` 返回单条活跃记忆；`ListSuperseded(name)` 查历史链。
+- **Valid Time（`store.go`）**：`ListAsOf(t time.Time)` 查某时间点有效的记忆——`valid_from <= t AND (valid_to >= t OR 空)`。
+  `remember` 工具 schema 新增 `valid_from`/`valid_to` 可选参数，description 引导模型将"3月"转 `2026-03-01`。
+- **冲突检测（`conflict.go`，新）**：`ConflictDetector` 接口 + `LLMConflictDetector`（10s 超时，失败降级为不检测）。
+  `remember.Execute()` 写入前检查同名活跃记录，冲突时自动 `Supersede`。boot 层通过 `providerChatFunc(execProv)` 接入主 provider，同名覆盖走 Save 内置链。
+- **FTS5 升级（`fts.go`）**：新增 `status`/`valid_from`/`valid_to` 列 + `schema_version` 表。
+  `UpsertWithTime` 写入时带时间元数据；`Search` 默认过滤 `status=active`；`SearchAsOf(query, t)` 支持时间点检索。
+  `EnsureSchema()` 启动时自动检测版本，不匹配则 `Rebuild()`。
+- **`memory_query` 工具（`query.go`，新）**：支持 `query`（关键词）+ `as_of`（YYYY-MM-DD 时间点）参数，回答「3月住哪」类问题。
+  无 FTS 时降级为 `ListAsOf`。
+- **系统提示词增强（`memory.go`）**：`Block()` 注入当前日期（`Today's date is 2026-06-24`），引导模型使用绝对时间。
+- **21 个新测试（`bitemporal_test.go`）**：时间字段 round-trip、向后兼容、Get、Supersede 链、ListAsOf 边界、FTS SearchAsOf、schema 版本、memory_query 工具、冲突检测 mock。
+
+### Added — 记忆衰减与压缩（Decay / TTL / Compaction）
+
+记忆系统从「只增不减」升级为分层生命周期管理：Hot（活跃）→ Warm（休眠）→ Cold（归档），配合 TTL 自动过期和手动压缩。
+
+- **Memory 结构体扩展（Phase 7，`store.go`）**：新增 `LastAccessedAt`（最后读取时间）/ `AccessCount`（读取次数）/ `TTL`（YYYY-MM-DD 自动过期）/ `Importance`（high/medium/low）/ `Category`（identity/style/belief/temporal/feedback）/ `Status` 扩展为含 `dormant`。
+  `render()`/`loadMemory()` 处理全部新字段，向后兼容。
+- **衰减引擎（`store.go`）**：`Decay(cfg)` 扫描活跃记忆，`importance!=high` 且自上次访问（`LastAccessedAt`，缺省回退 `CreatedAt`）超过 `DecayDays`（默认 30）→ 标记 dormant。
+  `Importance=low` 阈值减半。`ExpireTTL()` 扫描 `TTL <= today` 的记忆自动归档。`Activate(name)` 将 dormant 记忆复活为 active。
+- **`remember` 工具扩展**：schema 新增 `ttl`（YYYY-MM-DD，自动过期日期）和 `importance`（high/medium/low，影响衰减速率）可选参数。
+- **`Tags` 字段（`store.go`）**：`Memory.Tags []string` 自由标签，JSON 序列化写入 frontmatter，逗号/引号安全。
+- **分层查询**：`List()` 只返回 active（Hot）；`ListDormant()` 返回 dormant（Warm）；`ListArchived()` 返回 Cold。`ListByCategory()` 按类别过滤。
+- **`memory_compact` 工具（`compact.go`，新）**：一键执行两步压缩——Step A 衰减（active→dormant）、Step B 归档（dormant 超过 ColdDays 默认 90 天→archived）。可逆：归档记录保留在 `.archive/`。
+- **`memory_recall` 工具（`recall.go`，新）**：将 dormant 记忆复活为 active。当 `memory_status` 显示休眠事实或用户重新提到旧话题时使用。
+- **`memory_profile` 工具（`profile.go`，新）**：输出结构化用户画像，按类别分组（Identity / Style / Technical Beliefs / Temporal / Feedback / Other）。响应「你了解我什么」类问题。
+- **`memory_status` 工具（`status.go`，新）**：报告记忆系统健康状态——各层事实计数、Hot 层容量使用率、最久未访问事实、即将过期的 TTL。工具描述引导模型在会话开始或用户询问时调用。
+- **`boot.go` 注入**：`DecayConfig` 从 `DefaultDecayConfig()` 初始化；4 个新工具注册到 registry。
+
+---
+
+## [0.2.0] — 2026-06-23
+
+**coWork（办公智能体模式）完整上线。** 新增 profile 切换机制，一键把 MoMAPeer 从编程助手变成办公工作台；
+浏览器/桌面/PPT/邮件/RAG/文档/定时任务七大办公能力落地；**自动化面板**（定时任务图形化：at/in 表达式 + 中文相对时间词 + 5 模板 + 飞书/邮件/通知投递 + 运行历史）与 **RAG 知识库面板**（分层检索：FTS5 即时原文 + 后台 LLM 结构化抽取，带进度条与 ETA 预估）与 **专家团面板**（多模型协作：parallel/debate/pipeline 三模式 + 流式讨论 + RPM 限流）三大面板上线，**cowork 四面板全活**（助理/专家/自动化/资料库）；**Office 代码生成矩阵补齐**（docx 写入手写 OOXML + xlsx 结构化样式/公式/合并 + 思维导图 md/html + RAG→思维导图搭桥）；**全局请求预算**（RequestBudget）——按 API key RPM 限流，主 agent 优先，专家团/RAG/IM 后台排队；**快捷截屏闭环**（全局热键 Ctrl+Shift+S → 截屏 → qwen/qwen3.6-27b 识图 → IM 回复 + 弹窗，设置页开关，默认关闭）；修复 5 个 BUG（含 2 个并发数据竞争）+ 2 个既有 flaky 测试 + **对照 Reasonix 上游审计修复 5 项**（MCP HTTP 会话过期、SoftTrim 死代码、ResolveShell 缓存、Topic 迁移标记、ListBranches 缓存）。
+（记忆模块的双时间机制与衰减压缩生命周期随本版落地，详见 [0.2.5]；其致命缺陷由 [0.3.0] 系统性修复。）
+实现细节与设计依据见 `docs/COWORK_IMPLEMENTATION_PLAN.md`（v2.2，唯一真相来源）。
+
+### Added — Profile 切换机制（Phase 0）
+
+- **profile = 一束 `boot.Options` 覆盖**：一个 profile 封装 model + system prompt addon + skill 白/黑名单 + plugin 白名单 + workspace_type（前端布局提示）。
+  切换复用已证明的 `SetModelForTab` rebuild 流程（acquireSharedHost → snapshot 历史 → Ctrl.Close → boot.Build → Resume），
+  历史 100% 保留、MCP 子进程不被 teardown。内置 `dev`/`cowork` 两个 profile，可用 `[[profiles]]` 覆盖。
+  - `internal/config/profile.go`（新）：`Profile` 类型 + `ResolveProfile`/`PluginAllowedByProfile`/`ResolveSkillDisabled` + 5 个单元测试。
+  - `config.go`：`Config.Profiles []Profile`（TOML `[[profiles]]`）+ `CoworkConfig`（browser_path/wps_ppt_*/SMTP/IMAP/embedding_model）。
+  - `boot.go`：`Options.Profile` 字段 + 5 处覆盖（model/effort/system-prompt/skills/plugins）。
+  - `desktop/app.go`：`SwitchProfile`/`SwitchProfileForTab` + `Profile`/`ProfileForTab`/`Profiles` 查询 + `profile:changed` 事件。
+  - 前端：`lib/profile.tsx`（ProfileProvider）、`layouts/CoWorkLayout.tsx`（三栏骨架）、`AppChrome` 切换按钮、`styles.css` cowork 布局、21 个 i18n key。
+
+### Added — 浏览器自动化（Phase 1，对标 Playwright MCP）
+
+- **`browser_*` 工具从 cowork 专属改为 built-in**（dev + cowork 都可用，与 web_search 并列）。
+  浏览器自动化是通用能力（编程时查文档/调试前端/看 API 同样需要），不再锁 cowork。
+  `browser-auto` skill 描述改为通用（去掉 coWork 限定）。screen_*/PPT/邮件/RAG/定时任务继续锁 cowork。
+- **`internal/tool/builtin/browser.go` + `browserdetect.go` + `browsersnapshot.go`**（11 工具）：
+  - 会话池：进程级单例 chromedp allocator（共享，不每 tab 启独立 chrome）+ 10 分钟空闲回收 + 30s 操作超时。
+  - **浏览器自动发现**：Chrome → Edge → Brave（跨平台候选路径）+ `[cowork] browser_path` 持久化 + `browser_set_path` 引导闭环
+    （找不到 → agent ask 用户路径 → set_path 验证+持久化 → 重试）。找不到时返回明确的 ErrNoBrowser + 安装指引。
+  - **ref 系统**（对标 Playwright MCP 核心范式）：`browser_snapshot` 返回无障碍树 + ref(e1..)，
+    `browser_click`/`browser_type`/`browser_select_option` 接受 ref（dom.ResolveNode + runtime.CallFunctionOn）。
+    三通道：ref（首选，零歧义）> CSS 选择器 > 坐标 `{x,y}`（VLM 截图兜底）。navigate 后 refs 自动失效。
+  - React/Vue 兼容：type 用原生 value setter + dispatch input/change 事件（React 控制型输入唯一可靠方式）。
+  - 依赖：`chromedp`（纯 Go，零 CGO）—— go.mod 唯一新增依赖。
+  - 7 个单元测试（roster/readOnly/looksLikeRef/selectorFromArgs/displayName/verifyExe/upsert 配置写入）。
+- **`browser-auto` skill**（subagent）：navigate→snapshot→ref 操作→验证 循环指引。
+
+### Added — 桌面自动化（Phase 2，Windows 原生）
+
+- **`screen_windows.go` + `screen_other.go`（stub）+ `uitree_windows.go` + `uiauto_windows.go`**（5 工具）：
+  - `screenshot`：Win32 BitBlt + GetDIBits（BGRA→RGBA），存 PNG + base64 缩略图，支持 region。
+  - `screen_click`/`screen_type`/`screen_scroll`：SetCursorPos + SendInput（鼠标按键/双击/Unicode 键盘/滚轮）。
+    `screen_type` 用 KEYEVENTF_UNICODE 逐字符，任意键盘布局 + 中文都行。
+  - `get_ui_tree`：EnumWindows + EnumChildWindows + GetWindowRect/GetWindowText，返回窗口 + 子控件（按钮/编辑框/标签）的标题/类名/精确矩形。
+    传 `title_prefix` 时返回目标窗口的子控件级精度（VLM 点控件中心而非猜坐标）。
+  - **路线决定**：弃 robotgo（CGO 构建脆弱），用 Win32 syscall（`golang.org/x/sys/windows` 已直接依赖，user32/gdi32 走 NewLazySystemDLL）。
+    零新增 CGO。元素级 full IUIAutomation COM 未做（EnumChildWindows 覆盖主要痛点，零 COM 依赖）。
+  - 跨平台：非 Windows `ScreenTools()` 返回 nil，cowork 仍可用（浏览器+VLM），仅缺桌面控制。
+- **`computer-auto` skill**（subagent）：截图→image_understand→get_ui_tree 精确定位→操作→再截图验证 循环。
+
+### Added — 办公能力矩阵（Phase 3）
+
+- **PPT（接入 wps-ppt-mcp-server，23 个 `mcp__wps-ppt__*` 工具）**：
+  - `config.Cowork.WPSPPTServerPath` + `builtinmcp.WPSPPTEntry()`（stdio MCP，background tier）+ `boot.go` 去重注入 + `EnsureWPSPPTDeps`（pip install）。
+  - `ppt-wizard` skill（前置依赖检查 + 14 元素/12 布局/4 预设）。5 个测试。
+  - PPT 通过 WPS 演示 COM 自动化（`win32com.client.Dispatch("KWPP.Application")`）渲染，质量远高于手写 OOXML。
+- **定时任务（`internal/scheduler/`，新包，4 工具）**：
+  - 表达式引擎：`every 30m` / `daily 09:00 Mon-Fri` / 5 字段 cron，**自研无 robfig 依赖**（`expr.go`）。
+  - JSON 持久化（`scheduled_tasks.json`，重启保留）+ desktop 启动加载 + Runner 桥接活动 controller + 30s tick。
+  - `schedule_create`/`list`/`delete`/`update` + 11 个测试（含跨重启持久化、CJK 时间、mid-run Update 回归）。
+
+### Added — 自动化面板（定时任务图形化，对标 WorkBuddy "添加自动化任务"）
+
+把定时任务从「只能在聊天里 schedule_create」升级为完整图形面板：任务卡片列表 + 三段式新建表单（触发器/动作/投递）+ 运行历史抽屉。引擎同步升级，支持中文相对时间、一次性任务、多种投递渠道。
+
+- **表达式引擎升级（`internal/scheduler/expr.go`）**：新增 `at 2026-06-24 15:00`（一次性绝对时间，触发后自动停用）+ `in 2h30m`/`in 3d`（相对偏移，存储前归一化为绝对 `at`，重启不漂移）。
+  `NormalizeExpression`/`IsOneShot` 导出，`parseExpression` 拒绝裸 `in`（必须先归一化）。
+- **中文相对时间词解析（`reltime.go`，新）**：今天/明天/后天/大后天/前天/大前天/下周X/本周X/周X/N号/N月N日/月底/上午下午晚上N点/N点半/N点M分/HH:MM。
+  `ResolveRelativeTime` 把"后天下午3点"→绝对时间戳；未来守护规则：解析到今天且时间已过则滚到明天，但显式日期（下周一/3号）原样保留。
+  "下周X"按周一为起算 +7 天。11 个测试覆盖偏移词、星期词、非法输入、完整日期。
+- **运行历史（环形缓冲）**：`history []RunRecord`（最近 100 条）持久化到 `scheduled_tasks.json.history`。`History(taskID)` 按任务过滤、
+  新到旧排序；新增 `schedule_history` 工具 + `RunNow(id)` 方法（用于工具/UI"立即运行"，不影响原计划）。
+- **投递模式扩展**：`OutputMode` 从 `"" | "im" | "file"` 扩到 `"" | "im" | "email" | "notify" | "file"`。
+  新增 `EmailSender`/`Notifier` 接口（与 `IMPusher` 平行）。`email` 复用 SMTP（新增 `builtin.SendPlainText` 导出）；
+  `notify` 通过 `runtime.EventsEmit("scheduler:notice")` 推前端 toast（即使用户不在自动化 tab 也能收到）。
+  `deliverOutput` 签名扩为接收 4 个 sink，best-effort 不失败任务。
+- **OneShot 自动停用**：`ScheduledTask.OneShot` 字段；`fireDue` 触发后写 `Enabled=false`、`NextRun=zero`，保留记录供历史查看。
+  `Load` 时检测已过期的一次性任务自动停用。`Create`/`Update` 拒绝过去时间的 one-shot。
+- **5 个内置模板（`templates.go`）**：日报提醒 / 周报提醒 / 会议提醒 / 定时数据抓取 / 系统巡检，
+  每个带触发器+动作+投递预设，UI 一键套用后可改。
+- **Go→前端桥（`desktop/scheduler_app.go`，新）**：10 个导出方法 `ListScheduledTasks`/`CreateScheduledTask`/`UpdateScheduledTask`/
+  `DeleteScheduledTask`/`PauseScheduledTask`/`ResumeScheduledTask`/`RunScheduledTaskNow`/`ScheduledTaskHistory`/
+  `ScheduledTaskTemplates`/`PreviewSchedule`。JSON 友好的 `TaskView`/`RunRecordView`/`TemplateView`/`SchedulePreview`
+  （时间字段预格式化为 `2006-01-02 15:04`）。`scheduler:changed` 事件让前端列表自动刷新，`scheduler:notice` 接 toast。
+  `PreviewSchedule` 支持相对词→绝对时间实时预览（"后天下午3点" → "→ 2026-06-24 15:00"）。
+- **前端自动化面板（`components/cowork/`，新）**：`AutomationPanel`（任务卡片列表 + 模板快选 + 订阅 `scheduler:changed`/`scheduler:notice`）、
+  `TaskForm`（触发器+动作+投递三段式模态，含相对词实时预览 + 4 个快捷按钮）、`TaskCard`（运行/暂停/编辑/删除/历史 + 折叠的最近结果）、
+  `RunHistory`（右侧抽屉，按任务过滤的运行记录）。`Describe` 把表达式转中文（"工作日 09:00"）。50+ 个 i18n key（zh/en）。
+  复用现有 `cowork-*` CSS 变量，z-index 用 `--z-modal` token。
+
+### Added — RAG 知识库面板（分层检索：FTS5 + 结构化抽取）
+
+- **痛点**：FTS5 切块检索在跨句/跨段事实组合（"项目A谁负责+预算多少"）上精度弱，且无实体去重。研究 Hyper-Extract（同仓库 `Hyper-Extract/`）后确认：其"抽取+OMem 合并"范式从根上绕开切块问题，但引入 Python+faiss+langchain 重栈代价过大。
+- **决策**：借鉴 Hyper-Extract 的 prompt + 实体合并思路，**纯 Go 自研**抽取引擎；FTS5（即时原文检索）与结构化抽取（深度知识检索）并存，用户显式触发抽取以掌控 LLM 成本。
+- **表达式引擎（`internal/rag/entities.go`，新）**：SQLite 新增 4 张表（rag_jobs / rag_chunks / rag_entities / rag_relations）。`UpsertEntity`/`UpsertRelation` 实现 SIMPLE 合并（normalizeName = lower+trim；key 相等即同实体，合并 sources + 取更长 description；同义实体不合并，留作未来 LLM 合并）。`SearchEntities`/`RelationsOf`（含反向）/`HasEntities`/`EntityCount`。
+- **抽取 Pipeline（`internal/rag/extract.go`，新）**：
+  - `Extractor` 接口 + `jiutianExtractor`（`jiutian_extractor.go`，走九天/OpenAI `/chat/completions` + `response_format: json_object` + 代码围栏剥离 + 容错 JSON 解析）。
+  - `Pipeline`：队列 + 限速 worker（默认串行 + 3s 间隔，防限流）+ 指数退避重试（2/4/8s）+ `slidingWindow`（最近 50 次 chunk 耗时算均值）。
+  - `EnqueuePaths`：扫描文件夹（递归）→ 同步 FTS5 Import（秒级）→ 创建 rag_jobs + rag_chunks → 入队。用户立即看到文件树 + FTS5 可搜。
+  - `ProgressEvent` 通过 `runtime.EventsEmit("rag:progress")` 推前端，节流 1 次/秒；ETA = avgLatency × 剩余 chunks。
+  - `CancelJob`：标记 cancelled + 丢弃队列中该 job 的待处理任务（运行中的不中断）。
+  - `ExtractionPrompt`（中文化，借鉴 Hyper-Extract AutoGraph）+ `ParseExtractJSON`（容错解析）。
+- **rag_search 升级 + rag_graph 工具（`internal/tool/builtin/rag.go`）**：
+  - `rag_search` 现在返回**两层合并**：结构化命中（实体 + 其关系，高精度事实）+ FTS5 原文片段（可引用的来源）。当 collection 已深度抽取时，实体层优先；FTS5 永远兜底。
+  - 新增 `rag_graph` 工具：只查结构化层（实体 + 双向关系），用于"列出所有汇报给张三的人"这类纯关系查询。
+- **Go→前端桥（`desktop/rag_app.go`，新）**：9 个导出方法 `ListRagCollections`/`ListRagTree`/`RagImportPaths`/`RagStartExtract`/`RagCancelExtract`/`RagRemovePath`/`RagSearch`/`RagPreviewETA`/`RagListTemplates`。`rag:changed`（树刷新）+ `rag:progress`（进度推送）事件。`RagNodeView` 递归构建文件树（从 rag_jobs 的 rel_path 重建文件夹层级）。`app.go initRAG` 升级：创建 Pipeline + 从 `[cowork] extract_*` 读取配置 + 启动 worker。
+- **配置（`config.go`）**：`CoworkConfig` 新增 `extract_model`（LLM，空 = 深度提取禁用，FTS5 仍可用）/`extract_interval`（默认 3s）/`extract_concurrency`（默认 1）。
+- **前端 RAG 面板（`components/cowork/`）**：
+  - `RagPanel.tsx`：顶栏（导入文件/文件夹按钮 + collection 下拉 + 实体统计）+ 嵌入式检索框（防抖 300ms，显示结构化+原文双层命中）+ 文件树。订阅 `rag:changed`（全树刷新）+ `rag:progress`（按 jobId 局部合并进度，不重拉整树）。支持拖拽导入（`--wails-drop-target`）。
+  - `RagNode.tsx`：递归树（文件夹展开/折叠 + 文件夹/文件图标 + 深度缩进）。文件行：状态徽章（FTS5✓/抽取中/已抽取/出错/已取消）+ 进度条（抽取中，native `<progress>` + 百分比）+ ETA 悬浮提示（`<Tooltip>` 显示"已 X/Y 块 · 平均 Zs/块 · 预计还需 N分M秒"，3s 轮询 `RagPreviewETA`）+ 操作按钮（深度提取/取消/移除）。
+  - i18n：`cowork.rag*` 26 个 key（zh/en）。CSS：`cowork-rag*` + `rag-node*` 样式，复用 `--ok/--warn/--accent/--err` 变量。
+- **降级策略**：未配 extract_model → 深度提取按钮禁用但 FTS5 完全可用；LLM 不支持 json_schema → 降级 json_object + 围栏剥离 + 容错；单 chunk 重试 3 次仍失败 → 标记 error，job 继续；全部失败 → job=error 显示重试。
+- **测试**：`internal/rag/` 新增 12 个测试（实体 SIMPLE 合并/同义不合并/关系双向/空实体跳过/job 进度/全失败翻转/JSON 解析/围栏剥离/pipeline 端到端/重试后成功/取消/滑动窗口）。scheduler 包 at/in/相对词测试不变。
+
+- **邮件读取（go-imap + go-message）**：`email_read`/`email_search`（IMAP LOGIN/SELECT/SEARCH/FETCH）。
+  协议级正确：完整 SEARCH、RFC 2047 编码头解码、multipart MIME、字符集转换。`[cowork.imap]` 配置，空 = 禁用。
+- **RAG 知识库（`internal/rag/`，新包，4 工具）**：
+  - FTS5 全文检索（CJK-aware，复用 memory tokenizer 经验）+ 文档导入→分块（段落合并/窗口）→按 collection 检索→删除。
+  - **embedding 向量层（混合检索）**：`[cowork] embedding_model` 配置后，rag_search 过取 top_k×4 → `Store.Rerank` 用 embedding cosine + BM25 混合重排。
+    空 = 纯 FTS5（graceful degradation，离线可用）。embedder 走 Jiutian `/embeddings`。
+  - 6 个测试（含 CJK 搜索、re-import 替换、二进制格式拒绝、rerank 语义重排）。
+- **IM push 全打通**：`bot.BotGateway.Push(dest, text)` 出站推送（dest=`platform:chatID`）；
+  scheduler `OutputMode="im"`/`"file"` 自动路由（IM push best-effort，不失败任务）；desktop 懒绑定 botGW。
+- **邮件发送（SMTP，纯 stdlib）**：`email_send` 支持 text/html 正文、CC/BCC、附件、隐式 TLS(465)/STARTTLS(587)/plain(25)。
+  密码走环境变量（`password_env`），不存 TOML。4 个测试（地址解析、消息构建、HTML、附件）。
+- **文档处理（纯 stdlib，7 工具）**：`doc_read`/`doc_write`（csv/json/md/txt/html）+ `csv_read`/`csv_write` + `doc_convert`（md↔html/json 美化）。
+  6 个测试（roundtrip、CSV、JSON 美化、md→html、append、不支持格式报错）。
+- **xlsx 读写（excelize）**：`xlsx_read`/`xlsx_write` 支持真 .xlsx，样式/公式/多 sheet/合并单元格/日期（excelize/v2 v2.10.1）。
+  写入经 CoordinatesToCellName 定位，读取经 GetRows 跨 sheet 聚合。6 个测试（含 write+read roundtrip）。
+- **docx/pptx 文本提取（纯 stdlib）**：`doc_read` 支持 .docx（拉 `<w:t>` runs 按段落拼接）/ .pptx（按 slide 拉 `<a:t>` runs）。
+  写 .docx 现已支持（见下方"Office 代码生成矩阵补齐"）。
+
+### Added — Office 代码生成矩阵补齐（docx 写 + xlsx 结构化 + 思维导图 + RAG→思维导图）
+
+把"代码生成 > 操作应用"的原则贯彻到 Office 全家桶：docx 新做、xlsx 升级、思维导图新增、并打通 RAG→思维导图。四者同构（`JSON 描述 → 引擎生成 → 文件`），零新 Go 依赖。
+
+- **docx 代码生成（`docxwrite.go`，新，纯 stdlib）**：之前 docx 只能读不能写。新增 `writeDOCX` 把结构化 `DocInput{title, sections}` 编译成标准 .docx（手写 OOXML：`word/document.xml` + `styles.xml` + `numbering.xml` + `[Content_Types].xml` + rels → zip）。支持段落类型：heading（H1-3，含大纲级别）、paragraph、list（bullet/decimal，走真正的 numbering 定义）、table（表头行高亮 + 边框 + 单元格底纹）。样式：bold/italic/color/size(半磅)/font/align/bg，编译成 `<w:rPr>`/`<w:pPr>`/`<w:shd>`。`doc_write` 工具扩展：识别 `.docx` + `sections` JSON。A4 页面 + 默认页边距。4 个测试（roundtrip 经我们的 readDOCX 读回、空/最小文档、HTML 转义 `&<>`、父目录自动创建）。
+- **xlsx 结构化写入升级（`xlsxwrite_structured.go`，新，excelize）**：之前 `XLSXWriteRows` 只能把二维数组塞进 Sheet1（无样式/公式/多 sheet）。新增 `XLSXWriteStructured{sheets}`：多 sheet、按 A1 ref 稀疏定位的 cell（value XOR formula）、样式（bold/italic/color/bg/size/font/align/wrap/border → `excelize.NewStyle`）、数字格式（`#,##0`/`0.00%`/`yyyy-mm-dd`）、合并单元格（`MergeCell`）、列宽（`SetColWidth`）。`doc_write`/`xlsx_write` 的 xlsx 分支自动识别：content 是对象走结构化、是数组走旧的 rows 兼容路径。4 个测试（多 sheet 名称保留、公式+样式 roundtrip、合并+列宽、rows 向后兼容）。
+- **思维导图生成（`mindmap.go`，新，纯 stdlib）**：新增 `mindmap_create` 工具，接受树形 `branches` JSON，输出 `.md`（嵌套标题层级，markmap/Obsidian 友好，H1-H6 后转 bullet）或 `.html`（自包含交互式 SVG 思维导图——内嵌 markmap-view + d3 CDN，双击即在浏览器展开，零安装）。`format` 可显式覆盖路径扩展名。6 个测试（md 嵌套结构、无标题 H1、html 自包含、format 覆盖、>6 层转 bullet、工具 Execute 端到端）。
+- **RAG→思维导图（`rag_mindmap` 工具，搭桥）**：复用 `mindmap_create` 的生成器 + RAG 的 `RelationsOf`。以一个实体为根，沿关系图向外展开（默认深度 3，上限 5）成一棵树——关系类型变成分支标签（`[负责] 张三`），**带环检测**（visited 集合，循环 A→B→A 不会死循环，重访节点标记"见上文"叶节点）。等于把 RAG 抽取的知识图谱多了一个可视化出口。3 个测试（图展开、环检测、空 collection 优雅降级）。
+
+### Added — 快捷截屏闭环（全局热键 → VLM 识图 → IM 回复）
+
+目标第 7 项的尾部场景完成。用户按 `Ctrl+Shift+S`（任意应用前台，MoMAPeer 后台也触发）→ 全屏截图 → qwen/qwen3.6-27b 识图 → 结果发 IM + 前端弹窗。默认关闭，用户在设置页开关。
+
+- **配置（`CoworkConfig` 新增 3 字段）**：`screenshot_enabled`（默认 false）/ `screenshot_hotkey`（默认 "Ctrl+Shift+S"）/ `screenshot_vlm_model`（默认 "qwen/qwen3.6-27b"，可选 "qwen/qwen3.5-397b-a17b"）。`normalizeCoworkDefaults` 填充空值默认。图片识别模型统一在此配置（不散落）。
+- **Win32 全局热键（`desktop/screenshot_hotkey_windows.go`，新）**：`RegisterHotKey` syscall（user32.dll，零 CGO，和现有截屏/输入同款）。创建隐藏 message-only 窗口接收 `WM_HOTKEY`，goroutine 泵消息循环。`parseHotkey` 解析 "Ctrl+Shift+S" → MOD 标志 + VK 码。`keyToVK` 支持 A-Z/0-9/F1-F12。
+- **截屏→VLM→IM 闭环**：`onHotkey` 触发 → `builtin.CaptureFullScreen`（复用现有 BitBlt 截屏）→ PNG base64 → `recognizeScreenshot` 走 `boot.NewProvider` 构造 VLM provider（自动限流 background 优先级）+ 多模态 ContentPart（image_url + text prompt "识别截图内容"）→ 结果 emit `screenshot:notice` 事件（前端 toast）+ `botGW.Push` 发 IM。
+- **设置面板（`CoWorkSection` 新增「快捷截屏」区块）**：启用开关 + 快捷键输入框 + 图片识别模型下拉（qwen/qwen3.6-27b / qwen/qwen3.5-397b-a17b）。`CoWorkSettingsView` + types + mock 同步加 3 字段。
+- **前端 toast**：App.tsx 订阅 `screenshot:notice` 事件，VLM 结果即时弹窗显示（不切 IM 也能看到）。
+
+### Changed — Office 文档工具矩阵升级后
+
+### Added — 专家团模式（多模型协作）+ 全局请求预算（RequestBudget）
+
+cowork 第四面板「专家团」上线，四面板全活。让多个大模型围绕同一任务讨论、互查、分工——利用 MoMA 多模型平台的独有优势。配套全局 RPM 限流基建，确保专家团不抢占主对话配额。
+
+- **全局请求预算（`internal/provider/budget.go` + `rate_limit.go`，新）**：按 API key 维度的令牌桶限流，用户在 `[llm] rpm` 配置自己的真实限额（MoMA 默认 5/min）。Provider 装饰器（`RateLimitedProvider`）在 `boot.NewProviderWithProxy` 返回处包裹，所有 LLM 请求（主 agent + subagent + RAG 抽取 + 专家团 + IM）自动经过限流，零改动调用点。
+  - **主 agent 绝对优先**（`reserve_main` 预留 2 个/分钟）：专家团等后台请求在剩余配额 ≤ reserve 时排队等待下一窗口，主对话永远可响应。
+  - RPM=0 无限流（向后兼容）。7 个测试（禁用/优先级/独立 key/reserve 钳位/status/透传/获取）。
+- **专家团持久化（`internal/experts/team.go`，新包）**：Team = 可复用的专家阵容（名字 + 模型 + 视角）+ 默认协作模式。JSON 持久化到 `expert_teams.json`（同 scheduler 模式）。2 个内置阵容（方案评审团 debate 2 轮 + 头脑风暴团 pipeline）。CRUD + 测试。
+- **编排引擎（`internal/experts/orchestrator.go`，新）**：三种协作模式：
+  - `parallel`（并行）：各专家独立答 → 主持人综合。
+  - `debate`（讨论，默认 2 轮）：第 1 轮各自答 → 第 2 轮看到彼此发言后补充/反驳 → 主持人综合（标分歧+裁决）。
+  - `pipeline`（流水线）：A → B（看 A 结果）→ C 链式。
+  - `CollabEvent` 流式推送（`experts:collab` 事件）：每个专家发言逐字流式显示（`expert_chunk`），主持人综合也流式。固定轮数（可预测成本）。7 个测试（三模式/流式/错误/CRUD）。
+- **desktop ExpertRunner（`desktop/experts_app.go`，新）**：直接用 `boot.NewProvider` 为每个专家构造独立 provider（自动带限流装饰器，background 优先级），一次性 Stream 调用收集结果——不需要完整 agent loop。7 个桥方法（ListExpertTeams/Create/Update/Delete/RunExpertTeam/ExpertBudgetStatus）+ 2 事件（experts:collab/experts:changed）。UI 显示 RPM 剩余配额。
+- **前端专家面板（`components/cowork/`，新 3 文件）**：`ExpertPanel`（团队选择 + 任务输入 + 模式/轮数 + RPM 配额指示 + 流式协作区）、`TeamManager`（团队 CRUD 模态：专家名/模型/视角动态列表）、`CollabStream`（按轮次分区的流式讨论 + 主持人综合）。复用 `cowork-taskform` 样式。29 个 i18n key（zh/en）。cowork 四面板全活（助理/专家/自动化/资料库）。
+- **配置**：`[llm]` section（`rpm`/`tpm`/`reserve_main`），`example.toml` 文档。
+
+### Added — 专家团扩充（8 内置阵容）+ 聊天内发起 + 空状态快捷起点
+
+参考腾讯 WorkBuddy 的「专家卡片」做法后取舍：不抄它单人 persona 卡片库（能力上被专家团多模型协作覆盖，纯增 clutter），而是补齐 (a) 覆盖办公闭环的协作型团队、(b) 让专家团在聊天里也能发起、(c) 空状态降低首次使用门槛。
+
+- **内置专家团 2 → 8（`internal/experts/team.go`）**：新增 6 个办公闭环团队，每个配套已有能力形成闭环——文档撰写团（pipeline：策划→起草→润色，配套 docx）、数据分析团（pipeline：提问→分析→解读，配套 xlsx）、翻译校对团（pipeline：译→校→审）、会议纪要团（pipeline：要点→决议→行动项，配套 scheduler/email）、项目规划团（debate 2 轮：进度官↔风险官↔资源官，配套思维导图）、邮件撰写团（pipeline：目的→起草→语气，配套 email）。每专家 Perspective 写具体中文角色指令（非泛泛"批判者"），同团队专家名唯一（前端 CollabStream 按 name+round 聚合，重名会错位）。
+- **老用户智能补齐（`desktop/experts_app.go` `seedBuiltinTeamsInto`）**：原 `initExperts` 只在 store 空时种入，老用户的 `expert_teams.json` 已有 2 个旧团队 → 6 个新团队永不出现。改为对每个 builtin 做 idempotent upsert（`Get` 先查，缺失才 `Create`）：幂等可重复跑、不覆盖用户编辑过的团队、不复活用户删过的团队（只清空整个 store 才全量重种）。
+- **聊天内发起专家团（`internal/tool/builtin/expert.go`，新）**：`expert_team_run`（同步跑团队返回综合结论 + 紧凑发言记录）+ `expert_team_list`（列团队供选择）。`team_id` 留空可按 `team_name` 模糊匹配或回退首团队。orchestrator + store 经 `SetExpertOrchestrator`/`SetExpertStore` 注入（同 SetScheduler 模式），在 cowork profile 注册。流式事件仍推 `experts:collab`，用户切面板可见进度。
+- **空状态快捷起点气泡（`components/Welcome.tsx`）**：dev profile 保留 4 个即时发送示例（原行为）；cowork profile 显示 6 个办公气泡（周报/表格/思维导图/专家团评审 + 解释代码/翻译），点击**填入输入框不发送**（复用 `composerInsertRequest` 机制，用户可编辑后再发）。profile 经 `coworkActive` prop 传入（`useProfile` context 未挂载，必须走 prop）。6 个 `welcome.coworkEx1-6` i18n key（zh/en）。CSS 加 `.welcome--cowork` 变体（3 列网格，3×2 排布）。
+- **测试**：`team_test.go`（builtin 不变量：8 团队/ID 唯一/同团队专家名唯一/mode 合法值/ID pin 防误改名破坏迁移）。
+
+### Changed — Office 文档工具矩阵升级后
+
+- **🔴 浏览器 session refs 数据竞争**：`browserSession.refs` 无锁读写（navigate 清 nil 时 snapshot/click 并发读会 race，`-race` 必报）。
+  改 `atomic.Pointer[snapshotRefs]` 无锁化（refs map 只整体替换、从不原地改，atomic 完美匹配）。
+- **🔴 scheduler fireDue 用运行前捕获的旧 Expression 覆盖 mid-run Update**：`runOne` 运行期间（最长 10 分钟）用户 Update 改了 Expression，
+  原代码用旧 t.Expression 算 NextRun 会静默丢弃用户编辑。改为持锁重读 `s.tasks[idx].Expression` + 新增 `TestFireDueRespectsMidRunUpdate` 回归测试。
+- **🟡 SwitchProfileForTab effortOverride 没归一化**：切到不支持 "high" 的模型会传非法 effort。
+  加 `NormalizeEffort`（对齐 SetModel）+ 修双重 `cloneStringPtr` + 切换后持久化 `tab.effort`。
+- **🟡 email 配置矛盾**：`email_send` 工具描述/错误说 `[smtp]`，但后端读 `[cowork.smtp]`——
+  用户照提示配 `[smtp]` 会被 TOML 静默丢弃，邮件永远报"未配置"。文案全改 `[cowork.smtp]` + `example.toml` 补文档。
+- **🟢 cowork prompt addon 无条件承诺 screen/ppt/email**：但这些依赖平台（screen 仅 Windows）/主机（scheduler/rag 需 desktop）/配置。
+  addon 改条件描述："use the tools that are present; when a capability isn't available, say so"。
+
+### Fixed — 2 个既有 flaky 测试（确定性修复）
+
+- **`TestListSessionsOrdersByMTime`（mtime 精度）**：Windows 文件系统 mtime 精度粗，两个文件几乎同时写入时原 mtime 可能落同一精度桶，
+  `Equal()` 为真 → 退化路径字母序（a 排 b 前），但测试期望 b（更新）在前。修复：写两文件间 sleep 50ms 让原 mtime 天然不同 +
+  Chtimes 仍设 1 小时差距（远超文件系统精度）+ 失败信息带实际 mtime。
+- **`TestModelRefsFromConfig`/`SkipsUnconfigured`/`ArgCompletion`（用户配置目录未隔离）**：`modelRefs()` 读用户配置目录（`~/.config/momapeer`/`%AppData%\momapeer`），
+  测试只用 `t.Chdir`（隔离 CWD）没隔离用户配置目录，机器上有真实配置会覆盖内置默认 → refs 不符预期 → 机器相关 flaky。
+  改用 `isolateUserConfig(t)` helper（正确重定向 `HOME`/`XDG_CONFIG_HOME`/`AppData`），彻底隔离。
+
+### Fixed — 对照 Reasonix 上游审计修复（5 项）
+
+- **🔴 MCP HTTP 会话过期不处理**：`httpTransport` 保存 `Mcp-Session-Id` 后从不过期检测，远程 MCP HTTP 服务器会话失效后所有调用永久失败直到手动重连。
+  新增 `SessionExpiredError` 类型 + `isSessionExpiry`（HTTP 404 检测）；`call()` 检测到 404 时清除 `t.session` 并返回 `SessionExpiredError`；
+  `Client.call()` 捕获后自动 `initialize()` 重建 MCP 握手并重试一次。文件：`transport_http.go`、`plugin.go`。
+- **🔴 SoftTrimLargeResults 死代码未接入压缩流程**：`prune.go` 已实现渐进式裁剪（>4KB 工具输出保留头尾各 1.5KB），但 `maybeCompact()` 从未调用——压缩直接从"保留全部"跳到"全量删除"。
+  在 `compact.go` 的 `maybeCompact()` 中 `PruneStaleToolResults()` 前接入 `SoftTrimLargeResults()`，实现两阶段裁剪。
+- **🟡 ResolveShell() 未缓存**：`sandbox/shell.go` 的 `ResolveShell()` 每次调用重新探测（`exec.LookPath` + 遍历候选路径 + `bash -c true` 3 秒超时）。
+  用 `sync.Once` 缓存结果，shell 路径在进程生命周期内不会变。主要影响 `controller.RunShell()` 的用户 `!command` 路径。
+- **🟡 Topic 迁移缺少目录标记**：`migrateLegacySessionsIntoGlobalTopics()` 每次调用扫描整个会话目录并加载所有 `.meta` sidecar，即使所有会话已迁移。
+  迁移成功后写入 `.topic-migrated` 标记文件，后续调用检测到标记直接跳过。文件：`tabs.go`。
+- **🟡 ListBranches 未使用 Sidecar 缓存**：`ListBranches()` 无条件调用 `previewSession()` 解码完整 `.jsonl`，忽略已有的 `CachedTurns`/`CachedPreview`。
+  将 `LoadBranchMeta` 移到 `previewSession` 之前，优先使用 sidecar 缓存，与 `ListSessions` 保持一致。文件：`branch.go`。
+
+### Changed
+
+- **go.mod 新增依赖**：`chromedp`（浏览器）、`excelize/v2`（xlsx）、`go-imap` + `go-message`（IMAP 邮件）。
+  scheduler/rag/email-send/document CSV/JSON/MD 仍纯 stdlib。主进程零新增 CGO。
+- **`docs/COWORK_IMPLEMENTATION_PLAN.md` 更新到 v2.2**：反映代码真实状态，废弃 v1.0 的 18 周/9 Phase 全量规划。
+  v1.0 的 5 个事实修正（config 无 profile section / web_search 非 MCP / ppt 未接入 / App.tsx 不必先拆 / SetSkillEnabled 需 rebuild）已核实落地。
+- **`momapeer.example.toml`**：新增 `[cowork]` section 完整文档（browser_path/wps_ppt_*/`[cowork.smtp]`/`[cowork.imap]`/embedding_model）+ `[[profiles]]` 示例；
+  自动化面板 + RAG 面板上线后追加 `extract_model`/`extract_interval`/`extract_concurrency`（RAG 深度抽取配置）文档。
+- **`internal/config/config.go`**：`IMAPConfig` 注释更新（移除过时的 "stubbed until go-imap" 措辞）；`CoworkConfig` 新增 3 个抽取配置字段（`ExtractModel`/`ExtractInterval`/`ExtractConcurrency`）。
+- **`docs/COWORK_IMPLEMENTATION_PLAN.md`**：自动化面板 + RAG 知识库面板（分层检索 v2）标记完成，更新能力矩阵与真机测试清单（现 9 项）。
+
 ## [0.1.9] — 2026-06-19
 
 ### Fixed

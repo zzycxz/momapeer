@@ -28,6 +28,10 @@ interface AppChromeProps {
   onTabsReorder: (tabIds: string[]) => void;
   onNewTab: () => void;
   onOpenPalette: () => void;
+  // Product profile (dev/cowork). profile is the active tab's mode; onSwitchProfile
+  // rebuilds the controller with the new profile's bundle.
+  profile: string;
+  onSwitchProfile: (name: string) => void;
 }
 
 export function AppChrome({
@@ -53,6 +57,8 @@ export function AppChrome({
   onTabsReorder,
   onNewTab,
   onOpenPalette,
+  profile,
+  onSwitchProfile,
 }: AppChromeProps) {
   const t = useT();
   const darwinChrome = platform === "darwin";
@@ -157,6 +163,22 @@ export function AppChrome({
           <PanelRight size={16} />
         </button>
       )}
+      {/* Profile switcher: toggles between dev (coding) and cowork (office).
+          A click rebuilds the active tab's controller with the profile bundle. */}
+      <button
+        className={[
+          "app-chrome__profile-toggle",
+          profile.toLowerCase() === "cowork" ? "app-chrome__profile-toggle--cowork" : "",
+        ].filter(Boolean).join(" ")}
+        type="button"
+        onClick={() => onSwitchProfile(profile.toLowerCase() === "cowork" ? "dev" : "cowork")}
+        aria-label={profile.toLowerCase() === "cowork" ? t("cowork.switchToDev") : t("cowork.switchToCoWork")}
+        title={profile.toLowerCase() === "cowork" ? t("cowork.switchToDev") : t("cowork.switchToCoWork")}
+      >
+        <span className="app-chrome__profile-label">
+          {profile.toLowerCase() === "cowork" ? t("cowork.badgeCoWork") : t("cowork.badgeDev")}
+        </span>
+      </button>
       {showWindowsPreviewControls && (
         <div className="app-chrome__window-controls app-chrome__window-controls--windows" aria-hidden="true">
           <span className="app-chrome__window-control app-chrome__window-control--minimize">

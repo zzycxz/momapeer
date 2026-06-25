@@ -103,9 +103,17 @@ func (a *Agent) maybeCompact(ctx context.Context, u *provider.Usage) {
 		return
 	}
 	force := u.PromptTokens >= int(float64(a.contextWindow)*a.compactForceRatio)
+	// Soft-trim large outputs first (head+tail preservation), then hard-prune
+	// whatever is still too large. The two-pass approach saves context tokens
+	// while keeping the most useful parts of large tool outputs.
+	ratio := a.tokPerChar()
+	if st, err := a.SoftTrimLargeResults(); err == nil && st.Results > 0 {
+		saved := int(float64(st.SavedChars) * ratio)
+		a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf(
+			"soft-trimmed %d large tool outputs (~%d tokens est.)", st.Results, saved)})
+	}
 	// Prune before folding: when eliding stale tool results alone clears the
 	// trigger, this turn's (paid) summarize call is skipped entirely.
-	ratio := a.tokPerChar()
 	if st, err := a.PruneStaleToolResults(); err == nil && st.Results > 0 {
 		saved := int(float64(st.SavedChars) * ratio)
 		a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf(

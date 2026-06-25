@@ -14,11 +14,11 @@ var reComposeBlock = regexp.MustCompile(`(?s)^\s*<(?:memory-update|background-jo
 // in the user message (not the system prompt or tools), so the cache-stable
 // prompt prefix is left untouched and the toggle costs nothing in cache hits.
 // (MoMA currently does not report cache tokens; the prefix stability still helps.)
-const PlanModeMarker = "[Plan mode — read-only. Explore the codebase first (read_file, ls, grep, glob, web_fetch, task are available; writers are refused by the harness), then present a LAYERED plan as your reply and stop — do not write files, edit, or run side-effecting bash. Structure the plan as a two-level markdown list so it becomes a layered task list: each PHASE is a top-level numbered list item (a coherent milestone, e.g. \"1. Add the config loader\"), and each phase's concrete, verifiable sub-steps are bullets indented beneath it (e.g. \"   - parse the TOML into Config\"). Use plain numbered list items for phases — do NOT write phases as markdown headings (##, ###) — so both levels parse. Keep phases few (about 2-6). The user will be asked to approve before any changes are made.]"
+const PlanModeMarker = "【计划】 — read-only. Explore the codebase first (read_file, ls, grep, glob, web_fetch, task are available; writers are refused by the harness), then present a LAYERED plan as your reply and stop — do not write files, edit, or run side-effecting bash. Structure the plan as a two-level markdown list so it becomes a layered task list: each PHASE is a top-level numbered list item (a coherent milestone, e.g. \"1. Add the config loader\"), and each phase's concrete, verifiable sub-steps are bullets indented beneath it (e.g. \"   - parse the TOML into Config\"). Use plain numbered list items for phases — do NOT write phases as markdown headings (##, ###) — so both levels parse. Keep phases few (about 2-6). The user will be asked to approve before any changes are made.]"
 
 const (
-	activeGoalOpen  = "<active-goal>"
-	activeGoalClose = "</active-goal>"
+	activeGoalOpen  = "【目标】"
+	activeGoalClose = "【/目标】"
 )
 
 const (
@@ -144,7 +144,7 @@ func (c *Controller) ComposeSynthetic(text string) string {
 
 func activeGoalBlock(goal string) string {
 	goal = strings.TrimSpace(goal)
-	goal = strings.ReplaceAll(goal, activeGoalClose, "<\\/active-goal>")
+	goal = strings.ReplaceAll(goal, activeGoalClose, "【/目标】")
 	var b strings.Builder
 	b.WriteString(activeGoalOpen)
 	b.WriteString("\n")

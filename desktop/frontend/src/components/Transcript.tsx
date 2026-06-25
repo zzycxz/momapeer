@@ -153,6 +153,8 @@ export function Transcript({
   rewindDisabled = false,
   questionNavigator = true,
   defaultExpandThinking = false,
+  profile,
+  onInsert,
 }: {
   items: Item[];
   live?: LiveStream;
@@ -164,6 +166,11 @@ export function Transcript({
   rewindDisabled?: boolean;
   questionNavigator?: boolean;
   defaultExpandThinking?: boolean;
+  // profile + onInsert drive the cowork empty-state "starter" bubbles (see
+  // Welcome). When profile is "cowork", starter bubbles fill the composer via
+  // onInsert instead of sending immediately. Omitted → dev behavior (send now).
+  profile?: "dev" | "cowork";
+  onInsert?: (text: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -547,7 +554,7 @@ export function Transcript({
       ref={scrollRef}
       onScroll={onScroll}
     >
-      {empty && <Welcome onPrompt={onPrompt} />}
+      {empty && <Welcome onPrompt={onPrompt} profile={profile} onInsert={onInsert} />}
 
       {!empty && showQuestionNav && (
         <QuestionJumpBar questions={questions} onJump={handleJumpToQuestion} />

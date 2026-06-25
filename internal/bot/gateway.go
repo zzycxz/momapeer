@@ -171,6 +171,37 @@ func (gw *BotGateway) Stop() {
 	}
 }
 
+// Push sends a text message to a specific chat on a given platform, independent
+// of the inbound-message flow. Used by the scheduler to deliver scheduled-task
+// results to IM (OutputMode="im", OutputDest="<platform>:<chatID>"). dest is
+// "platform:chatID" (e.g. "feishu:oc_xxx", "qq:123456"). No-op (returns nil) if
+// the platform adapter isn't connected — a scheduled push shouldn't fail the
+// task run just because IM is offline.
+func (gw *BotGateway) Push(ctx context.Context, dest, text string) error {
+	plat, chatID := splitPushDest(dest)
+	if plat == "" || chatID == "" {
+		return fmt.Errorf("invalid IM dest %q (want \"platform:chatID\")", dest)
+	}
+	adapter, ok := gw.adapters[plat]
+	if !ok {
+		gw.logger.Warn("push: platform adapter not connected", "platform", plat)
+		return nil
+	}
+	_, err := adapter.Send(ctx, OutboundMessage{ChatID: chatID, Text: text})
+	return err
+}
+
+// splitPushDest parses "platform:chatID" into its parts. Returns "", "" if the
+// shape is wrong.
+func splitPushDest(dest string) (Platform, string) {
+	dest = strings.TrimSpace(dest)
+	idx := strings.Index(dest, ":")
+	if idx <= 0 {
+		return "", ""
+	}
+	return Platform(strings.ToLower(strings.TrimSpace(dest[:idx]))), strings.TrimSpace(dest[idx+1:])
+}
+
 func (gw *BotGateway) dispatchLoop(ctx context.Context, plat Platform, adapter Adapter) {
 	for {
 		select {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Set is everything memory loaded for one session: the hierarchical docs and a
@@ -125,15 +126,28 @@ func (s *Set) WriteDoc(path, body string) (string, error) {
 // deterministic given the same files, which is what keeps it a stable cache
 // prefix across sessions that don't change their memory.
 func (s *Set) Block() string {
-	if s.Empty() {
+	// The profile block is computed from the live store, so it is the one piece
+	// of "memory" that can exist even when no docs/index are loaded yet. Check
+	// it before the early Empty() return so a user with only saved user-facts
+	// still gets their profile in the prefix.
+	profile := strings.TrimSpace(s.Store.ProfileBlock())
+	if s.Empty() && profile == "" {
 		return ""
 	}
 	var b strings.Builder
 	b.WriteString("# Memory\n\n")
+	fmt.Fprintf(&b, "Today's date is %s. All time-related facts use absolute dates.\n\n", time.Now().Format("2006-01-02"))
 	b.WriteString("Persistent context loaded from memory files. Treat it as durable, user-authored guidance for this project.\n")
 
 	for _, d := range s.Docs {
 		fmt.Fprintf(&b, "\n## %s (%s)\n\n%s\n", d.Path, d.Scope, strings.TrimSpace(d.Body))
+	}
+
+	// User profile: active TypeUser facts rendered as a structured block, so the
+	// model knows who the user is (role, preferences, environment) without
+	// calling a tool. Computed once above; omitted entirely when empty.
+	if profile != "" {
+		fmt.Fprintf(&b, "\n%s\n", profile)
 	}
 
 	if idx := strings.TrimSpace(s.Index); idx != "" {

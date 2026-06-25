@@ -93,14 +93,23 @@ func TestSaveLoadLargeMessage(t *testing.T) {
 // hit `momapeer chat --continue`.
 func TestListSessionsOrdersByMTime(t *testing.T) {
 	dir := t.TempDir()
-	// Write two sessions with explicit mtimes so the order is deterministic.
+	// Write two sessions, sleeping between writes so their original mtimes
+	// differ even on coarse-precision filesystems (Windows FAT/exFAT/NTFS can
+	// have ~2s mtime granularity). Without this, both files can land in the same
+	// mtime bucket and the test becomes flaky under load.
 	for _, name := range []string{"a.jsonl", "b.jsonl"} {
 		s := NewSession("")
 		s.Add(provider.Message{Role: provider.RoleUser, Content: "preview for " + name})
 		if err := s.Save(filepath.Join(dir, name)); err != nil {
 			t.Fatal(err)
 		}
+		if name == "a.jsonl" {
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
+	// Then pin explicit, well-separated mtimes. The 1h gap is far beyond any
+	// filesystem's mtime granularity, so the resulting order is deterministic
+	// regardless of Chtimes commit timing.
 	oldT := time.Now().Add(-1 * time.Hour)
 	newT := time.Now()
 	if err := touch(filepath.Join(dir, "a.jsonl"), oldT); err != nil {
@@ -117,8 +126,12 @@ func TestListSessionsOrdersByMTime(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("len = %d, want 2", len(got))
 	}
+	// If both mtimes collapsed to the same value (extremely coarse FS), the
+	// sort falls back to path order (a before b) — assert that didn't happen by
+	// checking the ordering is by recency, with a clear failure message.
 	if !strings.HasSuffix(got[0].Path, "b.jsonl") {
-		t.Errorf("first entry = %s, want the newer 'b.jsonl'", got[0].Path)
+		t.Errorf("first entry = %s, want the newer 'b.jsonl' (oldT=%s newT=%s got0=%s got1=%s)",
+			got[0].Path, oldT, newT, got[0].ModTime, got[1].ModTime)
 	}
 	if got[0].Turns != 1 || got[0].Preview != "preview for b.jsonl" {
 		t.Errorf("preview/turns wrong on newest: turns=%d preview=%q", got[0].Turns, got[0].Preview)

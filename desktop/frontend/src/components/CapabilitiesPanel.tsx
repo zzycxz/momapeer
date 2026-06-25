@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { asArray } from "../lib/array";
 import { app, openExternal } from "../lib/bridge";
 import { useT } from "../lib/i18n";
+import type { Translator } from "../lib/i18n";
 import type { CapabilitiesView, MCPServerInput, ServerView, SkillRootSkillView, SkillRootView, SkillView } from "../lib/types";
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { ResizableDrawer } from "./ResizableDrawer";
@@ -1599,6 +1600,25 @@ export function SkillsSettingsPage() {
 		});
 	}, [view, skillQuery]);
 
+	// Split the filtered list into the built-in "market" (skills shipped with
+	// momapeer) and the user's own skills (project/global/custom). The market
+	// is a discovery surface — its "install" action is really just enable —
+	// while user skills are managed (enabled/disabled, rooted in real files).
+	// This mirrors Trae Work's skill-market separation without needing a remote
+	// catalog: the builtins are already in Capabilities().skills.
+	const builtinSkills = useMemo(
+		() => filteredSkills.filter((sk) => sk.scope === "builtin"),
+		[filteredSkills],
+	);
+	const userSkills = useMemo(
+		() => filteredSkills.filter((sk) => sk.scope !== "builtin"),
+		[filteredSkills],
+	);
+	const builtinEnabledCount = useMemo(
+		() => builtinSkills.filter((sk) => sk.enabled).length,
+		[builtinSkills],
+	);
+
 	const skillSummary = useMemo(() => {
 		if (!view) return "";
 		return skillListSummary(view.skills, filteredSkills, skillQuery.trim().length > 0, t);
@@ -1632,19 +1652,46 @@ export function SkillsSettingsPage() {
 				onRefresh={() => mutate(() => app.RefreshSkills())}
 				onRemove={(path) => mutate(() => app.RemoveSkillPath(path))}
 			/>
+
+			{/* Built-in skill market: the catalog of skills shipped with momapeer.
+			    Each card is a one-click enable toggle (builtins are always present
+			    on disk; "install" == "enable"). Mirrors Trae Work's skill market. */}
+			{builtinSkills.length > 0 && (
+				<div className="cap-market">
+					<div className="cap-skills-head">
+						<div className="cap-skills-head__copy">
+							<div className="cap-skills-head__title">{t("caps.marketTitle")}</div>
+							<div className="cap-skills-head__summary">
+								{t("caps.marketSummary", { on: builtinEnabledCount, total: builtinSkills.length })}
+							</div>
+						</div>
+					</div>
+					<div className="cap-market__grid">
+						{builtinSkills.map((sk) => (
+							<SkillMarketCard
+								key={sk.name}
+								skill={sk}
+								busy={busy}
+								onToggleEnabled={(enabled) => void mutate(() => app.SetSkillEnabled(sk.name, enabled))}
+								t={t}
+							/>
+						))}
+					</div>
+				</div>
+			)}
+
+			{/* User's own skills (project / global / custom): managed list. */}
 			<div className="cap-skills-head">
 				<div className="cap-skills-head__copy">
-					<div className="cap-skills-head__title">{t("caps.skills")}</div>
+					<div className="cap-skills-head__title">{t("caps.mySkills")}</div>
 					<div className="cap-skills-head__summary">{skillSummary}</div>
 				</div>
 			</div>
-			{view.skills.length === 0 ? (
-				<div className="mem-empty">{t("caps.noSkills")}</div>
-			) : filteredSkills.length === 0 ? (
-				<div className="mem-empty">{t("caps.noSkillMatches")}</div>
+			{userSkills.length === 0 ? (
+				<div className="mem-empty">{t("caps.noUserSkills")}</div>
 			) : (
 				<div className="cap-skills">
-					{filteredSkills.map((sk) => (
+					{userSkills.map((sk) => (
 						<SkillRow
 							key={sk.name}
 							skill={sk}
@@ -1657,5 +1704,43 @@ export function SkillsSettingsPage() {
 				</div>
 			)}
 		</section>
+	);
+}
+
+// SkillMarketCard renders one built-in skill in the market grid. Unlike SkillRow
+// (a list item with expand/collapse), this is a compact card optimized for
+// discovery: name, one-line description, scope/runAs badges, and a single
+// enable/disable toggle that reads as "install / installed".
+function SkillMarketCard({
+	skill: sk,
+	busy,
+	onToggleEnabled,
+	t,
+}: {
+	skill: SkillView;
+	busy: boolean;
+	onToggleEnabled: (enabled: boolean) => void;
+	t: Translator;
+}) {
+	return (
+		<div className={"cap-market-card" + (sk.enabled ? " cap-market-card--on" : "")}>
+			<div className="cap-market-card__head">
+				<span className="cap-market-card__name">/{sk.name}</span>
+				<div className="cap-market-card__badges">
+					{sk.runAs === "subagent" && (
+						<span className="cap-skill-card__badge">{t("caps.subagent")}</span>
+					)}
+				</div>
+			</div>
+			<p className="cap-market-card__desc">{sk.description}</p>
+			<button
+				className={"btn btn--small" + (sk.enabled ? "" : " btn--primary")}
+				onClick={() => onToggleEnabled(!sk.enabled)}
+				disabled={busy}
+				type="button"
+			>
+				{sk.enabled ? t("caps.installed") : t("caps.install")}
+			</button>
+		</div>
 	);
 }

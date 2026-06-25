@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -61,6 +62,11 @@ type WorkspaceTab struct {
 	mode             string // "normal" | "plan" | "yolo" | "plan-yolo"; yolo/full access is runtime-only
 	goal             string
 	toolApprovalMode string
+	// profile is the active product mode: "dev" (default, coding) or "cowork"
+	// (office). Empty is treated as "dev" everywhere it is read. Persisted so a
+	// restarted tab lands back in the same mode. A profile switch rebuilds the
+	// controller via the SetModelForTab flow (see app.SwitchProfileForTab).
+	profile         string
 	disabledMCP      map[string]ServerView
 	mcpOrder         []string
 }
@@ -118,6 +124,17 @@ func cloneServerViewMap(in map[string]ServerView) map[string]ServerView {
 		out[name] = view
 	}
 	return out
+}
+
+// normalizeProfileName returns the canonical profile identifier for wire output.
+// Empty (unprofiled) becomes "dev" so the frontend always sees a concrete mode
+// name. Non-empty is lowercased to match config.ProfileNameKey resolution.
+func normalizeProfileName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return config.ProfileDev
+	}
+	return strings.ToLower(name)
 }
 
 func (t *WorkspaceTab) currentSessionPath() string {
@@ -435,6 +452,10 @@ type TabMeta struct {
 	StartupErr        string `json:"startupErr,omitempty"`
 	Active            bool   `json:"active"`
 	Cwd               string `json:"cwd"`
+	// Profile is the tab's product mode ("dev" | "cowork"); empty = dev. Drives
+	// the frontend layout selection. Read alongside the per-tab "profile:changed"
+	// event so a switch updates the active tab immediately.
+	Profile string `json:"profile,omitempty"`
 }
 
 func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
@@ -455,6 +476,7 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 		StartupErr:        tab.StartupErr,
 		Active:            active,
 		Cwd:               tab.WorkspaceRoot,
+		Profile:           normalizeProfileName(tab.profile),
 	}
 	switch tab.Scope {
 	case "global":
@@ -887,6 +909,19 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 	a.saveTabsLocked()
 	a.mu.Unlock()
 
+	// Resolve the tab's product profile (dev/cowork). Empty or "dev" yields a nil
+	// profile → boot.Build keeps the unprofiled (coding) behaviour. Any other name
+	// resolves against config + builtins; an unknown profile is logged and falls
+	// back to dev so a stale persisted profile never blocks tab boot.
+	var profile *config.Profile
+	if name := strings.TrimSpace(tab.profile); name != "" && !strings.EqualFold(name, config.ProfileDev) {
+		if p, perr := cfg.ResolveProfile(name); perr == nil {
+			profile = p
+		} else {
+			slog.Warn("tabs: unknown profile, falling back to dev", "profile", name, "err", perr)
+		}
+	}
+
 	if tab.sink != nil {
 		tab.sink.ctx = wailsCtx
 	}
@@ -926,6 +961,7 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 		SessionDir:     sessionDir,
 		EffortOverride: cloneStringPtr(tab.effort),
 		Host:           a.acquireSharedHost(root),
+		Profile:        profile,
 	})
 	if err != nil {
 		a.releaseSharedHost(root) // Build failed: drop the acquire
@@ -1187,6 +1223,12 @@ func topicTitleFromSession(path string) string {
 
 func topicTitleFromText(text string) string {
 	text = strings.TrimSpace(text)
+	text = strings.Replace(text, "Plan mode — read-o...", "【计划】", 1)
+	text = strings.Replace(text, "Plan mode — read-o…", "【计划】", 1)
+	text = strings.Replace(text, "Plan mode —", "【计划】 —", 1)
+	text = strings.Replace(text, "[Plan mode —", "【计划】 —", 1)
+	text = strings.Replace(text, "<active-goal>", "【目标】", 1)
+
 	if text == "" {
 		return ""
 	}
@@ -1238,6 +1280,7 @@ type desktopTabEntry struct {
 	Mode             string  `json:"mode,omitempty"`
 	Goal             string  `json:"goal,omitempty"`
 	ToolApprovalMode string  `json:"toolApprovalMode,omitempty"`
+	Profile          string  `json:"profile,omitempty"`
 }
 
 type desktopTabsFile struct {
@@ -1256,7 +1299,10 @@ func desktopConfigDir() string {
 
 func (a *App) saveTabsLocked() {
 	dir := desktopConfigDir()
-	os.MkdirAll(dir, 0o755)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		slog.Error("save tabs: mkdir config dir", "dir", dir, "err", err)
+		return
+	}
 	var entries []desktopTabEntry
 	for _, id := range a.orderedTabIDsLocked() {
 		if tab := a.tabs[id]; tab != nil {
@@ -1271,15 +1317,25 @@ func (a *App) saveTabsLocked() {
 				Mode:             persistedTabMode(currentTabMode(tab)),
 				Goal:             strings.TrimSpace(currentTabGoal(tab)),
 				ToolApprovalMode: persistedToolApprovalMode(currentTabToolApprovalMode(tab)),
+				Profile:          tab.profile,
 			})
 		}
 	}
 	f := desktopTabsFile{Tabs: entries, ActiveTab: a.activeTabID}
-	b, _ := json.MarshalIndent(f, "", "  ")
+	b, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		slog.Error("save tabs: marshal", "err", err)
+		return
+	}
 	path := filepath.Join(dir, tabsFileName)
 	tmp := path + ".tmp"
-	os.WriteFile(tmp, b, 0o644)
-	os.Rename(tmp, path)
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		slog.Error("save tabs: write tmp", "path", tmp, "err", err)
+		return
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		slog.Error("save tabs: rename", "from", tmp, "to", path, "err", err)
+	}
 }
 
 func (a *App) orderedTabIDsLocked() []string {
@@ -2000,12 +2056,26 @@ func activityStatusForTab(tab *WorkspaceTab) string {
 // and from ListProjectTree, so without it parallel runs lose each other's appends.
 var legacyMigrationMu sync.Mutex
 
+// topicMigratedMarker is a sentinel file written after a successful migration
+// pass so subsequent calls skip the expensive directory scan. The marker is
+// invalidated if the directory is deleted (e.g. user clears data).
+const topicMigratedMarker = ".topic-migrated"
+
 func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
 	if strings.TrimSpace(dir) == "" {
 		return nil
 	}
 	legacyMigrationMu.Lock()
 	defer legacyMigrationMu.Unlock()
+
+	// Fast path: if the marker exists, the directory was already fully migrated
+	// on a previous call. The per-session TopicID check is idempotent, but
+	// scanning and loading every .meta sidecar is unnecessary I/O.
+	markerPath := filepath.Join(dir, topicMigratedMarker)
+	if _, err := os.Stat(markerPath); err == nil {
+		return nil
+	}
+
 	infos, err := agent.ListSessions(dir)
 	if err != nil || len(infos) == 0 {
 		return nil
@@ -2066,12 +2136,16 @@ func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
 		migratedTopicIDs = append(migratedTopicIDs, topicID)
 	}
 	if len(migratedTopicIDs) == 0 {
+		// Nothing to migrate — mark as done so future calls skip the scan.
+		_ = os.WriteFile(markerPath, []byte(time.Now().UTC().Format(time.RFC3339)), 0o644)
 		return nil
 	}
 	f.GlobalTopics = uniqueStrings(append(migratedTopicIDs, f.GlobalTopics...))
 	_ = saveProjectsFile(f)
 	_ = saveTopicTitles("", topicTitles)
 	_ = saveTopicTitleSources("", topicSources)
+	// Mark as done after a successful migration pass.
+	_ = os.WriteFile(markerPath, []byte(time.Now().UTC().Format(time.RFC3339)), 0o644)
 	return migratedTopicIDs
 }
 

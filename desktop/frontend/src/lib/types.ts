@@ -146,6 +146,8 @@ export interface TabMeta {
   startupErr?: string;
   active: boolean;
   cwd: string;
+  // Product profile ("dev" | "cowork"); absent = dev. Drives layout selection.
+  profile?: string;
 }
 
 export interface ProjectNode {
@@ -498,6 +500,207 @@ export interface EffortInfo {
   levels: string[];
 }
 
+// Product profile entry returned by Profiles() — drives the profile picker in
+// the chrome. WorkspaceType is a frontend hint ("code" | "document") that
+// selects the layout; the backend ignores it.
+export interface ProfileInfo {
+  name: string; // "dev" | "cowork" | …
+  displayName: string;
+  workspaceType?: string;
+}
+
+// --- Scheduled tasks (coWork automation panel) ------------------------------
+// Mirror desktop/scheduler_app.go view structs. Time fields are pre-formatted
+// "YYYY-MM-DD HH:MM" strings (empty when absent) so the UI renders directly
+// without a date library.
+
+// One task row in the automation panel. humanSchedule is a friendly Chinese
+// rendering of expression (e.g. "工作日 09:00"); the UI may show both.
+export interface TaskView {
+  id: string;
+  name: string;
+  expression: string;
+  prompt: string;
+  profile: string;
+  enabled: boolean;
+  oneShot: boolean;
+  lastRun: string;
+  nextRun: string;
+  runCount: number;
+  lastResult: string;
+  outputMode: string; // "" | "im" | "email" | "notify" | "file"
+  outputDest: string;
+  humanSchedule: string;
+}
+
+// Create/update payload from the UI. Empty id on create.
+export interface TaskInput {
+  id: string;
+  name: string;
+  expression: string;
+  prompt: string;
+  outputMode: string;
+  outputDest: string;
+}
+
+// One run-history record (newest first when listed).
+export interface RunRecordView {
+  taskId: string;
+  name: string;
+  at: string;
+  status: string; // "ok" | "error" | "skipped"
+  result: string;
+  outputMode: string;
+}
+
+// Predefined recipe in the "模板" menu.
+export interface TemplateView {
+  id: string;
+  name: string;
+  category: string; // "reminder" | "data" | "ops"
+  desc: string;
+  expression: string;
+  prompt: string;
+  outputMode: string;
+  outputHint: string;
+  oneShot: boolean;
+}
+
+// Live preview of an expression input. Kind is "oneshot" | "recurring" |
+// "unknown"; absoluteTime is set for one-shot (the resolved instant) and empty
+// for recurring (which has no single fire time).
+export interface SchedulePreview {
+  inputText: string;
+  expression: string;
+  absoluteTime: string;
+  kind: string;
+  note: string;
+}
+
+// --- RAG knowledge base (coWork RAG panel) ----------------------------------
+// Mirror desktop/rag_app.go view structs. The tree is folder/file recursive;
+// file nodes carry FTS5 + extraction status + progress.
+
+// One node in the RAG file/folder tree.
+export interface RagNodeView {
+  key: string;
+  label: string;
+  kind: string; // "folder" | "file"
+  path: string;
+  relPath: string;
+  isDir: boolean;
+  collection: string;
+  status: string; // "indexed" | "extracting" | "enriched" | "error" | "cancelled"
+  hasFts5: boolean;
+  jobId: string;
+  doneChunks: number;
+  totalChunks: number;
+  entityCount: number;
+  errorMsg: string;
+  children?: RagNodeView[];
+}
+
+// One collection summary (for the dropdown).
+export interface RagCollectionView {
+  name: string;
+  documents: number;
+  chunks: number;
+  entities: number;
+}
+
+// Import result (immediate feedback: FTS5 ready, extraction queued).
+export interface RagImportResult {
+  jobIds: string[];
+  files: number;
+  ftsChunks: number;
+  message: string;
+}
+
+// Combined search hits (entities/relations + FTS5 snippets).
+export interface RagSearchHitView {
+  entities: RagEntityView[];
+  relations: RagRelView[];
+  snippets: RagSnippetView[];
+}
+export interface RagEntityView {
+  name: string;
+  type: string;
+  description: string;
+}
+export interface RagRelView {
+  source: string;
+  target: string;
+  type: string;
+  description: string;
+}
+export interface RagSnippetView {
+  collection: string;
+  path: string;
+  chunk: number;
+  snippet: string;
+  score: number;
+}
+
+// On-demand ETA probe (for hover tooltip).
+export interface RagETAView {
+  jobId: string;
+  doneChunks: number;
+  totalChunks: number;
+  avgLatencyMs: number;
+  etaSeconds: number;
+}
+
+// Progress event payload from the pipeline (rag:progress).
+export interface RagProgressEvent {
+  jobId: string;
+  collection: string;
+  path: string;
+  status: string;
+  doneChunks: number;
+  totalChunks: number;
+  avgLatencyMs: number;
+  message: string;
+}
+
+// --- Expert team (multi-model collaboration) --------------------------------
+// Mirror desktop/experts_app.go view structs.
+
+export interface ExpertView {
+  name: string;
+  model: string;       // "provider/model" ref, "" = use default
+  perspective: string; // role instruction
+}
+
+export interface TeamView {
+  id: string;
+  name: string;
+  experts: ExpertView[];
+  defaultMode: string;     // "parallel" | "debate" | "pipeline"
+  defaultRounds: number;   // debate rounds
+}
+
+export interface BudgetStatusView {
+  rpm: number;
+  used: number;
+  remaining: number;
+  reserveMain: number;
+  windowSecs: number;
+}
+
+// CollabEvent is one streamed event during an expert-team run.
+export interface CollabEvent {
+  runId: string;
+  teamId: string;
+  teamName: string;
+  phase: string; // "expert_start" | "expert_chunk" | "expert_done" | "synthesis" | "run_done" | "error"
+  expertIdx: number;
+  expertName: string;
+  round: number;
+  text: string;   // expert_chunk: delta; synthesis: delta
+  message: string;
+  mode: string;
+}
+
 // Slash sub-command / argument completion (desktop/app.go SlashArgs). Mirrors the
 // CLI's arg hints so the composer can suggest e.g. /skill → list/show/new/paths.
 export interface SlashArgItem {
@@ -524,6 +727,16 @@ export interface MemoryFact {
   description: string;
   type: string; // "user" | "feedback" | "project" | "reference"
   body: string;
+  // Bitemporal fields (v0.3.0). Populated from the store's Memory struct so the
+  // timeline view can show validity windows, status, and supersedence chains.
+  validFrom?: string; // YYYY-MM-DD, when the fact became true
+  validTo?: string; // YYYY-MM-DD, when it stopped being true ("" = still valid)
+  status?: string; // "active" | "superseded" | "archived" | "dormant" | "pending"
+  category?: string; // "identity" | "style" | "belief" | "temporal" | "feedback"
+  tags?: string[];
+  supersededBy?: string; // name of the record that replaced this one
+  createdAt?: string; // RFC3339, system write time
+  updatedAt?: string; // RFC3339, last modification time
 }
 
 export interface MemoryScope {
@@ -561,7 +774,7 @@ export interface DreamStatusView {
 }
 
 // SettingsTab is the top-level navigation item in the Settings Centre modal.
-export type SettingsTab = "general" | "models" | "providers" | "bots" | "mcp" | "skills" | "memory" | "permissions" | "sandbox" | "network" | "appearance" | "updates";
+export type SettingsTab = "general" | "models" | "providers" | "bots" | "cowork" | "mcp" | "skills" | "memory" | "permissions" | "sandbox" | "network" | "appearance" | "updates";
 
 // Settings panel payloads (desktop/settings_app.go).
 export interface ProviderView {
@@ -634,6 +847,7 @@ export interface AgentView {
   maxSteps: number;
   plannerMaxSteps: number;
   systemPrompt: string;
+  rpm: number; // max requests/minute; 0 = unlimited
 }
 
 export interface BotAllowlistView {
@@ -719,6 +933,43 @@ export interface BotSettingsView {
   connections: BotConnectionView[];
 }
 
+// CoWorkSettingsView mirrors the Go CoWorkSettingsView. Secrets (SMTP/IMAP
+// passwords) are presented as plain fields here; they're persisted to a
+// momapeer-managed .env (not config.toml). detectedBrowser/wpsPptDepsMissing
+// are read-only diagnostics from CheckCoworkBrowser/CheckWPSPPTDeps.
+export interface CoWorkSettingsView {
+  browserPath: string;
+  wpsPptServerPath: string;
+  wpsPptPython: string;
+  embeddingModel: string;
+  smtp: SMTPSettings;
+  imap: IMAPSettings;
+  smtpPassword: string;
+  imapPassword: string;
+  detectedBrowser: string;
+  wpsPptDepsMissing: string[];
+  // Screenshot hotkey → VLM feature (off by default; user opts in).
+  screenshotEnabled: boolean;
+  screenshotHotkey: string;
+  screenshotVlmModel: string;
+}
+
+export interface SMTPSettings {
+  host: string;
+  port: number;
+  from: string;
+  username: string;
+  passwordEnv: string;
+  useTLS: boolean;
+}
+
+export interface IMAPSettings {
+  host: string;
+  port: number;
+  username: string;
+  passwordEnv: string;
+}
+
 export interface WebSearchView {
   braveKeySet: boolean;
   exaKeySet: boolean;
@@ -767,6 +1018,7 @@ export interface SettingsView {
   network: NetworkView;
   agent: AgentView;
   bot: BotSettingsView;
+  cowork: CoWorkSettingsView;
   webSearch: WebSearchView;
   jiutian?: { imageUnderstand: boolean; imageGenerate: boolean; videoUnderstand: boolean };
   desktopLanguage: string; // "" | "en" | "zh"; empty = auto

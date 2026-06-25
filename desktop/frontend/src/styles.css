@@ -1635,6 +1635,7 @@ a[href] {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
 }
 .sidebar-im-dot {
   width: 7px;
@@ -2664,6 +2665,14 @@ a[href] {
   color: var(--fg);
   border-color: var(--accent-soft);
   background: var(--bg-elev);
+}
+/* Cowork empty state: 6 office starter bubbles (vs. the dev profile's 4).
+   A 3-column grid lays them out as a tidy 3×2 block and gives each prompt a
+   little more breathing room, since office prompts read more like labels than
+   the dev profile's sentence-length examples. */
+.welcome--cowork .welcome__examples {
+  grid-template-columns: repeat(3, 1fr);
+  max-width: 560px;
 }
 
 @container (max-height: 560px) {
@@ -7767,6 +7776,132 @@ a[href] {
   background: var(--accent-soft, rgba(120, 170, 255, 0.12));
   border-color: color-mix(in srgb, var(--accent) 42%, transparent);
 }
+
+/* --- timeline view (bitemporal surface, v0.3.0) --- */
+/* Dimmed/colored states: superseded records fade so the current truth stands
+   out, while remaining readable for history context. Expired (validTo passed)
+   gets a warm tint; dormant (cold, not false) gets a cooler one. */
+.mem-fact--superseded {
+  opacity: 0.66;
+}
+.mem-fact--expired {
+  border-color: color-mix(in srgb, var(--danger, #e5484d) 30%, transparent);
+}
+.mem-fact--dormant {
+  opacity: 0.78;
+  border-style: dashed;
+}
+.mem-fact--out-of-range {
+  opacity: 0.45;
+}
+/* Pending (auto-captured, unconfirmed): subtle dashed accent to signal
+   "needs review" without the alarm of a danger tint. */
+.mem-fact--pending {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--warn, #d9a441) 40%, transparent);
+  background: color-mix(in srgb, var(--warn, #d9a441) 6%, transparent);
+}
+
+/* Status badges on the timeline card's meta line. Each variant tints its text
+   + background using the existing --danger / --accent variables so they adapt
+   to the active theme automatically. */
+.mem-fact__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.mem-fact__badge--superseded {
+  color: var(--fg-faint, #858b96);
+  background: color-mix(in srgb, var(--fg-faint, #858b96) 14%, transparent);
+}
+.mem-fact__badge--expired {
+  color: var(--danger, #e5484d);
+  background: color-mix(in srgb, var(--danger, #e5484d) 12%, transparent);
+}
+.mem-fact__badge--dormant {
+  color: var(--accent, #d97757);
+  background: var(--accent-soft, rgba(217, 119, 87, 0.14));
+}
+.mem-fact__badge--pending {
+  color: var(--warn, #d9a441);
+  background: color-mix(in srgb, var(--warn, #d9a441) 14%, transparent);
+}
+.mem-fact__badge--valid {
+  color: var(--accent, #d97757);
+  background: var(--accent-soft, rgba(217, 119, 87, 0.14));
+}
+.mem-fact__badge--muted {
+  color: var(--fg-faint, #858b96);
+  background: color-mix(in srgb, var(--fg-faint, #858b96) 10%, transparent);
+}
+
+/* Validity window line: small calendar icon + From/Until dates under the
+   description. Only facts with a time window render this. */
+.mem-fact__validity {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--fg-faint, #858b96);
+}
+.mem-fact__validity svg {
+  opacity: 0.7;
+}
+
+/* "Replaced by: X" link line shown under superseded cards. */
+.mem-fact__superseded {
+  margin: 2px 0 4px;
+  padding-left: 24px;
+  font-size: 11.5px;
+  color: var(--fg-faint, #858b96);
+}
+
+/* The timeline tab's date-picker row and day-group headings. */
+.mem-timeline__asof {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.mem-timeline__asof-field {
+  flex: 0 1 auto;
+}
+.mem-timeline__asof input[type="date"] {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
+  cursor: pointer;
+}
+.mem-timeline__legend {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.mem-timeline__legend-item {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+.mem-timeline__legend-item--superseded {
+  color: var(--fg-faint, #858b96);
+  background: color-mix(in srgb, var(--fg-faint, #858b96) 12%, transparent);
+}
+.mem-timeline__legend-item--expired {
+  color: var(--danger, #e5484d);
+  background: color-mix(in srgb, var(--danger, #e5484d) 10%, transparent);
+}
+.mem-timeline__group {
+  margin-bottom: 14px;
+}
 .mem-link {
   background: none;
   border: none;
@@ -8563,6 +8698,55 @@ a[href] {
     justify-content: flex-start;
   }
 }
+/* Built-in skill market grid: compact discovery cards (name + desc + enable
+   toggle), distinct from the .cap-skills managed list below it. */
+.cap-market {
+  margin-top: 4px;
+}
+.cap-market__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+.cap-market-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-elev, var(--bg));
+}
+.cap-market-card--on {
+  border-color: color-mix(in srgb, var(--accent) 36%, transparent);
+  background: var(--accent-soft);
+}
+.cap-market-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cap-market-card__name {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--fg);
+}
+.cap-market-card__badges {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.cap-market-card__desc {
+  margin: 0;
+  flex: 1;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--fg-dim);
+  overflow-wrap: anywhere;
+}
+
 .cap-skills {
   display: flex;
   flex-direction: column;
@@ -12763,6 +12947,8 @@ a[href] {
 .sidebar__section--projects {
   flex: 1 1 auto;
   min-height: 160px;
+  overflow-x: hidden;
+  overflow-x: hidden;
 }
 
 .app-chrome {
@@ -12901,7 +13087,7 @@ a[href] {
   justify-content: flex-end;
   gap: 8px;
   min-width: 0;
-  margin-left: 8px;
+  margin-left: 16px;
   --wails-draggable: no-drag;
   transition:
     margin 0.28s cubic-bezier(0.2, 0.72, 0.2, 1),
@@ -14141,13 +14327,13 @@ a[href] {
    button and fills the remaining strip width like the prototype. */
 .tabbar__command {
   flex: 1 1 auto;
-  min-width: 90px;
-  max-width: 360px;
+  min-width: 110px;
+  max-width: 460px;
   height: 28px;
   display: flex;
   align-items: center;
   gap: 7px;
-  margin-left: 4px;
+  margin-left: 24px;
   padding: 0 9px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -14278,6 +14464,8 @@ a[href] {
   display: flex;
   flex-direction: column;
   gap: 11px;
+  overflow-x: hidden;
+  overflow-x: hidden;
 }
 
 .project-tree__search {
@@ -15851,6 +16039,8 @@ a[href] {
 
 .sidebar__section--projects {
   min-height: 0;
+  overflow-x: hidden;
+  overflow-x: hidden;
 }
 
 .sidebar__nav {
@@ -15876,6 +16066,8 @@ a[href] {
 .project-tree {
   --project-tree-edge-gap: 0px;
   gap: 10px;
+  overflow-x: hidden;
+  overflow-x: hidden;
 }
 
 .project-tree__search {
@@ -16822,6 +17014,8 @@ a[href] {
   --project-tree-global-accent: color-mix(in srgb, var(--fg-faint) 70%, var(--accent));
   --project-tree-row-radius: var(--r-s);
   gap: 12px;
+  overflow-x: hidden;
+  overflow-x: hidden;
 }
 
 :root[data-theme-style] .project-tree__search {
@@ -18609,3 +18803,1378 @@ a[href] {
   from { opacity: 0; transform: translateY(-8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* =========================================================================
+   coWork (office) mode — profile-switched layout
+   The profile toggle in the chrome flips the active tab between dev and
+   cowork. In cowork mode the standard three-pane body (sidebar + chat-pane +
+   workbench-dock) is hidden via .app--cowork, and a CoWorkLayout (three office
+   panes) renders in its place. Phase 0: the cowork panes are skeletons.
+   ========================================================================= */
+
+/* When cowork is active, hide the standard layout body. AppChrome stays visible
+   so tabs, the profile toggle, and panel toggles remain usable. The CoWorkLayout
+   component renders its own grid as a sibling of these hidden elements. */
+.app--cowork .sidebar,
+.app--cowork .sidebar-resizer,
+.app--cowork .chat-pane,
+.app--cowork .workbench-dock {
+  display: none;
+}
+
+/* The cowork layout grid: left library / center task board / right artifacts.
+   It sits in the same .layout grid cell as the hidden standard body. */
+.cowork-layout {
+  grid-row: 2 / -1;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: var(--sidebar-width, 260px) minmax(0, 1fr) auto;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.cowork-layout--sidebar-collapsed {
+  grid-template-columns: 0px minmax(0, 1fr) auto;
+}
+
+:root[data-theme-style] .cowork-dock {
+  width: var(--workspace-width, 320px);
+  background: var(--bg);
+  border-left: 1px solid var(--border-soft);
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 10px;
+}
+
+:root[data-theme-style] .cowork-sidebar {
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border-soft);
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 10px 0;
+}
+
+:root[data-theme-style] .cowork-sidebar__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 8px;
+}
+
+:root[data-theme-style] .cowork-sidebar .sidebar__nav {
+  flex-shrink: 0;
+  padding-bottom: calc(8px + var(--statusbar-height, 0px));
+}
+
+:root[data-theme-style] .cowork-main {
+  background: var(--chat-bg);
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+:root[data-theme-style] .cowork-dock {
+  background: var(--bg-elev);
+  border-left: 1px solid var(--border-soft);
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 10px;
+}
+
+:root[data-theme-style] .cowork-sidebar__group,
+:root[data-theme-style] .cowork-dock__group {
+  margin-bottom: 12px;
+}
+
+:root[data-theme-style] .cowork-sidebar__group h3,
+:root[data-theme-style] .cowork-dock__group h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 4px 4px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--fg-dim);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+:root[data-theme-style] .cowork-main__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+:root[data-theme-style] .cowork-main__header h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--fg-dim);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+:root[data-theme-style] .cowork-empty {
+  color: var(--fg-faint);
+  font-size: 13px;
+}
+
+:root[data-theme-style] .cowork-sidebar__item {
+  --wails-draggable: no-drag;
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: default;
+}
+
+:root[data-theme-style] .cowork-sidebar__item:hover {
+  background: var(--sidebar-hover);
+  color: var(--fg);
+}
+
+:root[data-theme-style] .cowork-sidebar__item--active {
+  background: var(--bg-elev-2);
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--border), 0 8px 18px rgba(0, 0, 0, 0.14);
+}
+
+:root[data-theme-style] .cowork-sidebar__item--active::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 0;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+:root[data-theme-style] .cowork-empty-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--fg-faint);
+  text-align: center;
+}
+
+:root[data-theme-style] .cowork-empty-panel h2 {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 8px;
+}
+
+
+:root[data-theme-style] .cowork-main__analysis {
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--bg-soft);
+  color: var(--fg);
+  margin: 12px 20px 0;
+}
+
+:root[data-theme-style] .cowork-main__transcript {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 20px;
+}
+
+/* === coWork automation panel (定时任务) ======================================
+   Layout: AutomationPanel owns a header (title + "New Task") and a scrollable
+   body. Body has an optional template quick-pick row, then the task-card list.
+   TaskForm and RunHistory are overlays/drawers layered above. */
+
+:root[data-theme-style] .cowork-automation {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+:root[data-theme-style] .cowork-automation__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+:root[data-theme-style] .cowork-automation__templates {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+}
+
+:root[data-theme-style] .cowork-automation__templates-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--fg-faint);
+  margin-right: 4px;
+}
+
+:root[data-theme-style] .cowork-automation__template {
+  --wails-draggable: no-drag;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-elev-2);
+  color: var(--fg-dim);
+  border-radius: 999px;
+  padding: 3px 12px;
+  font: inherit;
+  font-size: 12px;
+  cursor: default;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+:root[data-theme-style] .cowork-automation__template:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+:root[data-theme-style] .cowork-automation__count {
+  font-size: 12px;
+  color: var(--fg-faint);
+  padding: 0 2px;
+}
+
+:root[data-theme-style] .cowork-automation__empty,
+:root[data-theme-style] .cowork-automation__loading {
+  color: var(--fg-faint);
+  font-size: 13px;
+  padding: 40px 12px;
+  text-align: center;
+}
+
+:root[data-theme-style] .cowork-automation__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* --- TaskCard -------------------------------------------------------------- */
+
+:root[data-theme-style] .cowork-task-card {
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  padding: 10px 12px;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+:root[data-theme-style] .cowork-task-card:hover {
+  border-color: var(--border);
+}
+
+:root[data-theme-style] .cowork-task-card--paused {
+  opacity: 0.62;
+}
+
+:root[data-theme-style] .cowork-task-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+:root[data-theme-style] .cowork-task-card__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+:root[data-theme-style] .cowork-task-card__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  flex-shrink: 0;
+}
+
+:root[data-theme-style] .cowork-task-card__dot--on {
+  background: #4ade80;
+  box-shadow: 0 0 6px rgba(74, 222, 128, 0.6);
+}
+
+:root[data-theme-style] .cowork-task-card__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:root[data-theme-style] .cowork-task-card__badge {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-elev-2);
+  color: var(--fg-dim);
+  border: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+
+:root[data-theme-style] .cowork-task-card__badge--muted {
+  color: var(--fg-faint);
+}
+
+:root[data-theme-style] .cowork-task-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+:root[data-theme-style] .cowork-task-card__btn {
+  --wails-draggable: no-drag;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  border-radius: 6px;
+  cursor: default;
+  transition: background 0.12s, color 0.12s;
+}
+
+:root[data-theme-style] .cowork-task-card__btn:hover {
+  background: var(--bg-elev-2);
+  color: var(--fg);
+}
+
+:root[data-theme-style] .cowork-task-card__btn--danger:hover {
+  background: rgba(239, 68, 68, 0.16);
+  color: #f87171;
+}
+
+:root[data-theme-style] .cowork-task-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  flex-wrap: wrap;
+}
+
+:root[data-theme-style] .cowork-task-card__schedule {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--fg);
+}
+
+:root[data-theme-style] .cowork-task-card__nextrun {
+  color: var(--accent);
+}
+
+:root[data-theme-style] .cowork-task-card__footer {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--fg-faint);
+  flex-wrap: wrap;
+}
+
+:root[data-theme-style] .cowork-task-card__lastresult {
+  cursor: default;
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:root[data-theme-style] .cowork-task-card__lastresult:hover {
+  color: var(--fg-dim);
+}
+
+:root[data-theme-style] .cowork-task-card__result {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* --- TaskForm (modal) ------------------------------------------------------ */
+
+:root[data-theme-style] .cowork-taskform-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-modal);
+}
+
+:root[data-theme-style] .cowork-taskform {
+  width: min(560px, 92vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+:root[data-theme-style] .cowork-taskform__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+:root[data-theme-style] .cowork-taskform__head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--fg);
+}
+
+:root[data-theme-style] .cowork-taskform__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+:root[data-theme-style] .cowork-taskform__label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+:root[data-theme-style] .cowork-taskform__label--top {
+  align-items: stretch;
+}
+
+:root[data-theme-style] .cowork-taskform__labeltext {
+  font-size: 12px;
+  color: var(--fg-dim);
+  font-weight: 500;
+}
+
+:root[data-theme-style] .cowork-taskform__input {
+  --wails-draggable: no-drag;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+:root[data-theme-style] .cowork-taskform__input:focus {
+  border-color: var(--accent);
+}
+
+:root[data-theme-style] .cowork-taskform__textarea {
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+  min-height: 90px;
+  outline: none;
+}
+
+:root[data-theme-style] .cowork-taskform__textarea:focus {
+  border-color: var(--accent);
+}
+
+:root[data-theme-style] .cowork-taskform__section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+:root[data-theme-style] .cowork-taskform__templates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+:root[data-theme-style] .cowork-taskform__template {
+  --wails-draggable: no-drag;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-elev-2);
+  color: var(--fg-dim);
+  border-radius: 999px;
+  padding: 3px 12px;
+  font: inherit;
+  font-size: 12px;
+  cursor: default;
+}
+
+:root[data-theme-style] .cowork-taskform__template:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+:root[data-theme-style] .cowork-taskform__quicks {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+:root[data-theme-style] .cowork-taskform__quick {
+  --wails-draggable: no-drag;
+  border: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--fg-dim);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: default;
+}
+
+:root[data-theme-style] .cowork-taskform__quick:hover {
+  background: var(--bg-elev-2);
+  color: var(--fg);
+}
+
+:root[data-theme-style] .cowork-taskform__preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  color: var(--fg-dim);
+  flex-wrap: wrap;
+}
+
+:root[data-theme-style] .cowork-taskform__preview--unknown {
+  color: var(--fg-faint);
+}
+
+:root[data-theme-style] .cowork-taskform__preview-time {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+:root[data-theme-style] .cowork-taskform__preview-note {
+  color: var(--fg-faint);
+}
+
+:root[data-theme-style] .cowork-taskform__delivery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+:root[data-theme-style] .cowork-taskform__delivery-opt {
+  --wails-draggable: no-drag;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-elev-2);
+  color: var(--fg-dim);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 12px;
+  cursor: default;
+}
+
+:root[data-theme-style] .cowork-taskform__delivery-opt--active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+:root[data-theme-style] .cowork-taskform__error {
+  font-size: 12px;
+  color: #f87171;
+  padding: 6px 10px;
+  background: rgba(239, 68, 68, 0.1);
+  border-radius: 6px;
+}
+
+:root[data-theme-style] .cowork-taskform__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border-soft);
+  gap: 8px;
+}
+
+:root[data-theme-style] .cowork-taskform__foot-right {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* --- RunHistory (drawer) --------------------------------------------------- */
+
+:root[data-theme-style] .cowork-history-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0, 0.4);
+  display: flex;
+  justify-content: flex-end;
+  z-index: var(--z-modal);
+}
+
+:root[data-theme-style] .cowork-history-drawer {
+  width: min(420px, 88vw);
+  height: 100%;
+  background: var(--bg-elev);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  box-shadow: -12px 0 36px rgba(0, 0, 0, 0.35);
+}
+
+:root[data-theme-style] .cowork-history-drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+:root[data-theme-style] .cowork-history-drawer__head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--fg);
+}
+
+:root[data-theme-style] .cowork-history-drawer__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+:root[data-theme-style] .cowork-history-drawer__empty {
+  color: var(--fg-faint);
+  font-size: 13px;
+  text-align: center;
+  padding: 32px 12px;
+}
+
+:root[data-theme-style] .cowork-history-row {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  padding: 8px 10px;
+  cursor: default;
+}
+
+:root[data-theme-style] .cowork-history-row:hover {
+  border-color: var(--border);
+}
+
+:root[data-theme-style] .cowork-history-row__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+:root[data-theme-style] .cowork-history-row__status {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+:root[data-theme-style] .cowork-history-row__status--ok {
+  background: rgba(74, 222, 128, 0.18);
+  color: #4ade80;
+}
+
+:root[data-theme-style] .cowork-history-row__status--error {
+  background: rgba(239, 68, 68, 0.18);
+  color: #f87171;
+}
+
+:root[data-theme-style] .cowork-history-row__status--skipped {
+  background: var(--bg-elev-2);
+  color: var(--fg-faint);
+}
+
+:root[data-theme-style] .cowork-history-row__at {
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+:root[data-theme-style] .cowork-history-row__name {
+  color: var(--fg);
+  margin-left: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:root[data-theme-style] .cowork-history-row__result {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--fg-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+/* === coWork RAG panel (资料库) ==============================================
+   Layout: RagPanel owns a header (import buttons + collection dropdown) and a
+   scrollable body. Body has a search bar, then the recursive file/folder tree.
+   Each file row shows FTS5 + extraction status, a progress bar (when extracting)
+   with an ETA tooltip on hover, and action buttons. */
+
+:root[data-theme-style] .cowork-rag {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+:root[data-theme-style] .cowork-rag__header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+:root[data-theme-style] .cowork-rag__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+:root[data-theme-style] .cowork-rag__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+:root[data-theme-style] .cowork-rag__select {
+  --wails-draggable: no-drag;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 5px 10px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+  max-width: 360px;
+}
+
+:root[data-theme-style] .cowork-rag__stat {
+  font-size: 12px;
+  color: var(--fg-faint);
+}
+
+:root[data-theme-style] .cowork-rag__search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 0 10px;
+}
+
+:root[data-theme-style] .cowork-rag__search-icon {
+  color: var(--fg-faint);
+  flex-shrink: 0;
+}
+
+:root[data-theme-style] .cowork-rag__search-input {
+  --wails-draggable: no-drag;
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 8px;
+}
+
+:root[data-theme-style] .cowork-rag__search-spinner {
+  color: var(--fg-faint);
+  font-size: 12px;
+}
+
+:root[data-theme-style] .cowork-rag__hits {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+
+:root[data-theme-style] .cowork-rag__hits-layer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+:root[data-theme-style] .cowork-rag__hits-label {
+  font-size: 11px;
+  color: var(--fg-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+:root[data-theme-style] .cowork-rag__entity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+:root[data-theme-style] .cowork-rag__entity-name {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+:root[data-theme-style] .cowork-rag__entity-desc {
+  color: var(--fg-dim);
+}
+
+:root[data-theme-style] .cowork-rag__snippet {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+:root[data-theme-style] .cowork-rag__snippet-path {
+  color: var(--accent);
+  font-size: 11px;
+}
+
+:root[data-theme-style] .cowork-rag__snippet-body {
+  color: var(--fg-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+:root[data-theme-style] .cowork-rag__empty,
+:root[data-theme-style] .cowork-rag__loading {
+  color: var(--fg-faint);
+  font-size: 13px;
+  padding: 40px 12px;
+  text-align: center;
+}
+
+:root[data-theme-style] .cowork-rag__drop-hint {
+  font-size: 11px;
+  color: var(--fg-faint);
+  margin-top: 6px;
+  opacity: 0.7;
+}
+
+:root[data-theme-style] .cowork-rag__tree {
+  display: flex;
+  flex-direction: column;
+}
+
+/* === coWork Expert panel (专家团) =========================================== */
+
+:root[data-theme-style] .cowork-expert {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+:root[data-theme-style] .cowork-expert__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+:root[data-theme-style] .cowork-expert__budget {
+  font-size: 11px;
+  color: var(--warn);
+  font-variant-numeric: tabular-nums;
+}
+
+:root[data-theme-style] .cowork-expert__budget--off {
+  color: var(--fg-faint);
+}
+
+:root[data-theme-style] .cowork-expert__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+:root[data-theme-style] .cowork-expert__teams {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+:root[data-theme-style] .cowork-expert__select {
+  --wails-draggable: no-drag;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 5px 10px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+
+:root[data-theme-style] .cowork-expert__select--mode {
+  width: auto;
+}
+
+:root[data-theme-style] .cowork-expert__roster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+:root[data-theme-style] .cowork-expert__expert-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--bg-elev-2);
+  color: var(--fg-dim);
+  border: 1px solid var(--border-soft);
+}
+
+:root[data-theme-style] .cowork-expert__expert-model {
+  color: var(--fg-faint);
+  font-size: 10px;
+}
+
+:root[data-theme-style] .cowork-expert__controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+:root[data-theme-style] .cowork-expert__rounds {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+:root[data-theme-style] .cowork-expert__rounds input {
+  --wails-draggable: no-drag;
+  width: 42px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 4px;
+  text-align: center;
+}
+
+:root[data-theme-style] .cowork-expert__input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+:root[data-theme-style] .cowork-expert__task-input {
+  --wails-draggable: no-drag;
+  flex: 1;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  resize: none;
+  outline: none;
+}
+
+:root[data-theme-style] .cowork-expert__task-input:focus {
+  border-color: var(--accent);
+}
+
+:root[data-theme-style] .cowork-expert__stream {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+:root[data-theme-style] .cowork-expert__round {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+:root[data-theme-style] .cowork-expert__round-label {
+  font-size: 11px;
+  color: var(--fg-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+:root[data-theme-style] .cowork-expert__round-label--synthesis {
+  color: var(--accent);
+}
+
+:root[data-theme-style] .cowork-expert__turn {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  padding: 10px 12px;
+}
+
+:root[data-theme-style] .cowork-expert__turn--streaming {
+  border-color: var(--accent);
+}
+
+:root[data-theme-style] .cowork-expert__turn-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+:root[data-theme-style] .cowork-expert__turn-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+:root[data-theme-style] .cowork-expert__turn-cursor {
+  animation: expert-blink 1s steps(2) infinite;
+  color: var(--accent);
+}
+
+@keyframes expert-blink {
+  to { opacity: 0; }
+}
+
+:root[data-theme-style] .cowork-expert__turn-body {
+  font-size: 13px;
+  color: var(--fg-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+}
+
+:root[data-theme-style] .cowork-expert__turn-body--synthesis {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+:root[data-theme-style] .cowork-expert__empty,
+:root[data-theme-style] .cowork-expert__loading {
+  color: var(--fg-faint);
+  font-size: 13px;
+  padding: 40px 12px;
+  text-align: center;
+}
+
+/* TeamManager expert member rows */
+:root[data-theme-style] .cowork-expert__member-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+:root[data-theme-style] .cowork-expert__member-name {
+  width: 100px;
+  flex-shrink: 0;
+}
+
+:root[data-theme-style] .cowork-expert__member-model {
+  flex: 1;
+  min-width: 0;
+}
+
+:root[data-theme-style] .cowork-expert__member-perspective {
+  flex: 2;
+  min-width: 0;
+}
+
+:root[data-theme-style] .cowork-expert__rounds-input {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+/* --- RagNode (file/folder row) --------------------------------------------- */
+
+:root[data-theme-style] .rag-node {
+  user-select: none;
+}
+
+:root[data-theme-style] .rag-node__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  font-size: 13px;
+  color: var(--fg-dim);
+  border-radius: 6px;
+}
+
+:root[data-theme-style] .rag-node__row:hover {
+  background: var(--sidebar-hover);
+}
+
+:root[data-theme-style] .rag-node__row--folder {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+:root[data-theme-style] .rag-node__chevron {
+  --wails-draggable: no-drag;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: default;
+  flex-shrink: 0;
+}
+
+:root[data-theme-style] .rag-node__chevron--placeholder {
+  visibility: hidden;
+}
+
+:root[data-theme-style] .rag-node__chevron--open {
+  transform: rotate(90deg);
+}
+
+:root[data-theme-style] .rag-node__label {
+  flex-shrink: 0;
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:root[data-theme-style] .rag-node__row--file .rag-node__label {
+  flex: 1;
+  min-width: 0;
+}
+
+:root[data-theme-style] .rag-node__badge {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-elev-2);
+  color: var(--fg-dim);
+  flex-shrink: 0;
+}
+
+:root[data-theme-style] .rag-node__badge--indexed {
+  color: var(--ok);
+  border-color: rgba(116, 184, 122, 0.3);
+}
+
+:root[data-theme-style] .rag-node__badge--extracting {
+  color: var(--warn);
+  border-color: rgba(217, 164, 65, 0.4);
+  background: rgba(217, 164, 65, 0.1);
+}
+
+:root[data-theme-style] .rag-node__badge--enriched {
+  color: var(--accent);
+  border-color: rgba(217, 119, 87, 0.4);
+  background: var(--accent-soft);
+}
+
+:root[data-theme-style] .rag-node__badge--error {
+  color: var(--err);
+  border-color: rgba(224, 105, 106, 0.4);
+  background: rgba(224, 105, 106, 0.1);
+}
+
+:root[data-theme-style] .rag-node__badge--cancelled {
+  color: var(--fg-faint);
+}
+
+:root[data-theme-style] .rag-node__progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+:root[data-theme-style] .rag-progress-bar {
+  flex: 1;
+  min-width: 60px;
+  max-width: 180px;
+  height: 6px;
+  accent-color: var(--accent);
+}
+
+:root[data-theme-style] .rag-node__pct {
+  font-size: 11px;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+:root[data-theme-style] .rag-node__eta-icon {
+  color: var(--fg-faint);
+  cursor: help;
+  flex-shrink: 0;
+}
+
+:root[data-theme-style] .rag-node__actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+:root[data-theme-style] .rag-node__btn {
+  --wails-draggable: no-drag;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  border-radius: 5px;
+  cursor: default;
+}
+
+:root[data-theme-style] .rag-node__btn:hover {
+  background: var(--bg-elev-2);
+  color: var(--fg);
+}
+
+:root[data-theme-style] .rag-node__btn--accent:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+:root[data-theme-style] .rag-node__btn--danger:hover {
+  background: rgba(239, 68, 68, 0.16);
+  color: var(--err);
+}
+
+:root[data-theme-style] .rag-node__children {
+  /* nested rows indent via paddingLeft on each row, not margin here */
+}
+
+/* The profile toggle button in the chrome. Sits next to the right panel toggle. */
+.app-chrome__profile-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  min-width: 44px;
+  padding: 0 10px;
+  margin: 0 4px;
+  border-radius: 6px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+  background: transparent;
+  color: var(--text, inherit);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  align-self: center;
+}
+.app-chrome__profile-toggle:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.04));
+}
+.app-chrome__profile-toggle--cowork {
+  background: var(--accent, #2563eb);
+  color: #fff;
+  border-color: transparent;
+}
+.app-chrome__profile-toggle--cowork:hover {
+  background: var(--accent-strong, #1d4ed8);
+}
+.app-chrome__profile-label {
+  white-space: nowrap;
+}
+

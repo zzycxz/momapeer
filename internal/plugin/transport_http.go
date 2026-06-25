@@ -12,6 +12,27 @@ import (
 	"sync"
 )
 
+// SessionExpiredError signals that the MCP server rejected the request because
+// the session has expired (e.g. HTTP 404 "Session not found"). The Client layer
+// catches this, re-initializes the MCP handshake, and retries the original call.
+type SessionExpiredError struct {
+	Server string
+	Err    error
+}
+
+func (e *SessionExpiredError) Error() string {
+	return fmt.Sprintf("plugin %q: session expired: %v", e.Server, e.Err)
+}
+
+func (e *SessionExpiredError) Unwrap() error { return e.Err }
+
+// isSessionExpiry returns true when the HTTP response indicates the
+// Mcp-Session-Id is no longer valid. The MCP spec (2025-03-26) says servers
+// return 404 when a session is unknown or expired.
+func isSessionExpiry(resp *http.Response) bool {
+	return resp != nil && resp.StatusCode == http.StatusNotFound
+}
+
 // maxHTTPBody caps how much of a JSON / SSE response body we read, so a
 // misbehaving server can't make us buffer without bound.
 const maxHTTPBody = 16 << 20 // 16 MiB
@@ -65,6 +86,19 @@ func (t *httpTransport) call(ctx context.Context, method string, params any) (js
 		return nil, fmt.Errorf("plugin %q: %s: %w", t.name, method, err)
 	}
 	defer resp.Body.Close()
+
+	// Detect session expiry before capturing: a 404 means the server no longer
+	// recognises the Mcp-Session-Id. Clear it so the next request starts fresh,
+	// and return a SessionExpiredError so the Client layer can re-initialize.
+	if isSessionExpiry(resp) {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		t.session = ""
+		return nil, &SessionExpiredError{
+			Server: t.name,
+			Err:    fmt.Errorf("http 404: %s", strings.TrimSpace(string(b))),
+		}
+	}
+
 	t.captureSession(resp)
 
 	if resp.StatusCode/100 != 2 {

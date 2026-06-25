@@ -1,0 +1,101 @@
+package config
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestResolveProfileBuiltins(t *testing.T) {
+	cfg := Default()
+	// dev resolves and has empty overrides (identical to no profile).
+	dev, err := cfg.ResolveProfile("dev")
+	if err != nil {
+		t.Fatalf("dev: %v", err)
+	}
+	if dev.SystemPromptAddon != "" || dev.Model != "" || len(dev.Plugins) != 0 {
+		t.Fatalf("dev builtin must have empty overrides, got %+v", dev)
+	}
+	// Empty name resolves to dev.
+	if got, err := cfg.ResolveProfile(""); err != nil || got.Name != ProfileDev {
+		t.Fatalf("empty name should resolve to dev, got %v %v", got, err)
+	}
+	// cowork resolves with the office prompt addon.
+	cw, err := cfg.ResolveProfile("cowork")
+	if err != nil {
+		t.Fatalf("cowork: %v", err)
+	}
+	if !strings.Contains(cw.SystemPromptAddon, "coWork") {
+		t.Fatalf("cowork builtin missing prompt addon, got %q", cw.SystemPromptAddon)
+	}
+	if cw.WorkspaceType != "document" {
+		t.Fatalf("cowork workspace type = %q, want document", cw.WorkspaceType)
+	}
+}
+
+func TestResolveProfileCaseInsensitive(t *testing.T) {
+	cfg := Default()
+	for _, name := range []string{"cowork", "Cowork", "COWORK", " CoWork "} {
+		if _, err := cfg.ResolveProfile(name); err != nil {
+			t.Fatalf("ResolveProfile(%q): %v", name, err)
+		}
+	}
+	if _, err := cfg.ResolveProfile("nope"); err == nil {
+		t.Fatal("unknown profile should error")
+	}
+}
+
+func TestResolveProfileConfigOverridesBuiltin(t *testing.T) {
+	// A [[profiles]] entry with a builtin name replaces the builtin.
+	cfg := Default()
+	cfg.Profiles = []Profile{
+		{Name: "cowork", DisplayName: "My Office", Model: "moma/qwen/qwen3.6-35b", Plugins: []string{"wps-ppt"}},
+	}
+	cw, err := cfg.ResolveProfile("cowork")
+	if err != nil {
+		t.Fatalf("cowork: %v", err)
+	}
+	if cw.Model != "moma/qwen/qwen3.6-35b" || cw.DisplayName != "My Office" {
+		t.Fatalf("config did not override builtin: %+v", cw)
+	}
+	// The builtin prompt addon is dropped when the config entry replaces it
+	// (config wins wholesale). This documents the merge contract.
+	if cw.SystemPromptAddon != "" {
+		t.Fatalf("config-overridden cowork should drop builtin addon, got %q", cw.SystemPromptAddon)
+	}
+}
+
+func TestPluginAllowedByProfile(t *testing.T) {
+	// nil profile → all allowed (dev behaviour).
+	if !PluginAllowedByProfile(nil, "anything") {
+		t.Fatal("nil profile should allow all plugins")
+	}
+	dev := &Profile{Name: "dev"} // empty Plugins list
+	if !PluginAllowedByProfile(dev, "codegraph") {
+		t.Fatal("empty plugin list should allow all")
+	}
+	cw := &Profile{Name: "cowork", Plugins: []string{"wps-ppt", "browser-control"}}
+	if !PluginAllowedByProfile(cw, "wps-ppt") || !PluginAllowedByProfile(cw, "browser-control") {
+		t.Fatal("whitelisted plugins must be allowed")
+	}
+	if PluginAllowedByProfile(cw, "codegraph") {
+		t.Fatal("non-whitelisted plugin must be hidden under cowork")
+	}
+}
+
+func TestProfileResolveSkillDisabled(t *testing.T) {
+	// Additive disables.
+	cw := &Profile{Name: "cowork", DisabledSkills: []string{"security-review"}}
+	got := cw.ResolveSkillDisabled([]string{"explore"})
+	if !got[SkillNameKey("explore")] || !got[SkillNameKey("security-review")] {
+		t.Fatalf("additive disable missing: %+v", got)
+	}
+	// Whitelist re-enables a config-disabled skill.
+	cw2 := &Profile{Name: "cowork", EnabledSkills: []string{"explore"}}
+	got2 := cw2.ResolveSkillDisabled([]string{"explore", "research"})
+	if got2[SkillNameKey("explore")] {
+		t.Fatal("whitelist should re-enable a config-disabled skill")
+	}
+	if !got2[SkillNameKey("research")] {
+		t.Fatal("non-whitelisted config-disabled skill should stay disabled")
+	}
+}

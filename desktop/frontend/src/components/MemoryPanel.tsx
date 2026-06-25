@@ -1,7 +1,8 @@
-import { ChevronDown, ChevronRight, FileText, Search, Trash2 } from "lucide-react";
+import { Calendar, ChevronDown, ChevronRight, FileText, Search, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
+import type { Translator } from "../lib/i18n";
 import type { DreamRunView, DreamStatusView, MemoryFact, MemoryView } from "../lib/types";
 import { ResizableDrawer } from "./ResizableDrawer";
 import { Tooltip } from "./Tooltip";
@@ -84,6 +85,70 @@ function memoryDocPreview(body: string): string {
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err || "Unknown error");
+}
+
+// --- timeline helpers (bitemporal surface, v0.3.0) ---
+
+// dateFromISO parses a YYYY-MM-DD or RFC3339 string into a Date (or null). Used
+// for both validFrom/validTo (date-only) and createdAt/updatedAt (full ISO).
+function dateFromISO(s?: string): Date | null {
+  if (!s) return null;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// isExpired reports whether a fact's validity window has closed: a non-empty
+// validTo in the past means the fact stopped being true on that date.
+function isExpired(f: MemoryFact, now = Date.now()): boolean {
+  if (!f.validTo) return false;
+  const d = dateFromISO(f.validTo);
+  return d !== null && d.getTime() < now;
+}
+
+// timelineGroupLabel buckets a fact by its validFrom date into a human-readable
+// heading: "Today" / "Yesterday" / locale date, or the localized "No date" when
+// the fact is timeless (no validFrom and no createdAt). Mirrors HistoryPanel's
+// dayLabel but operates on a YYYY-MM-DD/ISO string rather than a timestamp.
+function timelineGroupLabel(f: MemoryFact, t: Translator): string {
+  const d = dateFromISO(f.validFrom) ?? dateFromISO(f.createdAt);
+  if (!d) return t("memory.timelineUndated");
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round(
+    (startOfDay(new Date()) - startOfDay(d)) / 86_400_000,
+  );
+  if (days <= 0) return t("history.today");
+  if (days === 1) return t("history.yesterday");
+  return d.toLocaleDateString();
+}
+
+// groupTimelineFacts buckets facts newest-first by their timeline label. Facts
+// already arrive sorted newest-first from the backend (Store.ListTimeline), so
+// this is a stable run-length grouping that preserves order within each bucket.
+function groupTimelineFacts(
+  facts: MemoryFact[],
+  t: Translator,
+): { label: string; items: MemoryFact[] }[] {
+  const groups: { label: string; items: MemoryFact[] }[] = [];
+  for (const f of facts) {
+    const label = timelineGroupLabel(f, t);
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.items.push(f);
+    else groups.push({ label, items: [f] });
+  }
+  return groups;
+}
+
+// validAtPoint checks whether a fact was true on a given YYYY-MM-DD day, using
+// the same inclusive [validFrom, validTo] semantics as the backend's timeFilter:
+// a timeless record (no window) is always valid; validTo == day is in range.
+function validAtPoint(f: MemoryFact, dayISO: string): boolean {
+  const day = dateFromISO(dayISO);
+  if (!day) return true;
+  const from = dateFromISO(f.validFrom);
+  const to = dateFromISO(f.validTo);
+  if (from && day < from) return false;
+  if (to && day > to) return false;
+  return true;
 }
 
 // MemoryPanel is the desktop memory manager: a right-side drawer over the loaded
@@ -602,14 +667,36 @@ export function MemorySettingsPage() {
 	const [expandedDoc, setExpandedDoc] = useState<string | null>(null);
 	const [confirmForget, setConfirmForget] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [tab, setTab] = useState<"memories" | "docs">("memories");
+	const [tab, setTab] = useState<"memories" | "timeline" | "docs">("memories");
 	const [showAdd, setShowAdd] = useState(false);
+	const [historyView, setHistoryView] = useState<MemoryView | null>(null);
+	const [historyLoading, setHistoryLoading] = useState(false);
+	const [asOfDay, setAsOfDay] = useState("");
 	const factRefs = useRef<Record<string, HTMLElement | null>>({});
 
 	const reload = useCallback(async () => {
 		setView(await app.Memory().catch(() => null));
 	}, []);
 	useEffect(() => { void reload(); }, [reload]);
+
+	// loadHistory fetches the full bitemporal surface (active + superseded) for
+	// the timeline view. It's lazy — only called when the user opens the
+	// timeline tab — so the normal memories view stays a single cheap Memory()
+	// round-trip. It clears on reload so stale superseded records don't linger.
+	const loadHistory = useCallback(async () => {
+		setHistoryLoading(true);
+		try {
+			setHistoryView(await app.MemoryHistory().catch(() => null));
+		} finally {
+			setHistoryLoading(false);
+		}
+	}, []);
+	// (Re)load history when entering the timeline tab; reload also clears it so
+	// the next visit re-fetches fresh data after a remember/forget mutation.
+	useEffect(() => {
+		if (tab === "timeline") void loadHistory();
+		else setHistoryView(null);
+	}, [tab, loadHistory]);
 
 	const facts = view?.facts ?? [];
 	const factNames = useMemo(() => new Set(facts.map((f) => f.name)), [facts]);
@@ -629,6 +716,27 @@ export function MemorySettingsPage() {
 					.includes(normalizedQuery);
 			}),
 		[facts, normalizedQuery, typeFilter],
+	);
+
+	// historyFacts is the timeline view's data: the full bitemporal surface,
+	// optionally narrowed by a point-in-time (asOfDay) query. When asOfDay is
+	// set we keep only facts that were true on that day, mirroring the backend
+	// ListAsOf semantics — this is the demo of the bitemporal "what did we
+	// know on date X" capability. Without asOfDay we show the whole version
+	// chain so the user can see expired/superseded records in context.
+	const historyFacts = useMemo(() => {
+		const all = historyView?.facts ?? [];
+		if (!asOfDay) return all;
+		return all.filter((f) => validAtPoint(f, asOfDay));
+	}, [historyView, asOfDay]);
+	const timelineGroups = useMemo(() => groupTimelineFacts(historyFacts, t), [historyFacts, t]);
+	const expiredCount = useMemo(
+		() => historyFacts.filter((f) => isExpired(f)).length,
+		[historyFacts],
+	);
+	const supersededCount = useMemo(
+		() => historyFacts.filter((f) => f.status === "superseded").length,
+		[historyFacts],
 	);
 
 	const scrollToFact = useCallback((name: string) => {
@@ -695,6 +803,38 @@ export function MemorySettingsPage() {
 		}
 	}, [busy, expanded, reload]);
 
+	// promoteFact/rejectFact handle auto-captured "pending" memories from the
+	// timeline view. Promote flips pending→active (enters the prompt); reject
+	// deletes it. Both refresh the history view so the card disappears/moves.
+	const promoteFact = useCallback(async (name: string) => {
+		if (busy) return;
+		setBusy(true);
+		setError(null);
+		try {
+			await app.PromoteMemory(name);
+			await loadHistory();
+		} catch (err) {
+			setError(errorMessage(err));
+		} finally {
+			setBusy(false);
+		}
+	}, [busy, loadHistory]);
+
+	const rejectFact = useCallback(async (name: string) => {
+		if (busy) return;
+		setBusy(true);
+		setError(null);
+		try {
+			await app.RejectMemory(name);
+			if (expanded === name) setExpanded(null);
+			await loadHistory();
+		} catch (err) {
+			setError(errorMessage(err));
+		} finally {
+			setBusy(false);
+		}
+	}, [busy, expanded, loadHistory]);
+
 	const scopes = view?.scopes ?? [];
 	const activeScope =
 		scope || scopes.find((s) => s.scope === "project")?.scope || scopes[0]?.scope || "project";
@@ -753,6 +893,15 @@ export function MemorySettingsPage() {
 				>
 					<span>{t("memory.memoryEntries")}</span>
 					<small>{facts.length}</small>
+				</button>
+				<button
+					className={"settings-subtab" + (tab === "timeline" ? " settings-subtab--active" : "")}
+					role="tab"
+					aria-selected={tab === "timeline"}
+					type="button"
+					onClick={() => setTab("timeline")}
+				>
+					<span>{t("memory.timeline")}</span>
 				</button>
 				<button
 					className={"settings-subtab" + (tab === "docs" ? " settings-subtab--active" : "")}
@@ -986,6 +1135,96 @@ export function MemorySettingsPage() {
 				)}
 			</section>}
 
+			{tab === "timeline" && <section className="mem-section">
+				<div className="mem-section__head">
+					<div>
+						<div className="mem-section__title">{t("memory.timeline")}</div>
+						<div className="mem-note">{t("memory.timelineHint")}</div>
+					</div>
+					{(expiredCount > 0 || supersededCount > 0) && (
+						<div className="mem-timeline__legend">
+							{supersededCount > 0 && (
+								<span className="mem-timeline__legend-item mem-timeline__legend-item--superseded">
+									{t("memory.legendSuperseded", { n: supersededCount })}
+								</span>
+							)}
+							{expiredCount > 0 && (
+								<span className="mem-timeline__legend-item mem-timeline__legend-item--expired">
+									{t("memory.legendExpired", { n: expiredCount })}
+								</span>
+							)}
+						</div>
+					)}
+				</div>
+
+				<div className="mem-timeline__asof">
+					<label className="mem-search mem-timeline__asof-field">
+						<Calendar size={14} />
+						<input
+							type="date"
+							value={asOfDay}
+							max={new Date().toISOString().slice(0, 10)}
+							onChange={(e) => setAsOfDay(e.target.value)}
+						/>
+					</label>
+					{asOfDay && (
+						<button
+							className="mem-filter__item mem-filter__item--on"
+							type="button"
+							onClick={() => setAsOfDay("")}
+						>
+							{t("memory.asOfClear")}
+						</button>
+					)}
+					<span className="mem-hint mem-hint--inline">
+						{asOfDay
+							? t("memory.asOfActive", { day: asOfDay })
+							: t("memory.asOfIdle")}
+					</span>
+				</div>
+
+				{historyLoading ? (
+					<div className="mem-empty">{t("common.loading")}</div>
+				) : historyFacts.length === 0 ? (
+					<div className="mem-empty">
+						{asOfDay ? t("memory.asOfEmpty", { day: asOfDay }) : t("memory.noHistory")}
+					</div>
+				) : (
+					<div className="mem-timeline">
+						{timelineGroups.map((group) => (
+							<div className="mem-timeline__group" key={group.label}>
+								<div className="hist-group__title mem-section__title">
+									{group.label}
+									<span className="hist-group__count">{group.items.length}</span>
+								</div>
+								<div className="mem-facts">
+									{group.items.map((f) => (
+										<MemoryTimelineCard
+											key={f.name}
+											fact={f}
+											allNames={factNames}
+											expanded={expanded === f.name}
+											highlighted={highlight === f.name}
+											asOfDay={asOfDay}
+											onToggle={() => {
+												setExpanded(expanded === f.name ? null : f.name);
+												setConfirmForget(null);
+											}}
+											jumpTo={jumpTo}
+											renderWithLinks={renderWithLinks}
+											onPromote={promoteFact}
+											onReject={rejectFact}
+											busy={busy}
+											t={t}
+										/>
+									))}
+								</div>
+							</div>
+						))}
+					</div>
+				)}
+			</section>}
+
 			{tab === "docs" && <section className="mem-section">
 				<div className="mem-section__head">
 					<div>
@@ -1067,6 +1306,177 @@ export function MemorySettingsPage() {
 				})}
 			</section>}
 		</>
+	);
+}
+
+// MemoryTimelineCard renders one fact inside the timeline view. It mirrors the
+// memories-tab card structure but adds bitemporal badges: an "expired" state
+// (validTo in the past), a "superseded by X" link, and a validity window line.
+// When an asOfDay query is active, the card also shows whether the fact was
+// true on that day, making the bitemporal query legible at a glance.
+function MemoryTimelineCard({
+	fact: f,
+	allNames,
+	expanded,
+	highlighted,
+	asOfDay,
+	onToggle,
+	jumpTo,
+	renderWithLinks,
+	onPromote,
+	onReject,
+	busy,
+	t,
+}: {
+	fact: MemoryFact;
+	allNames: Set<string>;
+	expanded: boolean;
+	highlighted: boolean;
+	asOfDay: string;
+	onToggle: () => void;
+	jumpTo: (name: string) => void;
+	renderWithLinks: (text: string) => ReactNode[];
+	onPromote?: (name: string) => void;
+	onReject?: (name: string) => void;
+	busy: boolean;
+	t: Translator;
+}) {
+	const links = uniqueLinks(f.body, allNames);
+	const missing = links.filter((l) => !l.exists);
+	const expired = isExpired(f);
+	const isSuperseded = f.status === "superseded";
+	const dormant = f.status === "dormant";
+	const isPending = f.status === "pending";
+	const hasWindow = Boolean(f.validFrom || f.validTo);
+	const inRange = asOfDay ? validAtPoint(f, asOfDay) : null;
+
+	// The card dimming class: superseded records are de-emphasized (greyed) so
+	// the current truth stands out, but remain readable for history context.
+	const cardClass =
+		"mem-fact mem-fact--timeline" +
+		(highlighted ? " mem-fact--hl" : "") +
+		(isSuperseded ? " mem-fact--superseded" : "") +
+		(expired && !isSuperseded ? " mem-fact--expired" : "") +
+		(dormant ? " mem-fact--dormant" : "") +
+		(isPending ? " mem-fact--pending" : "") +
+		(asOfDay && inRange === false ? " mem-fact--out-of-range" : "");
+
+	return (
+		<article className={cardClass} data-mem-type={f.type || "other"}>
+			<button className="mem-fact__summary" onClick={onToggle} type="button">
+				{expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+				<span className="mem-fact__main">
+					<span className="mem-fact__title">{displayTitle(f)}</span>
+					<span className="mem-fact__meta">
+						{f.type && (
+							<span className="mem-fact__type" data-mem-type={f.type}>{f.type}</span>
+						)}
+						<span className="mem-fact__slug">{f.name}</span>
+						{isSuperseded && (
+							<span className="mem-fact__badge mem-fact__badge--superseded">
+								{t("memory.badgeSuperseded")}
+							</span>
+						)}
+						{expired && !isSuperseded && (
+							<span className="mem-fact__badge mem-fact__badge--expired">
+								{t("memory.badgeExpired")}
+							</span>
+						)}
+						{dormant && (
+							<span className="mem-fact__badge mem-fact__badge--dormant">
+								{t("memory.badgeDormant")}
+							</span>
+						)}
+						{isPending && (
+							<span className="mem-fact__badge mem-fact__badge--pending">
+								{t("memory.badgePending")}
+							</span>
+						)}
+						{asOfDay && (
+							<span className={"mem-fact__badge mem-fact__badge--" + (inRange ? "valid" : "muted")}>
+								{inRange ? t("memory.badgeValidAt") : t("memory.badgeNotAt")}
+							</span>
+						)}
+					</span>
+					<span className="mem-fact__desc">{f.description}</span>
+					{hasWindow && (
+						<span className="mem-fact__validity">
+							<Calendar size={11} />
+							{f.validFrom && <span>{t("memory.validFromLabel")}: {f.validFrom}</span>}
+							{f.validTo && <span>{t("memory.validToLabel")}: {f.validTo}</span>}
+						</span>
+					)}
+				</span>
+			</button>
+			{isSuperseded && f.supersededBy && (
+				<div className="mem-fact__superseded">
+					{t("memory.supersededBy", { name: f.supersededBy })}
+				</div>
+			)}
+			{links.length > 0 && (
+				<div className="mem-fact__links" aria-label={t("memory.links")}>
+					{links.map((link) =>
+						link.exists ? (
+							<button
+								className="mem-link-chip"
+								key={link.name}
+								onClick={() => jumpTo(link.name)}
+								type="button"
+							>
+								[[{link.name}]]
+							</button>
+						) : (
+							<Tooltip key={link.name} label={t("memory.deadLink", { name: link.name })}>
+								<span className="mem-link-chip mem-link-chip--dead">[[{link.name}]]</span>
+							</Tooltip>
+						),
+					)}
+				</div>
+			)}
+			{expanded && (
+				<div className="mem-fact__detail">
+					{f.body ? (
+						<div className="mem-fact__body">{renderWithLinks(f.body)}</div>
+					) : (
+						<div className="mem-empty">{t("memory.noBody")}</div>
+					)}
+					{missing.length > 0 && (
+						<div className="mem-deadline">
+							{t("memory.missingLinks", { n: missing.length })}
+						</div>
+					)}
+					{isPending && (onPromote || onReject) && (
+						<div className="mem-fact__actions mem-fact__actions--pending">
+							<span className="mem-hint mem-hint--inline">
+								{t("memory.pendingHint")}
+							</span>
+							<div className="mem-confirm">
+								{onReject && (
+									<button
+										className="btn btn--small"
+										onClick={() => onReject(f.name)}
+										disabled={busy}
+										type="button"
+									>
+										{t("memory.reject")}
+									</button>
+								)}
+								{onPromote && (
+									<button
+										className="btn btn--primary btn--small"
+										onClick={() => onPromote(f.name)}
+										disabled={busy}
+										type="button"
+									>
+										{t("memory.promote")}
+									</button>
+								)}
+							</div>
+						</div>
+					)}
+				</div>
+			)}
+		</article>
 	);
 }
 

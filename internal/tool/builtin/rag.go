@@ -1,0 +1,542 @@
+package builtin
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"sync"
+
+	"github.com/zzycxz/momapeer/internal/rag"
+	"github.com/zzycxz/momapeer/internal/tool"
+)
+
+// RAG knowledge-base tools (Phase 3 of coWork). Wrap a process-global rag.Store
+// so the agent can import documents into named collections and search them. The
+// store persists to the user config dir; search is FTS5 (full-text, CJK-aware)
+// in Phase 3 — an embedding/vector layer can be added behind rag_search later.
+//
+// The store is injected via SetRAGStore (boot.go, cowork). When nil, the tools
+// return a clear "offline" error.
+
+var (
+	globalRAGStore *rag.Store
+	ragOnce        sync.Once
+)
+
+// SetRAGStore injects the knowledge-base store. Called once at cowork boot.
+func SetRAGStore(s *rag.Store) { globalRAGStore = s }
+
+// SetRAGEmbedder injects an embedder for hybrid (FTS5 + semantic) reranking.
+// Called at boot when [cowork] embedding_model is configured; nil = FTS5-only.
+func SetRAGEmbedder(e rag.Embedder) { globalRAGEmbedder = e }
+
+var globalRAGEmbedder rag.Embedder
+
+func requireRAG() (*rag.Store, error) {
+	if globalRAGStore == nil {
+		return nil, errors.New("RAG store is offline (only available under the cowork profile)")
+	}
+	return globalRAGStore, nil
+}
+
+// RAGTools returns the knowledge-base tools for cowork registration.
+func RAGTools() []tool.Tool {
+	return []tool.Tool{ragImport{}, ragSearch{}, ragGraph{}, ragMindMap{}, ragList{}, ragDelete{}}
+}
+
+// --- rag_import -------------------------------------------------------------
+
+type ragImport struct{}
+
+func (ragImport) Name() string { return "rag_import" }
+
+func (ragImport) Description() string {
+	return "Import a document into a named knowledge-base collection so it can be searched with rag_search. Supports text-like formats (txt, md, markdown, code, csv, json, html) — binary Office formats (docx/xlsx/pdf) must be converted to text first. Re-importing the same path replaces its content. The document is split into chunks for focused search snippets. Collection defaults to \"default\"; use names to group documents (e.g. \"product-specs\", \"meeting-notes\")."
+}
+
+func (ragImport) Schema() json.RawMessage {
+	return json.RawMessage(`{
+"type":"object",
+"properties":{
+  "path":{"type":"string","description":"Absolute path to the document file to import"},
+  "collection":{"type":"string","description":"Collection name (default \"default\")"},
+  "tags":{"type":"array","items":{"type":"string"},"description":"Optional tags (informational, not yet searchable)"}
+},
+"required":["path"]
+}`)
+}
+
+func (ragImport) ReadOnly() bool { return false }
+
+func (ragImport) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	var p struct {
+		Path       string   `json:"path"`
+		Collection string   `json:"collection"`
+		Tags       []string `json:"tags"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if strings.TrimSpace(p.Path) == "" {
+		return "", errors.New("path is required")
+	}
+	abs, err := filepath.Abs(p.Path)
+	if err != nil {
+		return "", err
+	}
+	if p.Collection == "" {
+		p.Collection = "default"
+	}
+	s, err := requireRAG()
+	if err != nil {
+		return "", err
+	}
+	chunks, err := s.Import(p.Collection, abs, p.Tags)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("imported %s into collection %q (%d chunks)", abs, p.Collection, chunks), nil
+}
+
+// --- rag_search -------------------------------------------------------------
+
+type ragSearch struct{}
+
+func (ragSearch) Name() string { return "rag_search" }
+
+func (ragSearch) Description() string {
+	return "Search the knowledge base for documents matching a query. Returns two kinds of hits merged together: (1) structured entities + their relations (when the collection has been deep-extracted — high-value facts with no chunk-boundary noise), and (2) FTS5 original-text snippets (always available, for quotable source text). Scoped to one collection when set, else searches all. Use top_k to cap each layer (default 5). When the query looks like a name or a relation question (\"who is X\", \"X 负责 什么\"), the structured layer is the authoritative answer; the FTS5 layer backs it up with citations."
+}
+
+func (ragSearch) Schema() json.RawMessage {
+	return json.RawMessage(`{
+"type":"object",
+"properties":{
+  "query":{"type":"string","description":"Search terms (a name, a relation question, or keywords)"},
+  "collection":{"type":"string","description":"Limit to one collection (empty = all)"},
+  "top_k":{"type":"integer","description":"Max results per layer (default 5)"}
+},
+"required":["query"]
+}`)
+}
+
+func (ragSearch) ReadOnly() bool { return true }
+
+func (ragSearch) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	var p struct {
+		Query      string `json:"query"`
+		Collection string `json:"collection"`
+		TopK       int    `json:"top_k"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if strings.TrimSpace(p.Query) == "" {
+		return "", errors.New("query is required")
+	}
+	if p.TopK <= 0 {
+		p.TopK = 5
+	}
+	s, err := requireRAG()
+	if err != nil {
+		return "", err
+	}
+
+	// Layer 1: structured entities + relations (only if this collection has been
+	// deep-extracted). This is the high-precision layer — direct fact hits with
+	// no chunk-boundary noise.
+	hasEntities, _ := s.HasEntities(p.Collection)
+	var entities []rag.Entity
+	var relations []rag.Relation
+	if hasEntities {
+		entities, err = s.SearchEntities(p.Query, p.Collection, p.TopK)
+		if err != nil {
+			return "", err
+		}
+		for _, e := range entities {
+			rels, _ := s.RelationsOf(p.Collection, e.Name, true)
+			relations = append(relations, rels...)
+		}
+	}
+
+	// Layer 2: FTS5 original-text snippets (always available; the quotable
+	// source-text layer). Over-fetch for reranking when an embedder is present.
+	pool := p.TopK
+	if globalRAGEmbedder != nil {
+		pool = p.TopK * 4
+		if pool < 20 {
+			pool = 20
+		}
+	}
+	results, err := s.Search(p.Query, p.Collection, pool)
+	if err != nil {
+		return "", err
+	}
+	if globalRAGEmbedder != nil && len(results) > 0 {
+		results = s.Rerank(ctx, p.Query, results, globalRAGEmbedder, 0.5)
+		if len(results) > p.TopK {
+			results = results[:p.TopK]
+		}
+	}
+
+	var b strings.Builder
+	scope := "all collections"
+	if p.Collection != "" {
+		scope = fmt.Sprintf("%q", p.Collection)
+	}
+	if len(entities) == 0 && len(results) == 0 {
+		return fmt.Sprintf("no matches in %s — import documents with rag_import first", scope), nil
+	}
+
+	// Structured layer first (higher value for fact questions).
+	if len(entities) > 0 {
+		fmt.Fprintf(&b, "结构化命中（%d 个实体，%d 条关系）in %s：\n", len(entities), len(relations), scope)
+		for _, e := range entities {
+			fmt.Fprintf(&b, "- %s [%s]", e.NameRaw, e.Type)
+			if e.Description != "" {
+				fmt.Fprintf(&b, " · %s", e.Description)
+			}
+			b.WriteString("\n")
+			for _, r := range relations {
+				if r.Source == e.Name {
+					fmt.Fprintf(&b, "    关系：%s --[%s]--> %s", r.Source, r.Type, r.Target)
+					if r.Description != "" {
+						fmt.Fprintf(&b, "（%s）", r.Description)
+					}
+					b.WriteString("\n")
+				} else if r.Target == e.Name {
+					fmt.Fprintf(&b, "    关系：%s --[%s]--> %s（反向）", r.Source, r.Type, r.Target)
+					if r.Description != "" {
+						fmt.Fprintf(&b, "（%s）", r.Description)
+					}
+					b.WriteString("\n")
+				}
+			}
+		}
+		if len(results) > 0 {
+			b.WriteString("\n")
+		}
+	}
+	// FTS5 layer.
+	if len(results) > 0 {
+		fmt.Fprintf(&b, "原文命中（%d 段）", len(results))
+		if p.Collection != "" {
+			fmt.Fprintf(&b, " in %q", p.Collection)
+		}
+		b.WriteString("：\n")
+		for _, r := range results {
+			fmt.Fprintf(&b, "- %s [%s · chunk %d · score %.3f]\n  %s\n", r.Path, r.Collection, r.Chunk, r.Score, r.Snippet)
+		}
+	}
+	return b.String(), nil
+}
+
+// --- rag_graph --------------------------------------------------------------
+
+type ragGraph struct{}
+
+func (ragGraph) Name() string { return "rag_graph" }
+
+func (ragGraph) Description() string {
+	return "Query the structured knowledge graph (entities + relations) of a collection directly, without FTS5 text snippets. Use when you want pure facts/relationships (e.g. \"list everyone who reports to 张三\", \"what does MoMAPeer relate to\"). Returns entities matching the query plus all their relations (both directions). Requires the collection to have been deep-extracted; returns 'no entities' otherwise (fall back to rag_search for FTS5-only collections)."
+}
+
+func (ragGraph) Schema() json.RawMessage {
+	return json.RawMessage(`{
+"type":"object",
+"properties":{
+  "query":{"type":"string","description":"Entity name or keyword to look up"},
+  "collection":{"type":"string","description":"Limit to one collection (empty = all)"},
+  "top_k":{"type":"integer","description":"Max entities to return (default 10)"}
+},
+"required":["query"]
+}`)
+}
+
+func (ragGraph) ReadOnly() bool { return true }
+
+func (ragGraph) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	var p struct {
+		Query      string `json:"query"`
+		Collection string `json:"collection"`
+		TopK       int    `json:"top_k"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if strings.TrimSpace(p.Query) == "" {
+		return "", errors.New("query is required")
+	}
+	if p.TopK <= 0 {
+		p.TopK = 10
+	}
+	s, err := requireRAG()
+	if err != nil {
+		return "", err
+	}
+	has, _ := s.HasEntities(p.Collection)
+	if !has {
+		return "no entities in this collection — run deep extraction first (or use rag_search for FTS5-only)", nil
+	}
+	entities, err := s.SearchEntities(p.Query, p.Collection, p.TopK)
+	if err != nil {
+		return "", err
+	}
+	if len(entities) == 0 {
+		return "no matching entities", nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d entit(ies)", len(entities))
+	if p.Collection != "" {
+		fmt.Fprintf(&b, " in %q", p.Collection)
+	}
+	b.WriteString(":\n")
+	for _, e := range entities {
+		fmt.Fprintf(&b, "- %s [%s]", e.NameRaw, e.Type)
+		if e.Description != "" {
+			fmt.Fprintf(&b, " · %s", e.Description)
+		}
+		b.WriteString("\n")
+		rels, _ := s.RelationsOf(p.Collection, e.Name, true)
+		for _, r := range rels {
+			arrow := "-->"
+			if r.Target == e.Name {
+				arrow = "<--"
+			}
+			fmt.Fprintf(&b, "    %s %s[%s]%s %s", r.Source, arrow, r.Type, arrow, r.Target)
+			if r.Description != "" {
+				fmt.Fprintf(&b, "（%s）", r.Description)
+			}
+			b.WriteString("\n")
+		}
+	}
+	return b.String(), nil
+}
+
+// --- rag_mindmap ------------------------------------------------------------
+
+type ragMindMap struct{}
+
+func (ragMindMap) Name() string { return "rag_mindmap" }
+
+func (ragMindMap) Description() string {
+	return "Generate a mind map file from a collection's extracted knowledge graph, rooted at one entity. Walks the entity→relation graph outward from `root` up to `depth` levels, compiling each connected entity into a branch (relation type becomes the branch label). Output .md (Markdown, markmap/Obsidian-friendly) or .html (self-contained interactive SVG). Use to visualize 'who/what relates to X' as a tree. Requires the collection to have been deep-extracted."
+}
+
+func (ragMindMap) Schema() json.RawMessage {
+	return json.RawMessage(`{
+"type":"object",
+"properties":{
+  "root":{"type":"string","description":"Entity name to use as the mind-map root (normalized or raw form both work)"},
+  "collection":{"type":"string","description":"Collection to read from (empty = all)"},
+  "path":{"type":"string","description":"Output path (.md or .html decides format)"},
+  "depth":{"type":"integer","description":"Max graph-walk depth from root (default 3, capped at 5 to bound the tree)"},
+  "format":{"type":"string","description":"\"md\" | \"html\" (default: infer from path ext)"}
+},
+"required":["root","path"]
+}`)
+}
+
+func (ragMindMap) ReadOnly() bool { return false }
+
+func (ragMindMap) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	var p struct {
+		Root       string `json:"root"`
+		Collection string `json:"collection"`
+		Path       string `json:"path"`
+		Depth      int    `json:"depth"`
+		Format     string `json:"format"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if strings.TrimSpace(p.Root) == "" {
+		return "", errors.New("root entity is required")
+	}
+	if strings.TrimSpace(p.Path) == "" {
+		return "", errors.New("output path is required")
+	}
+	if p.Depth <= 0 {
+		p.Depth = 3
+	}
+	if p.Depth > 5 {
+		p.Depth = 5 // bound the tree (a 5-deep relation graph is already huge)
+	}
+	s, err := requireRAG()
+	if err != nil {
+		return "", err
+	}
+	has, _ := s.HasEntities(p.Collection)
+	if !has {
+		return "no entities in this collection — run deep extraction first", nil
+	}
+	// Normalize the root to match how entities are keyed (lower+trim).
+	rootKey := normalizeRAGName(p.Root)
+	// Build the tree by walking relations outward, tracking visited nodes so
+	// cycles (A→B→A) don't loop forever.
+	visited := map[string]bool{rootKey: true}
+	branches := buildRAGBranches(s, p.Collection, rootKey, p.Depth, visited)
+	abs, err := filepath.Abs(p.Path)
+	if err != nil {
+		return "", err
+	}
+	in := MMInput{Path: abs, Title: p.Root, Branches: branches, Format: p.Format}
+	format, err := writeMindMap(in)
+	if err != nil {
+		return "", err
+	}
+	return describeMindMapOutput(abs, format), nil
+}
+
+// buildRAGBranches walks the relation graph outward from `name`, returning
+// mind-map branches. Each connected entity becomes an MMNode whose Text is the
+// relation type + target, and which recurses into the target's relations.
+// `visited` prevents revisiting nodes (graph cycles + diamond shapes).
+func buildRAGBranches(s *rag.Store, collection, name string, depth int, visited map[string]bool) []MMNode {
+	if depth <= 0 {
+		return nil
+	}
+	rels, err := s.RelationsOf(collection, name, true)
+	if err != nil {
+		return nil
+	}
+	var branches []MMNode
+	for _, r := range rels {
+		// Determine the OTHER endpoint (the one that isn't `name`).
+		other := r.Target
+		label := "[" + r.Type + "] " + r.Target
+		if r.Source == name {
+			other = r.Target
+			label = "[" + r.Type + "] " + r.Target
+		} else if r.Target == name {
+			other = r.Source
+			label = "[" + r.Type + "←] " + r.Source
+		}
+		otherKey := normalizeRAGName(other)
+		if visited[otherKey] {
+			// Already shown elsewhere — record the link but don't recurse
+			// (avoids cycles). Keep it as a leaf with a note.
+			branches = append(branches, MMNode{Text: label, Note: "见上文"})
+			continue
+		}
+		visited[otherKey] = true
+		node := MMNode{Text: label, Children: buildRAGBranches(s, collection, otherKey, depth-1, visited)}
+		branches = append(branches, node)
+	}
+	return branches
+}
+
+// normalizeRAGName mirrors rag.normalizeName (lower+trim) so we can key the
+// visited set without exporting the rag helper.
+func normalizeRAGName(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// --- rag_list ---------------------------------------------------------------
+
+type ragList struct{}
+
+func (ragList) Name() string { return "rag_list" }
+
+func (ragList) Description() string {
+	return "List knowledge-base collections with their document/chunk counts and indexed size. Pass a collection name to inspect one; omit for all. Use to see what's imported before searching."
+}
+
+func (ragList) Schema() json.RawMessage {
+	return json.RawMessage(`{
+"type":"object",
+"properties":{
+  "collection":{"type":"string","description":"One collection to inspect (empty = all)"}
+},
+"required":[]
+}`)
+}
+
+func (ragList) ReadOnly() bool { return true }
+
+func (ragList) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	var p struct {
+		Collection string `json:"collection"`
+	}
+	if len(args) > 0 {
+		_ = json.Unmarshal(args, &p)
+	}
+	s, err := requireRAG()
+	if err != nil {
+		return "", err
+	}
+	cols, err := s.List(p.Collection)
+	if err != nil {
+		return "", err
+	}
+	if len(cols) == 0 {
+		return "no collections (import documents with rag_import)", nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d collection(s):\n", len(cols))
+	for _, c := range cols {
+		fmt.Fprintf(&b, "- %s: %d doc(s), %d chunks, %s\n", c.Name, c.Documents, c.Chunks, humanSize(c.Size))
+	}
+	return b.String(), nil
+}
+
+// --- rag_delete -------------------------------------------------------------
+
+type ragDelete struct{}
+
+func (ragDelete) Name() string { return "rag_delete" }
+
+func (ragDelete) Description() string {
+	return "Remove a document (by path) or an entire collection from the knowledge base. Pass collection + path to delete one document; pass just collection to delete the whole collection."
+}
+
+func (ragDelete) Schema() json.RawMessage {
+	return json.RawMessage(`{
+"type":"object",
+"properties":{
+  "collection":{"type":"string","description":"Collection to delete from"},
+  "path":{"type":"string","description":"Document path to delete (empty = delete the whole collection)"}
+},
+"required":["collection"]
+}`)
+}
+
+func (ragDelete) ReadOnly() bool { return false }
+
+func (ragDelete) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	var p struct {
+		Collection string `json:"collection"`
+		Path       string `json:"path"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if strings.TrimSpace(p.Collection) == "" {
+		return "", errors.New("collection is required")
+	}
+	s, err := requireRAG()
+	if err != nil {
+		return "", err
+	}
+	if err := s.Delete(p.Collection, p.Path); err != nil {
+		return "", err
+	}
+	if p.Path == "" {
+		return fmt.Sprintf("deleted collection %q", p.Collection), nil
+	}
+	return fmt.Sprintf("deleted %s from %q", p.Path, p.Collection), nil
+}
+
+func humanSize(n int64) string {
+	switch {
+	case n < 1024:
+		return fmt.Sprintf("%dB", n)
+	case n < 1024*1024:
+		return fmt.Sprintf("%.1fKB", float64(n)/1024)
+	default:
+		return fmt.Sprintf("%.1fMB", float64(n)/(1024*1024))
+	}
+}

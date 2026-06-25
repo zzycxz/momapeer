@@ -1,0 +1,52 @@
+package provider
+
+// rate_limit.go wraps a Provider with a RequestBudget so every Stream call
+// draws from the shared per-API-key RPM quota. boot.go installs this decorator
+// at the NewProviderWithProxy return point, so ALL providers in a process
+// (main-agent + subagent + any spawned by expert teams / RAG / IM) share one
+// budget. The decorator is transparent: it forwards Name() and Stream()
+// unchanged once a slot is acquired.
+//
+// The priority flag distinguishes main-agent requests (priority=true, always
+// granted, may dip into reserve) from background requests (priority=false,
+// waits when remaining <= reserve). boot sets priority on the main executor's
+// provider; subagent/spawned providers default to priority=false.
+
+import "context"
+
+// RateLimitedProvider wraps an inner Provider with request-budget enforcement.
+type RateLimitedProvider struct {
+	inner    Provider
+	budget   *RequestBudget
+	key      string // baseURL+apiKey — the budget bucket key
+	priority bool   // true = main-agent (always granted)
+}
+
+// NewRateLimitedProvider wraps inner. key identifies the budget bucket
+// (baseURL+apiKey). priority=true marks this as a main-agent provider (always
+// granted, may use reserve); false = background (waits on reserve).
+func NewRateLimitedProvider(inner Provider, budget *RequestBudget, key string, priority bool) Provider {
+	if budget == nil || budget.rpm <= 0 {
+		return inner // limiting disabled — pass through unwrapped
+	}
+	return &RateLimitedProvider{inner: inner, budget: budget, key: key, priority: priority}
+}
+
+func (p *RateLimitedProvider) Name() string { return p.inner.Name() }
+
+func (p *RateLimitedProvider) Stream(ctx context.Context, req Request) (<-chan Chunk, error) {
+	if err := p.budget.Acquire(ctx, p.key, p.priority); err != nil {
+		return nil, err
+	}
+	return p.inner.Stream(ctx, req)
+}
+
+// BudgetKeyForConfig returns the budget bucket key for a provider Config —
+// baseURL + the resolved API key. Two providers hitting the same endpoint with
+// the same key share one RPM quota (matching how providers actually meter).
+func BudgetKeyForConfig(name, baseURL, apiKey string) string {
+	// Include name so two different provider instances on the same key (rare,
+	// but possible when a user duplicates an entry) don't falsely merge.
+	// The key is just an opaque string; it only needs to be consistent.
+	return name + "|" + baseURL + "|" + apiKey
+}

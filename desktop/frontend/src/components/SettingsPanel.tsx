@@ -28,7 +28,7 @@ import { MCPServersSettingsPage, SkillsSettingsPage } from "./CapabilitiesPanel"
 import { MemorySettingsPage } from "./MemoryPanel";
 import { ModalCloseButton } from "./ModalCloseButton";
 
-const SETTINGS_TABS: SettingsTab[] = ["general", "models", "bots", "mcp", "skills", "memory", "permissions", "sandbox", "network", "appearance", "updates"];
+const SETTINGS_TABS: SettingsTab[] = ["general", "models", "bots", "cowork", "mcp", "skills", "memory", "permissions", "sandbox", "network", "appearance", "updates"];
 
 // SettingsPanel is the desktop settings centre — a centred modal with left
 // navigation and a right content area. It hosts all settings pages plus MCP,
@@ -96,7 +96,7 @@ export function SettingsPanel({ onClose, onChanged, initialTab }: { onClose: () 
   // The settings-reliant pages (general, models, network, permissions,
   // sandbox, appearance, updates) need SettingsView loaded. MCP, Skills, and Memory
   // load their own data and render regardless.
-  const needsSettings = tab === "general" || tab === "models" || tab === "bots" || tab === "network" || tab === "permissions" || tab === "sandbox" || tab === "appearance" || tab === "updates";
+  const needsSettings = tab === "general" || tab === "models" || tab === "bots" || tab === "cowork" || tab === "network" || tab === "permissions" || tab === "sandbox" || tab === "appearance" || tab === "updates";
 
   return (
     <div className="management-modal-backdrop settings-modal-backdrop" data-state={status} onClick={(e) => { if (e.target === e.currentTarget) requestClose(); }}>
@@ -128,6 +128,7 @@ export function SettingsPanel({ onClose, onChanged, initialTab }: { onClose: () 
                 {tab === "general" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><GeneralSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
                 {tab === "models" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><ModelsSection s={s} busy={busy} apply={apply} backgroundApply={backgroundApply} /></SettingsPageShell>}
                 {tab === "bots" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><BotsSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
+                {tab === "cowork" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><CoWorkSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
                 {tab === "mcp" && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy ?? false} apply={apply}><MCPServersSettingsPage />{s && <WebSearchSection s={s} busy={busy} apply={apply} />}</SettingsPageShell>}
                 {tab === "skills" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><SkillsSettingsPage /><JiutianSection /></SettingsPageShell>}
                 {tab === "memory" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><MemorySettingsPage /></SettingsPageShell>}
@@ -320,6 +321,8 @@ function settingsTabLabel(id: SettingsTab, t: ReturnType<typeof useT>): string {
       return t("settings.tab.appearance");
     case "updates":
       return t("settings.tab.updates");
+    case "cowork":
+      return t("settings.tab.cowork");
   }
 }
 
@@ -349,6 +352,8 @@ function settingsTabMeta(id: SettingsTab, s: SettingsView, t: ReturnType<typeof 
       return t("settings.appearanceMeta");
     case "updates":
       return t("settings.updatesMeta");
+    case "cowork":
+      return "";
   }
 }
 
@@ -1580,10 +1585,11 @@ function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) 
   const providerLabel = defaultProvider ? modelProviderLabel(defaultProvider, defaultProviderView, t) : t("common.none");
   const plannerLabel = plannerSelectRef || t("settings.plannerNone");
   const keyStatusLabel = defaultProviderView?.keySet ? t("settings.keySet") : t("settings.noKey");
-  const agent = s.agent ?? { temperature: 0, maxSteps: 0, plannerMaxSteps: 12, systemPrompt: "" };
+  const agent = s.agent ?? { temperature: 0, maxSteps: 0, plannerMaxSteps: 12, systemPrompt: "", rpm: 0 };
   const setAgentSteps = (maxSteps: number, plannerMaxSteps: number) => (
     app.SetAgentParams(agent.temperature, maxSteps, plannerMaxSteps, agent.systemPrompt)
   );
+  const setRPM = (rpm: number) => app.SetRPM(rpm);
 
   useEffect(() => {
     if (subtab !== "usage") return;
@@ -1718,6 +1724,16 @@ function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) 
                 presets={[6, 12, 25, 0]}
                 busy={busy}
                 onChange={(next) => void apply(() => setAgentSteps(agent.maxSteps, next))}
+              />
+            </SettingsField>
+          </SettingsSection>
+          <SettingsSection title={t("settings.rpm")} description={t("settings.rpmHint")}>
+            <SettingsField label={t("settings.rpmLimit")} hint={t("settings.rpmLimitHint")}>
+              <StepLimitControl
+                value={agent.rpm}
+                presets={[5, 10, 25, 0]}
+                busy={busy}
+                onChange={(next) => void apply(() => setRPM(next))}
               />
             </SettingsField>
           </SettingsSection>
@@ -3689,3 +3705,253 @@ function UpdatesSection({
     </SettingsSection>
   );
 }
+
+
+function CoWorkSection({ s, busy, apply }: SectionProps) {
+  const t = useT();
+  const [draft, setDraft] = useState(s.cowork ?? {
+    browserPath: "", wpsPptServerPath: "", wpsPptPython: "", embeddingModel: "",
+    smtp: { host:"", port:0, from:"", username:"", passwordEnv:"COWORK_SMTP_PASSWORD", useTLS:false },
+    imap: { host:"", port:0, username:"", passwordEnv:"COWORK_IMAP_PASSWORD" },
+    smtpPassword: "", imapPassword: "", detectedBrowser: "", wpsPptDepsMissing: [],
+    screenshotEnabled: false, screenshotHotkey: "Ctrl+Shift+S", screenshotVlmModel: "qwen/qwen3.6-27b",
+  });
+  
+  const [browserDetecting, setBrowserDetecting] = useState(false);
+  const [depsChecking, setDepsChecking] = useState(false);
+  const [depsInstalling, setDepsInstalling] = useState(false);
+
+  const isDirty = JSON.stringify(draft) !== JSON.stringify(s.cowork ?? {});
+
+  const handleSave = () => {
+    void apply(() => app.SetCoWorkSettings(draft));
+  };
+
+  const checkBrowser = async () => {
+    setBrowserDetecting(true);
+    try {
+      const browser = await app.CheckCoworkBrowser();
+      setDraft(d => ({ ...d, detectedBrowser: browser }));
+    } finally {
+      setBrowserDetecting(false);
+    }
+  };
+
+  const checkDeps = async () => {
+    setDepsChecking(true);
+    try {
+      const missing = await app.CheckWPSPPTDeps();
+      setDraft(d => ({ ...d, wpsPptDepsMissing: missing }));
+    } finally {
+      setDepsChecking(false);
+    }
+  };
+
+  const installDeps = async () => {
+    setDepsInstalling(true);
+    try {
+      await app.InstallWPSPPTDeps();
+      await checkDeps();
+    } finally {
+      setDepsInstalling(false);
+    }
+  };
+
+  return (
+    <div className="settings-section">
+      <SettingsSection title={t("settings.tab.cowork")}>
+        <SettingsField label={t("cowork.browser")} hint={t("cowork.browserHint")} stacked>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" }}>
+            <button className="btn btn--small" disabled={busy || browserDetecting} onClick={checkBrowser}>
+              {browserDetecting ? <Loader2 className="spinner" size={14} /> : t("cowork.browserDetect")}
+            </button>
+            <span className="mem-hint">
+              {draft.detectedBrowser ? t("cowork.browserDetected", { name: draft.detectedBrowser }) : ""}
+            </span>
+          </div>
+          <input 
+            className="mem-input set-grow" 
+            placeholder={t("cowork.browserPath")} 
+            value={draft.browserPath} 
+            onChange={e => setDraft({ ...draft, browserPath: e.target.value })} 
+          />
+        </SettingsField>
+
+        <SettingsField label={t("cowork.ppt")} stacked>
+          <input 
+            className="mem-input set-grow" 
+            style={{ marginBottom: "8px" }}
+            placeholder={t("cowork.pptServerPath")} 
+            value={draft.wpsPptServerPath} 
+            onChange={e => setDraft({ ...draft, wpsPptServerPath: e.target.value })} 
+          />
+          <input 
+            className="mem-input set-grow" 
+            style={{ marginBottom: "8px" }}
+            placeholder={t("cowork.pptPython")} 
+            value={draft.wpsPptPython} 
+            onChange={e => setDraft({ ...draft, wpsPptPython: e.target.value })} 
+          />
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <button className="btn btn--small" disabled={busy || depsChecking} onClick={checkDeps}>
+              {depsChecking ? <Loader2 className="spinner" size={14} /> : t("cowork.pptCheckDeps")}
+            </button>
+            {draft.wpsPptDepsMissing?.length > 0 && (
+              <button className="btn btn--small" disabled={busy || depsInstalling} onClick={installDeps}>
+                {depsInstalling ? <Loader2 className="spinner" size={14} /> : t("cowork.pptInstallDeps")}
+              </button>
+            )}
+            <span className="mem-hint">
+              {draft.wpsPptDepsMissing !== undefined && draft.wpsPptDepsMissing !== null ? (
+                draft.wpsPptDepsMissing.length > 0 
+                  ? t("cowork.pptDepsMissing", { deps: draft.wpsPptDepsMissing.join(", ") })
+                  : t("cowork.pptDepsOk")
+              ) : ""}
+            </span>
+          </div>
+        </SettingsField>
+
+        <SettingsField label={t("cowork.smtp")} stacked>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+            <input 
+              className="mem-input set-grow" 
+              placeholder={t("cowork.smtpHost")} 
+              value={draft.smtp?.host || ""} 
+              onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, host: e.target.value } })} 
+            />
+            <input 
+              className="mem-input" 
+              style={{ width: "80px" }}
+              placeholder="Port" 
+              type="number"
+              value={draft.smtp?.port || ""} 
+              onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, port: parseInt(e.target.value, 10) || 0 } })} 
+            />
+          </div>
+          <input 
+            className="mem-input set-grow" 
+            style={{ marginBottom: "8px" }}
+            placeholder={t("cowork.smtpFrom")} 
+            value={draft.smtp?.from || ""} 
+            onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, from: e.target.value } })} 
+          />
+          <input 
+            className="mem-input set-grow" 
+            style={{ marginBottom: "8px" }}
+            placeholder={t("cowork.smtpUser")} 
+            value={draft.smtp?.username || ""} 
+            onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, username: e.target.value } })} 
+          />
+          <input 
+            className="mem-input set-grow" 
+            style={{ marginBottom: "8px" }}
+            type="password"
+            placeholder={t("cowork.smtpPass")} 
+            value={draft.smtpPassword || ""} 
+            onChange={e => setDraft({ ...draft, smtpPassword: e.target.value })} 
+          />
+          <div className="set-seg">
+            <button
+              className={`set-seg__btn${draft.smtp?.useTLS ? " set-seg__btn--on" : ""}`}
+              onClick={() => setDraft({ ...draft, smtp: { ...draft.smtp!, useTLS: true } })}
+            >
+              TLS
+            </button>
+            <button
+              className={`set-seg__btn${!draft.smtp?.useTLS ? " set-seg__btn--on" : ""}`}
+              onClick={() => setDraft({ ...draft, smtp: { ...draft.smtp!, useTLS: false } })}
+            >
+              STARTTLS/Off
+            </button>
+          </div>
+        </SettingsField>
+
+        <SettingsField label={t("cowork.imap")} stacked>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+            <input 
+              className="mem-input set-grow" 
+              placeholder={t("cowork.imapHost")} 
+              value={draft.imap?.host || ""} 
+              onChange={e => setDraft({ ...draft, imap: { ...draft.imap!, host: e.target.value } })} 
+            />
+            <input 
+              className="mem-input" 
+              style={{ width: "80px" }}
+              placeholder="Port" 
+              type="number"
+              value={draft.imap?.port || ""} 
+              onChange={e => setDraft({ ...draft, imap: { ...draft.imap!, port: parseInt(e.target.value, 10) || 0 } })} 
+            />
+          </div>
+          <input 
+            className="mem-input set-grow" 
+            style={{ marginBottom: "8px" }}
+            placeholder={t("cowork.imapUser")} 
+            value={draft.imap?.username || ""} 
+            onChange={e => setDraft({ ...draft, imap: { ...draft.imap!, username: e.target.value } })} 
+          />
+          <input 
+            className="mem-input set-grow" 
+            type="password"
+            placeholder={t("cowork.imapPass")} 
+            value={draft.imapPassword || ""} 
+            onChange={e => setDraft({ ...draft, imapPassword: e.target.value })} 
+          />
+        </SettingsField>
+
+        <SettingsField label={t("cowork.rag")} hint={t("cowork.ragHint")} stacked>
+          <input 
+            className="mem-input set-grow" 
+            placeholder={t("cowork.ragModel")} 
+            value={draft.embeddingModel} 
+            onChange={e => setDraft({ ...draft, embeddingModel: e.target.value })} 
+          />
+        </SettingsField>
+      </SettingsSection>
+
+      {/* --- 快捷截屏（全局热键 → VLM 识别 → IM 回复） --- */}
+      <SettingsSection title="快捷截屏">
+        <SettingsField label="启用快捷截屏" hint="开启后，按快捷键（任意应用前台）截屏 → AI 识别 → 结果发 IM + 弹窗。默认关闭。">
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={draft.screenshotEnabled ?? false}
+              onChange={e => setDraft({ ...draft, screenshotEnabled: e.target.checked })}
+            />
+            <span>{(draft.screenshotEnabled ?? false) ? "已开启" : "未开启"}</span>
+          </label>
+        </SettingsField>
+        <SettingsField label="快捷键" hint='组合键，如 Ctrl+Shift+S。修改后保存并重启生效。'>
+          <input
+            className="mem-input"
+            value={draft.screenshotHotkey ?? "Ctrl+Shift+S"}
+            onChange={e => setDraft({ ...draft, screenshotHotkey: e.target.value })}
+            placeholder="Ctrl+Shift+S"
+          />
+        </SettingsField>
+        <SettingsField label="图片识别模型" hint="截屏识别用的多模态模型。默认 qwen/qwen3.6-27b（轻量快速），可选 qwen/qwen3.5-397b-a17b（更强但更慢）。">
+          <select
+            className="mem-input"
+            value={draft.screenshotVlmModel ?? "qwen/qwen3.6-27b"}
+            onChange={e => setDraft({ ...draft, screenshotVlmModel: e.target.value })}
+          >
+            <option value="qwen/qwen3.6-27b">qwen/qwen3.6-27b（默认·轻量）</option>
+            <option value="qwen/qwen3.5-397b-a17b">qwen/qwen3.5-397b-a17b（强力）</option>
+          </select>
+        </SettingsField>
+
+        <div style={{ marginTop: "16px" }}>
+          <button
+            type="button"
+            className="btn btn--primary btn--small"
+            disabled={!isDirty || busy}
+            onClick={handleSave}
+          >
+            {t("cowork.save")}
+          </button>
+        </div>
+      </SettingsSection>
+    </div>
+  );
+}
+

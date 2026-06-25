@@ -32,7 +32,52 @@ func TestComposeAppendsAfterBase(t *testing.T) {
 		t.Fatalf("base is not the prefix of the composed prompt:\n%q", got)
 	}
 	if !strings.Contains(got, "Use tabs.") {
-		t.Fatalf("doc body missing from composed prompt:\n%q", got)
+		t.Fatalf("doc body not folded into prompt:\n%q", got)
+	}
+}
+
+// TestBlockInjectsUserProfile confirms the "always present" user profile: when
+// TypeUser facts exist, Compose folds a structured profile block into the
+// system prompt so the model knows the user without a tool call. With no user
+// facts, the block is omitted entirely (no empty section pollutes the prefix).
+func TestBlockInjectsUserProfile(t *testing.T) {
+	dir := t.TempDir()
+	store := Store{Dir: dir}
+	store.Save(Memory{
+		Name: "role", Description: "Backend engineer", Type: TypeUser,
+		Body: "Works on backend.", Category: "identity",
+	})
+	store.Save(Memory{
+		Name: "task", Description: "Ship Q2", Type: TypeProject, Body: "Ship by June.",
+	})
+
+	set := &Set{Store: store, CWD: dir}
+	got := Compose("BASE", set)
+
+	// The user fact's description must appear in the profile block.
+	if !strings.Contains(got, "Backend engineer") {
+		t.Errorf("user profile not injected:\n%s", got)
+	}
+	if !strings.Contains(got, "## User Profile") {
+		t.Errorf("profile section heading missing:\n%s", got)
+	}
+	// The project fact must NOT be in the profile (profile is TypeUser only).
+	if strings.Contains(got, "Ship Q2") {
+		t.Errorf("project fact leaked into user profile:\n%s", got)
+	}
+}
+
+// TestBlockOmitsProfileWhenNoUserFacts ensures an empty profile adds nothing —
+// the cache-stable prefix stays maximal when there's nothing to say.
+func TestBlockOmitsProfileWhenNoUserFacts(t *testing.T) {
+	dir := t.TempDir()
+	store := Store{Dir: dir}
+	store.Save(Memory{Name: "task", Description: "Ship Q2", Type: TypeProject, Body: "x"})
+
+	set := &Set{Store: store, CWD: dir}
+	got := Compose("BASE", set)
+	if strings.Contains(got, "## User Profile") {
+		t.Errorf("profile section should be absent with no user facts:\n%s", got)
 	}
 }
 

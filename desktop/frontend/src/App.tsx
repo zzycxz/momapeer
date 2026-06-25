@@ -25,6 +25,8 @@ import { asArray } from "./lib/array";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, useI18n, useT, type Translator } from "./lib/i18n";
 import { useController, type Item, type LiveStream } from "./lib/useController";
 import { app, onEvent, onProjectTreeChanged } from "./lib/bridge";
+import { onProfileChanged } from "./lib/bridge";
+import { CoWorkLayout } from "./layouts/CoWorkLayout";
 import { Transcript } from "./components/Transcript";
 import { Composer } from "./components/Composer";
 import { TodoPanel } from "./components/TodoPanel";
@@ -32,6 +34,7 @@ import { ApprovalModal } from "./components/ApprovalModal";
 import { AskCard } from "./components/AskCard";
 import { ClearContextCard } from "./components/ClearContextCard";
 import { StatusBar } from "./components/StatusBar";
+import { SidebarFooter } from "./components/SidebarFooter";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -673,6 +676,11 @@ export default function App() {
   const [tabMetas, setTabMetas] = useState<TabMeta[]>([]);
   const [tabOrderIds, setTabOrderIds] = useState<string[]>([]);
   const [tabRevealSignal, setTabRevealSignal] = useState(0);
+  // coworkActive tracks whether the ACTIVE tab is in the coWork product profile.
+  // Driven by app.Profile() on active-tab change + the "profile:changed" event
+  // emitted after a SwitchProfile rebuild. When true the standard three-pane body
+  // is hidden (via the app--cowork class) and a CoWorkLayout is rendered instead.
+  const [coworkActive, setCoworkActive] = useState(false);
   const [startupSplashVisible, setStartupSplashVisible] = useState<boolean>(() => shouldShowStartupSplash());
   // null until the mount probe resolves; true shows the overlay. Probed once —
   // clearing the key mid-session is the Settings panel's job, not the gate's.
@@ -887,6 +895,16 @@ export default function App() {
       setSettingsTarget("general");
     });
   }, [closeTransientOverlays]);
+
+  // Screenshot hotkey recognition results — surface as a toast so the user sees
+  // the VLM output even when MoMAPeer isn't focused.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.runtime) return;
+    return window.runtime.EventsOn("screenshot:notice", (...data: unknown[]) => {
+      const e = (data?.[0] ?? {}) as { message?: string };
+      if (e.message) showToast(e.message, "info");
+    });
+  }, [showToast]);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onResize = () => setViewportWidth(window.innerWidth);
@@ -1239,6 +1257,34 @@ export default function App() {
     [collaborationMode, goal, setControllerCollaborationMode, setControllerGoal, setControllerToolApprovalMode, setModel, toolApprovalMode],
   );
 
+  // switchProfile rebuilds the active tab's controller with a product profile
+  // bundle (dev/cowork). The Go side carries conversation history across the
+  // rebuild (see app.SwitchProfileForTab); we optimistically flip coworkActive so
+  // the layout swaps without waiting for the profile:changed event, and revert on
+  // error. The composer/mode/goal re-application is unnecessary here — the rebuild
+  // preserves them via applyTabModeToController on the Go side.
+  const switchProfile = useCallback(
+    async (name: string) => {
+      const next = name.toLowerCase() === "cowork";
+      console.log("[switchProfile] switching to", name, "coworkActive→", next);
+      setCoworkActive(next);
+      try {
+        await app.SwitchProfile(name);
+        console.log("[switchProfile] done:", name);
+      } catch (err) {
+        console.error("[switchProfile] failed, reverting:", err);
+        setCoworkActive(!next); // rebuild failed — revert
+        if (String(err).includes("finish or cancel the current turn") || String(err).includes("turn")) {
+          notice("请先停止当前运行的任务（如分析截图等），再切换模式！", "warn");
+        } else {
+          notice("切换模式失败: " + String(err), "warn");
+        }
+        throw err;
+      }
+    },
+    [],
+  );
+
   // Startup and workspace/model rebuilds create a fresh controller in normal
   // mode. Re-apply the UI mode once the controller is ready, including the case
   // where the user picked YOLO while boot was still loading and the legacy
@@ -1467,6 +1513,42 @@ export default function App() {
       void refreshTabMetas();
     });
   }, [refreshTabMetas]);
+
+  // Sync coworkActive from the active tab's profile. Refetch on active-tab change
+  // (each tab remembers its own profile) and on the profile:changed event (fired
+  // after a SwitchProfile rebuild). The TabMeta.profile field is the per-tab
+  // source of truth from refreshTabMetas; app.Profile() is the live backend read.
+  useEffect(() => {
+    const active = tabMetas.find((m) => m.id === activeTabId);
+    if (active?.profile) {
+      setCoworkActive(active.profile.toLowerCase() === "cowork");
+      return;
+    }
+    // No tab meta yet (startup) — ask the backend directly.
+    let cancelled = false;
+    app
+      .Profile()
+      .then((name) => {
+        if (!cancelled) setCoworkActive((name ?? "").toLowerCase() === "cowork");
+      })
+      .catch(() => {
+        /* dev mock / backend not ready */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTabId, tabMetas]);
+
+  useEffect(() => {
+    return onProfileChanged((e) => {
+      // Only adopt the change if it concerns the active tab — a background tab's
+      // profile switch should not flip the visible layout.
+      setCoworkActive((prev) => {
+        if (e.profile.toLowerCase() === "cowork") return true;
+        return prev && e.tabId === activeTabId ? false : prev;
+      });
+    });
+  }, [activeTabId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2177,11 +2259,145 @@ export default function App() {
   const sidebarImConnectedCount = sidebarImConnections.filter((connection) => connection.status === "connected").length;
   const sidebarImOnline = sidebarImConnectedCount > 0;
 
+  const mainNode = (
+    <main className="main">
+      {sidebarImDetailConnection ? (
+        <SidebarImConnectionDetail
+          connection={sidebarImDetailConnection}
+          onClose={() => setSidebarImDetailConnectionId("")}
+          onOpenSettings={openBotSettings}
+          onOpenSession={() => void openSidebarImConnectionSession(sidebarImDetailConnection)}
+        />
+      ) : state.meta?.ready === false && !state.meta?.startupErr ? (
+        <div className="loading-screen">
+          <div className="loading-screen__spinner" />
+          <span className="loading-screen__text">{t("common.loading")}</span>
+        </div>
+      ) : (
+        <Transcript
+          items={state.items}
+          live={state.live}
+          footerHeight={footerHeight}
+          onPrompt={send}
+          onRewind={handleMessageAction}
+          checkpoints={state.checkpoints}
+          actionPending={state.messageAction != null}
+          rewindDisabled={state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
+          defaultExpandThinking={expandThinking}
+          profile={coworkActive ? "cowork" : "dev"}
+          onInsert={addWorkspaceTextToComposer}
+        />
+      )}
+    </main>
+  );
+
+  const footerNode = !sidebarImDetailConnection ? (
+    <footer className="footer" ref={footerRef}>
+      {showTodos && <TodoPanel todos={todos} onDismiss={() => setDismissedTodo(todoItem!.id)} />}
+      {state.approval && (
+        <ApprovalModal
+          approval={state.approval}
+          onAnswer={(allow, session, persist) => {
+            // Approving an exit_plan_mode plan leaves plan mode; sync the
+            // tab-local indicator and persisted safe mode immediately.
+            if (state.approval!.tool === "exit_plan_mode" && allow) applyCollaborationMode("normal");
+            approve(state.approval!.id, allow, session, persist);
+          }}
+          onRevisePlan={(text) => {
+            setPendingPlanRevision(text);
+            approve(state.approval!.id, false, false, false);
+          }}
+          onExitPlan={() => {
+            applyCollaborationMode("normal");
+            approve(state.approval!.id, false, false, false);
+          }}
+        />
+      )}
+      {state.ask && (
+        <AskCard
+          ask={state.ask}
+          onAnswer={answerQuestion}
+          onDismiss={() => answerQuestion(state.ask!.id, [])}
+        />
+      )}
+      {clearContextPending && (
+        <ClearContextCard
+          onCancel={cancelClearContext}
+          onConfirm={() => {
+            void confirmClearContext();
+          }}
+        />
+      )}
+      <Composer
+        running={state.running}
+        collaborationMode={collaborationMode}
+        toolApprovalMode={toolApprovalMode}
+        goal={goal}
+        cwd={state.meta?.cwd}
+        modelLabel={state.meta?.label ?? t("status.connecting")}
+        tabId={activeTabId}
+        effort={state.effort}
+        onSend={handleSend}
+        onCancel={cancel}
+        onCycleMode={cycleMode}
+        onSetMode={applyMode}
+        onSetCollaborationMode={applyCollaborationMode}
+        onSetToolApprovalMode={applyToolApprovalMode}
+        onToggleYoloApprovalMode={toggleYoloApprovalMode}
+        onSetGoal={startGoal}
+        onClearGoal={() => applyGoal("")}
+        onSwitchModel={switchModel}
+        onSetEffort={setEffort}
+        insertRequest={composerInsertRequest}
+        disabled={state.meta?.ready === false || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
+        decisionPending={state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
+        ready={state.meta?.ready === true}
+        turnStartAt={state.turnStartAt}
+        turnTokens={state.turnTokens}
+        retry={state.retry}
+        transientDismissSignal={transientOverlayDismissSignal}
+      />
+      <StatusBar
+        context={state.context}
+        usage={state.usage}
+        balance={state.balance}
+        jobs={state.jobs}
+        running={state.running}
+        collaborationMode={collaborationMode}
+        toolApprovalMode={toolApprovalMode}
+        sessionTurns={sessionTurns}
+        sessionTokens={state.sessionTokens}
+        turnTokens={state.turnTotalTokens}
+        cost={state.sessionCost}
+        currency={state.sessionCurrency}
+        modelLabel={state.meta?.label}
+      />
+    </footer>
+  ) : null;
+
+  const projectTreeNode = (
+    <ProjectTree
+      activeScope={activeTab?.scope}
+      activeWorkspaceRoot={activeTab?.workspaceRoot}
+      activeTopicId={activeTab?.topicId}
+      imTopicSources={imTopicSources}
+      onOpenTopic={handleOpenTopic}
+      onOpenProjectHistory={openProjectHistory}
+      onCreateTopic={(scope, workspaceRoot) => openBlankSession(scope, scope === "project" ? workspaceRoot : "")}
+      onTopicsChanged={refreshProjectsAndTabs}
+      onRenameTopic={renameTopic}
+      refreshSignal={projectRevision}
+      onAddProject={async () => {
+        await switchFolder();
+      }}
+    />
+  );
+
   return (
     <ShellExpandProvider>
     <ShellHotkeys />
     <TextSizeHotkeys />
-    <div ref={appRef} className={["app", `app--${desktopPlatform}`, browserPreviewChrome ? "app--browser-preview" : ""].filter(Boolean).join(" ")}>
+    <div ref={appRef} className={["app", `app--${desktopPlatform}`, browserPreviewChrome ? "app--browser-preview" : "", coworkActive ? "app--cowork" : ""].filter(Boolean).join(" ")}>
       <div
         className={[
           "layout",
@@ -2195,6 +2411,29 @@ export default function App() {
           .join(" ")}
         style={layoutStyle}
       >
+        {coworkActive && (
+          <CoWorkLayout
+            mainNode={mainNode}
+            footerNode={footerNode}
+            projectTreeNode={projectTreeNode}
+            sidebarFooter={
+              <SidebarFooter
+                imConnectionCount={sidebarImConnections.length}
+                imOnline={sidebarImOnline}
+                tooltipDisabled={sidebarNavTooltipDisabled}
+                onOpenIm={() => void showSidebarImDetail()}
+                onOpenHistory={() => void openAllHistory()}
+                onOpenTrash={() => void openTrash()}
+                onOpenSettings={() => {
+                  closeTransientOverlays();
+                  setSettingsTarget("general");
+                }}
+              />
+            }
+            rightDockOpen={workspacePanelRenderable}
+            sidebarCollapsed={sidebarCollapsed}
+          />
+        )}
         <AppChrome
           platform={desktopPlatform}
           browserPreviewChrome={browserPreviewChrome}
@@ -2218,6 +2457,8 @@ export default function App() {
           onTabsReorder={(ids) => void handleTabsReorder(ids)}
           onNewTab={() => void handleNewTab()}
           onOpenPalette={() => void openPalette()}
+          profile={coworkActive ? "cowork" : "dev"}
+          onSwitchProfile={(name) => void switchProfile(name).catch(() => { /* revert handled in switchProfile */ })}
         />
 
         <aside className={`sidebar${sidebarCollapsed ? " sidebar--collapsed" : ""}`} aria-label={t("sidebar.navigation")}>
@@ -2232,66 +2473,21 @@ export default function App() {
           </button>
 
           <section className="sidebar__section sidebar__section--projects">
-            <ProjectTree
-              activeScope={activeTab?.scope}
-              activeWorkspaceRoot={activeTab?.workspaceRoot}
-              activeTopicId={activeTab?.topicId}
-              imTopicSources={imTopicSources}
-              onOpenTopic={handleOpenTopic}
-              onOpenProjectHistory={openProjectHistory}
-              onCreateTopic={(scope, workspaceRoot) => openBlankSession(scope, scope === "project" ? workspaceRoot : "")}
-              onTopicsChanged={refreshProjectsAndTabs}
-              onRenameTopic={renameTopic}
-              refreshSignal={projectRevision}
-              onAddProject={async () => {
-                await switchFolder();
-              }}
-            />
+            {projectTreeNode}
           </section>
 
-          <nav className="sidebar__nav">
-            <Tooltip label={sidebarImConnections.length === 0 ? t("sidebar.imEmpty") : t("sidebar.im")} fill side="right" disabled={sidebarNavTooltipDisabled}>
-              <button
-                className="sidebar__navitem sidebar__navitem--im"
-                type="button"
-                onClick={() => void showSidebarImDetail()}
-              >
-                <MessageSquare size={15} />
-                <span>{t("sidebar.im")}</span>
-                {sidebarImOnline && <span className="sidebar-im-dot" />}
-              </button>
-            </Tooltip>
-            <Tooltip label={t("sidebar.allHistory")} fill side="right" disabled={sidebarNavTooltipDisabled}>
-              <button
-                className="sidebar__navitem"
-                onClick={() => void openAllHistory()}
-              >
-                <History size={15} />
-                <span>{t("sidebar.allHistory")}</span>
-              </button>
-            </Tooltip>
-            <Tooltip label={t("sidebar.trash")} fill side="right" disabled={sidebarNavTooltipDisabled}>
-              <button
-                className="sidebar__navitem"
-                onClick={() => void openTrash()}
-              >
-                <Trash2 size={15} />
-                <span>{t("sidebar.trash")}</span>
-              </button>
-            </Tooltip>
-            <Tooltip label={t("topbar.settings")} fill side="right" disabled={sidebarNavTooltipDisabled}>
-              <button
-                className="sidebar__navitem"
-                onClick={() => {
-                  closeTransientOverlays();
-                  setSettingsTarget("general");
-                }}
-              >
-                <SettingsIcon size={15} />
-                <span>{t("topbar.settings")}</span>
-              </button>
-            </Tooltip>
-          </nav>
+          <SidebarFooter
+            imConnectionCount={sidebarImConnections.length}
+            imOnline={sidebarImOnline}
+            tooltipDisabled={sidebarNavTooltipDisabled}
+            onOpenIm={() => void showSidebarImDetail()}
+            onOpenHistory={() => void openAllHistory()}
+            onOpenTrash={() => void openTrash()}
+            onOpenSettings={() => {
+              closeTransientOverlays();
+              setSettingsTarget("general");
+            }}
+          />
 
         </aside>
         <button
@@ -2438,116 +2634,11 @@ export default function App() {
 
           <UpdateBanner enabled={startupUpdateChecksEnabled === true} />
 
-          <main className="main">
-            {sidebarImDetailConnection ? (
-              <SidebarImConnectionDetail
-                connection={sidebarImDetailConnection}
-                onClose={() => setSidebarImDetailConnectionId("")}
-                onOpenSettings={openBotSettings}
-                onOpenSession={() => void openSidebarImConnectionSession(sidebarImDetailConnection)}
-              />
-            ) : state.meta?.ready === false && !state.meta?.startupErr ? (
-              <div className="loading-screen">
-                <div className="loading-screen__spinner" />
-                <span className="loading-screen__text">{t("common.loading")}</span>
-              </div>
-            ) : (
-              <Transcript
-                items={state.items}
-                live={state.live}
-                footerHeight={footerHeight}
-                onPrompt={send}
-                onRewind={handleMessageAction}
-                checkpoints={state.checkpoints}
-                actionPending={state.messageAction != null}
-                rewindDisabled={state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
-                defaultExpandThinking={expandThinking}
-              />
-            )}
-          </main>
-
-          {!sidebarImDetailConnection && (
-          <footer className="footer" ref={footerRef}>
-            {showTodos && <TodoPanel todos={todos} onDismiss={() => setDismissedTodo(todoItem!.id)} />}
-            {state.approval && (
-              <ApprovalModal
-                approval={state.approval}
-                onAnswer={(allow, session, persist) => {
-                  // Approving an exit_plan_mode plan leaves plan mode; sync the
-                  // tab-local indicator and persisted safe mode immediately.
-                  if (state.approval!.tool === "exit_plan_mode" && allow) applyCollaborationMode("normal");
-                  approve(state.approval!.id, allow, session, persist);
-                }}
-                onRevisePlan={(text) => {
-                  setPendingPlanRevision(text);
-                  approve(state.approval!.id, false, false, false);
-                }}
-                onExitPlan={() => {
-                  applyCollaborationMode("normal");
-                  approve(state.approval!.id, false, false, false);
-                }}
-              />
-            )}
-            {state.ask && (
-              <AskCard
-                ask={state.ask}
-                onAnswer={answerQuestion}
-                onDismiss={() => answerQuestion(state.ask!.id, [])}
-              />
-            )}
-            {clearContextPending && (
-              <ClearContextCard
-                onCancel={cancelClearContext}
-                onConfirm={() => {
-                  void confirmClearContext();
-                }}
-              />
-            )}
-            <Composer
-              running={state.running}
-              collaborationMode={collaborationMode}
-              toolApprovalMode={toolApprovalMode}
-              goal={goal}
-              cwd={state.meta?.cwd}
-              modelLabel={state.meta?.label ?? t("status.connecting")}
-              tabId={activeTabId}
-              effort={state.effort}
-              onSend={handleSend}
-              onCancel={cancel}
-              onCycleMode={cycleMode}
-              onSetMode={applyMode}
-              onSetCollaborationMode={applyCollaborationMode}
-              onSetToolApprovalMode={applyToolApprovalMode}
-              onToggleYoloApprovalMode={toggleYoloApprovalMode}
-              onSetGoal={startGoal}
-              onClearGoal={() => applyGoal("")}
-              onSwitchModel={switchModel}
-              onSetEffort={setEffort}
-              insertRequest={composerInsertRequest}
-              disabled={state.meta?.ready === false || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
-              decisionPending={state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
-              ready={state.meta?.ready === true}
-              turnStartAt={state.turnStartAt}
-              turnTokens={state.turnTokens}
-              retry={state.retry}
-              transientDismissSignal={transientOverlayDismissSignal}
-            />
-            <StatusBar
-              context={state.context}
-              usage={state.usage}
-              balance={state.balance}
-              jobs={state.jobs}
-              running={state.running}
-              collaborationMode={collaborationMode}
-              toolApprovalMode={toolApprovalMode}
-              sessionTurns={sessionTurns}
-              sessionTokens={state.sessionTokens}
-              turnTokens={state.turnTotalTokens}
-              cost={state.sessionCost}
-              currency={state.sessionCurrency}
-              modelLabel={state.meta?.label}
-            />
-          </footer>
+          {!coworkActive && (
+            <>
+              {mainNode}
+              {footerNode}
+            </>
           )}
           </>
         </section>

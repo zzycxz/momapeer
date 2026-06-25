@@ -7,6 +7,13 @@
 //   - Auto-memory store: per-project fact files with frontmatter plus a MEMORY.md
 //     index, which the model maintains via the `remember` tool (see store.go).
 //
+// Bitemporal memory (v0.3.0): each stored fact carries both system time
+// (CreatedAt/UpdatedAt — when the record was written) and valid time
+// (ValidFrom/ValidTo — when the fact holds true in the real world). When a
+// fact is updated, the old version is archived as "superseded" rather than
+// deleted, preserving a full history chain. The `memory_query` tool supports
+// time-point queries ("where did I live in March?") via ListAsOf.
+//
 // All of it folds into the durable system-prompt prefix exactly once at boot
 // (see Compose), so it rides the provider's automatic prefix cache at zero per-turn
 // cost. Mid-session changes never mutate that prefix; they take effect through

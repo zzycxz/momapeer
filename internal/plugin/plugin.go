@@ -9,6 +9,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"github.com/zzycxz/momapeer/internal/event"
 	"github.com/zzycxz/momapeer/internal/tool"
 )
+
 
 // protocolVersion is the MCP revision momapeer advertises during initialize.
 const protocolVersion = "2024-11-05"
@@ -456,6 +458,14 @@ func (h *Host) fetchPrompts(ctx context.Context, c *Client, sink event.Sink) {
 		ps[i].client = c
 	}
 	h.mu.Lock()
+	// Re-check the server is still registered: Remove may have dropped it (and
+	// pruned its prompts from h.prompts) while listPrompts was in flight.
+	// Appending here would re-introduce a stale prompt entry for a disconnected
+	// server — a ghost slash command that errors when invoked.
+	if !h.hasLocked(c.name) {
+		h.mu.Unlock()
+		return
+	}
 	c.prompts = ps
 	h.prompts = append(h.prompts, ps...)
 	h.mu.Unlock()
@@ -482,6 +492,11 @@ func (h *Host) fetchResources(ctx context.Context, c *Client, sink event.Sink) {
 		return
 	}
 	h.mu.Lock()
+	// Re-check the server is still registered (see fetchPrompts for rationale).
+	if !h.hasLocked(c.name) {
+		h.mu.Unlock()
+		return
+	}
 	c.resources = rs
 	h.resources = append(h.resources, rs...)
 	h.mu.Unlock()
@@ -656,6 +671,13 @@ func (h *Host) endDeferredSpawn() {
 func (h *Host) has(name string) bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	return h.hasLocked(name)
+}
+
+// hasLocked is the lock-held variant of has; the caller MUST hold h.mu (or
+// h.mu.RLock). Used by fetchPrompts/fetchResources to re-check registration
+// under the write lock before appending late-arriving surfaces.
+func (h *Host) hasLocked(name string) bool {
 	for _, c := range h.clients {
 		if c.name == name {
 			return true
@@ -802,6 +824,21 @@ func newTransport(ctx context.Context, s Spec) (transport, error) {
 }
 
 func (c *Client) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	res, err := c.t.call(ctx, method, params)
+	if err == nil {
+		return res, nil
+	}
+	// If the server rejected us because the HTTP session expired, re-initialize
+	// the MCP handshake and retry the original call once. Only applies to
+	// Streamable HTTP transports; stdio never produces this error.
+	var sessErr *SessionExpiredError
+	if !errors.As(err, &sessErr) {
+		return nil, err
+	}
+	slog.Warn("plugin: session expired, re-initializing", "server", c.name, "err", err)
+	if initErr := c.initialize(ctx); initErr != nil {
+		return nil, fmt.Errorf("plugin %q: session expired and re-init failed: %w (original: %v)", c.name, initErr, err)
+	}
 	return c.t.call(ctx, method, params)
 }
 

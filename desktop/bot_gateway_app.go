@@ -16,12 +16,9 @@ import (
 // startBotGateway 启动内嵌的 bot gateway。
 // 调用方需确保 cfg.Bot.Enabled == true。
 func (a *App) startBotGateway(cfg *config.Config) {
-	a.mu.Lock()
-	if a.botGW != nil {
-		a.mu.Unlock()
+	if a.botGW.Load() != nil {
 		return // already running
 	}
-	a.mu.Unlock()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
@@ -93,20 +90,14 @@ func (a *App) startBotGateway(cfg *config.Config) {
 		return
 	}
 
-	a.mu.Lock()
-	a.botGW = gw
-	a.mu.Unlock()
+	a.botGW.Store(gw)
 
 	logger.Info("bot gateway started", "model", modelName, "channels", len(adapters))
 }
 
 // stopBotGateway 停止内嵌的 bot gateway。
 func (a *App) stopBotGateway() {
-	a.mu.Lock()
-	gw := a.botGW
-	a.botGW = nil
-	a.mu.Unlock()
-
+	gw := a.botGW.Swap(nil)
 	if gw != nil {
 		gw.Stop()
 	}

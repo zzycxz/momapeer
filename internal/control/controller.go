@@ -79,6 +79,7 @@ type Controller struct {
 	classifier    autoPlanClassifier
 	startedOnce   bool                             // guards the one-shot SessionStart hook on first turn
 	onRemember    func(rule string) RememberResult // set via Options; invoked when user picks "always allow"
+	onTurnEnd     func(ctx context.Context, lastUserMsg, lastAssistant string) // set via Options; passive memory capture
 
 	// balanceURL/balanceKey target the active provider's optional wallet-balance
 	// endpoint (empty when the provider declares none). Captured at build so a
@@ -270,6 +271,15 @@ type Options struct {
 	// persist to disk (e.g. "Bash(go test:*)"). The callback is wired into the
 	// permission Gate on EnableInteractiveApproval.
 	OnRemember func(rule string) RememberResult
+	// OnTurnEnd, when set, is invoked after each turn completes (both the
+	// interactive and headless paths). It receives the last user message and
+	// the final assistant reply text, enabling passive memory capture: boot
+	// wires this to an LLM fact extractor that saves candidate memories with
+	// Status "pending" for the user to confirm. The callback must be
+	// fire-and-forget — it runs on the turn's goroutine and any error must be
+	// swallowed internally so it can never stall or crash the foreground turn.
+	// A nil callback disables auto-capture entirely.
+	OnTurnEnd func(ctx context.Context, lastUserMsg, lastAssistant string)
 }
 
 // New builds a Controller. A nil Sink is replaced with event.Discard.
@@ -308,6 +318,7 @@ func New(opts Options) *Controller {
 		goalJudge:        opts.GoalJudge,
 		classifier:       classifier,
 		onRemember:       opts.OnRemember,
+		onTurnEnd:        opts.OnTurnEnd,
 		balanceURL:       opts.BalanceURL,
 		balanceKey:       opts.BalanceKey,
 		balanceClient:    opts.BalanceClient,
@@ -564,6 +575,17 @@ func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input any, raw, 
 		}
 		defer func() { c.hooks.Stop(ctx, lastAssistantText(c.History()), turn) }()
 	}
+	// Passive memory capture: after the turn completes, hand the last user
+	// message + final assistant text to the extractor (if wired). This runs
+	// synchronously on the turn goroutine but the extractor is fire-and-forget
+	// (10s timeout, swallows all errors), so it can never stall the foreground.
+	// A detached context is used so an upstream turn-cancellation (e.g. the user
+	// hitting Stop) doesn't abort the extraction mid-flight.
+	if c.onTurnEnd != nil {
+		defer func() {
+			c.onTurnEnd(context.Background(), composedText, lastAssistantText(c.History()))
+		}()
+	}
 	// For multimodal content (images), reconstruct with composed text; otherwise use composed text directly.
 	var runInput any
 	if parts, ok := input.([]provider.ContentPart); ok {
@@ -621,7 +643,7 @@ func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input any, raw, 
 
 func (c *Controller) continueGoal(ctx context.Context) error {
 	for {
-		cont := c.advanceGoalAfterTurn()
+		cont := c.advanceGoalAfterTurn(ctx)
 		if !cont {
 			return nil
 		}
@@ -638,7 +660,7 @@ func (c *Controller) continueGoal(ctx context.Context) error {
 	}
 }
 
-func (c *Controller) advanceGoalAfterTurn() bool {
+func (c *Controller) advanceGoalAfterTurn(ctx context.Context) bool {
 	reply := lastAssistantText(c.History())
 	status, reason, _ := parseGoalStatusMarker(reply)
 	var notice string
@@ -657,7 +679,11 @@ func (c *Controller) advanceGoalAfterTurn() bool {
 		judge := c.goalJudge
 		c.mu.Unlock()
 		if judge != nil && c.executor != nil && c.executor.Provider() != nil {
-			judgeCtx, judgeCancel := context.WithTimeout(context.Background(), 60*time.Second)
+			// Derive the judge timeout from the TURN context, not
+			// context.Background(), so Cancel() aborts this LLM call
+			// immediately instead of parking for up to 60s. The 60s cap
+			// still bounds a stuck provider.
+			judgeCtx, judgeCancel := context.WithTimeout(ctx, 60*time.Second)
 			verdict := judge(judgeCtx, c.executor.Provider(), c.History(), goal)
 			judgeCancel()
 			if !verdict.OK {
@@ -667,6 +693,14 @@ func (c *Controller) advanceGoalAfterTurn() bool {
 			}
 		}
 		c.mu.Lock()
+		// Re-check goal state after re-acquiring the lock: between the unlock
+		// above and here, SetGoal("") from another goroutine (user cancel,
+		// tab close) may have cleared the goal. Publishing "goal complete" on
+		// an already-stopped goal would revive a dead loop (TOCTOU).
+		if strings.TrimSpace(c.goal) == "" || c.goalStatus != GoalStatusRunning {
+			c.mu.Unlock()
+			return false
+		}
 		// Strict mode: a goal may not be declared complete unless the agent did
 		// actual tool-backed work toward it this session — a bare-text "I'm done"
 		// is rejected and the loop continues. This pairs with complete_step's
@@ -1186,6 +1220,13 @@ func (c *Controller) Run(ctx context.Context, input string) error {
 		}
 		defer func() { c.hooks.Stop(ctx, lastAssistantText(c.History()), c.turn) }()
 	}
+	// Passive memory capture (mirrors the interactive path). A detached context
+	// keeps the extraction alive even if the headless run's ctx is cancelled.
+	if c.onTurnEnd != nil {
+		defer func() {
+			c.onTurnEnd(context.Background(), input, lastAssistantText(c.History()))
+		}()
+	}
 	return c.runner.Run(ctx, input)
 }
 
@@ -1290,8 +1331,13 @@ func (c *Controller) Steer(text string) {
 		return
 	}
 	// Agent not running — frontend's runningRef was stale.
-	// Convert to a new turn so the user gets a response.
-	go func() { c.SubmitDisplay(text, text) }()
+	// Convert to a new turn so the user gets a response. SubmitDisplay routes
+	// through submit → runGuarded, which re-checks running atomically and
+	// spawns its own tracked turn goroutine, so calling it synchronously here
+	// (instead of a fire-and-forget go func) avoids an untracked goroutine that
+	// Close() would not wait on. runGuarded is a no-op if a turn started in the
+	// window between the running read above and now.
+	c.SubmitDisplay(text, text)
 }
 
 // SteerConsumed returns true when the steer queue is empty after the last consume.
@@ -1496,20 +1542,31 @@ func (c *Controller) NewSession() error {
 	if c.executor == nil {
 		return nil
 	}
+	// Refuse while a turn is running: the agent's loop appends to the live
+	// Session, and swapping it out mid-turn tears the transcript. The check and
+	// the swap below are each under c.mu; between them only non-session work
+	// (snapshot, hooks) happens, so runGuarded cannot start a turn that writes
+	// to a session we are about to replace.
+	c.mu.Lock()
+	if c.running {
+		c.mu.Unlock()
+		return fmt.Errorf("cannot start a new session while a turn is running")
+	}
+	c.mu.Unlock()
 	if err := c.Snapshot(); err != nil {
 		return err
 	}
 	c.hooks.SessionEnd(context.Background())
-	if c.sessionDir != "" {
-		c.mu.Lock()
-		c.sessionPath = agent.NewSessionPath(c.sessionDir, c.label)
-		c.mu.Unlock()
-	}
-	c.executor.SetSession(agent.NewSession(c.systemPrompt))
-	c.rebindCheckpoints(c.SessionPath())
+	newSess := agent.NewSession(c.systemPrompt)
 	c.mu.Lock()
+	c.executor.SetSession(newSess)
+	if c.sessionDir != "" {
+		c.sessionPath = agent.NewSessionPath(c.sessionDir, c.label)
+	}
 	c.startedOnce = true // NewSession fires SessionStart itself; don't re-fire on the next turn
+	path := c.sessionPath
 	c.mu.Unlock()
+	c.rebindCheckpoints(path)
 	c.hooks.SessionStart(context.Background())
 	return nil
 }
@@ -1531,16 +1588,20 @@ func (c *Controller) ClearSession() error {
 		return err
 	}
 	c.hooks.SessionEnd(context.Background())
-	if c.sessionDir != "" {
-		c.mu.Lock()
-		c.sessionPath = agent.NewSessionPath(c.sessionDir, c.label)
-		c.mu.Unlock()
-	}
-	c.executor.SetSession(agent.NewSession(c.systemPrompt))
-	c.rebindCheckpoints(c.SessionPath())
+	newSess := agent.NewSession(c.systemPrompt)
+	// Swap the session under one critical section so a turn that passes the
+	// running check and starts between the unlock above and here cannot write a
+	// session we are about to replace (transcript tear). running was false at
+	// the check; this lock is held continuously across the swap.
 	c.mu.Lock()
+	c.executor.SetSession(newSess)
+	if c.sessionDir != "" {
+		c.sessionPath = agent.NewSessionPath(c.sessionDir, c.label)
+	}
 	c.startedOnce = true
+	path := c.sessionPath
 	c.mu.Unlock()
+	c.rebindCheckpoints(path)
 	c.hooks.SessionStart(context.Background())
 	return nil
 }
@@ -2517,6 +2578,16 @@ func (c *Controller) Close() {
 	if c.jobs != nil {
 		c.jobs.Close() // cancel any still-running background jobs
 	}
+	// Wait for turn-spawned goroutines (autosave ticker, hook notifications) so
+	// Close doesn't leave them writing to a torn-down controller. Bounded: a
+	// stuck hook subprocess is still cancelled by its turn ctx, and a runaway
+	// goroutine can't block Close indefinitely.
+	waitDone := make(chan struct{})
+	go func() { c.autosaveWG.Wait(); close(waitDone) }()
+	select {
+	case <-waitDone:
+	case <-time.After(5 * time.Second):
+	}
 	if c.cleanup != nil {
 		c.cleanup()
 	}
@@ -2738,6 +2809,37 @@ func (c *Controller) ForgetMemory(name string) error {
 		"Deleted memory \""+name+"\" — disregard its line still shown in the saved-memories index until next session.")
 	c.refreshMemoryLocked()
 	return nil
+}
+
+// PromoteMemory confirms an auto-captured "pending" memory, flipping it to
+// "active" so it enters the prompt/profile. Returns false (no error) when the
+// record is missing or not pending, so the UI treats it as idempotent.
+func (c *Controller) PromoteMemory(name string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.mem == nil {
+		return false
+	}
+	ok := c.mem.Store.PromoteMemory(name)
+	if ok {
+		c.refreshMemoryLocked()
+	}
+	return ok
+}
+
+// RejectMemory dismisses an auto-captured "pending" memory, deleting it. Only
+// pending records are affected — confirmed/historical facts are untouched.
+func (c *Controller) RejectMemory(name string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.mem == nil {
+		return false
+	}
+	ok := c.mem.Store.RejectMemory(name)
+	if ok {
+		c.refreshMemoryLocked()
+	}
+	return ok
 }
 
 // QueueMemory implements memory.Queue: when the model runs the remember/forget
@@ -3014,10 +3116,19 @@ func (c *Controller) requestApproval(ctx context.Context, tool, subject string) 
 	c.sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: id, Tool: tool, Subject: subject}})
 	// The agent now needs the user's attention; a Notification hook can ping an
 	// external channel (desktop notice, phone) while the run blocks on the reply.
+	// Tracked on autosaveWG so Close drains it instead of leaving a hook
+	// subprocess running after teardown.
+	notify := func(msg string) {
+		c.autosaveWG.Add(1)
+		go func() {
+			defer c.autosaveWG.Done()
+			c.hooks.Notification(ctx, msg)
+		}()
+	}
 	if subject != "" {
-		go c.hooks.Notification(ctx, "approval needed: "+tool+" "+subject)
+		notify("approval needed: " + tool + " " + subject)
 	} else {
-		go c.hooks.Notification(ctx, "approval needed: "+tool)
+		notify("approval needed: " + tool)
 	}
 
 	select {

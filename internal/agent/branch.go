@@ -189,12 +189,21 @@ func ListBranches(dir string) ([]BranchInfo, error) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		preview, turns := previewSession(path)
-		if turns == 0 {
-			continue
-		}
 		meta, ok, err := LoadBranchMeta(path)
 		if err != nil {
+			continue
+		}
+		// Use the sidecar cache when available (same pattern as ListSessions
+		// in save.go). Older sidecars without CachedTurns/CachedPreview fall
+		// back to the full .jsonl decode.
+		var preview string
+		var turns int
+		if ok && (meta.CachedTurns > 0 || meta.CachedPreview != "") {
+			preview, turns = meta.CachedPreview, meta.CachedTurns
+		} else {
+			preview, turns = previewSession(path)
+		}
+		if turns == 0 {
 			continue
 		}
 		if !ok {

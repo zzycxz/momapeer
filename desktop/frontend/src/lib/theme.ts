@@ -39,7 +39,7 @@ const LEGACY_STYLE_MAP: Record<string, ThemeStyle> = {
   glacier: "slate",
 };
 
-const DEFAULT_THEME_STYLE: ThemeStyle = "graphite";
+const DEFAULT_THEME_STYLE: ThemeStyle = "slate";
 const DEFAULT_THEME: Theme = "light";
 
 const THEME_KEY = "momapeer-theme";

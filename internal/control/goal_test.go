@@ -40,7 +40,7 @@ func TestGoalCommandAutoContinuesUntilComplete(t *testing.T) {
 		t.Fatalf("GoalStatus() = %q, want complete", got)
 	}
 	first := firstUserMessage(ag.Session().Messages)
-	if !strings.Contains(first, "<active-goal>\nship the redesign") {
+	if !strings.Contains(first, "【目标】\nship the redesign") {
 		t.Fatalf("first goal turn should include active goal block, got %q", first)
 	}
 	if strings.HasPrefix(first, PlanModeMarker) {
