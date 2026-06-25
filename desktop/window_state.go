@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -52,9 +53,13 @@ func loadWindowState() (DesktopWindowState, bool) {
 	return s, true
 }
 
+var windowStateMu sync.Mutex
+
 // SaveWindowState is the bound method the frontend calls to persist the current
 // window geometry before quit and periodically during use.
 func (a *App) SaveWindowState(state DesktopWindowState) error {
+	windowStateMu.Lock()
+	defer windowStateMu.Unlock()
 	path := windowStatePath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

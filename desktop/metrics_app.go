@@ -181,7 +181,11 @@ func readCounters(path string) counters {
 	return c
 }
 
+var countersMu sync.Mutex
+
 func writeCounters(path string, c counters) {
+	countersMu.Lock()
+	defer countersMu.Unlock()
 	if b, err := json.Marshal(c); err == nil {
 		_ = os.WriteFile(path, b, 0o644)
 	}

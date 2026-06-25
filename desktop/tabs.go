@@ -1072,9 +1072,20 @@ func (a *App) activeTabLocked() *WorkspaceTab {
 // activeCtrl returns the controller of the active tab, or nil.
 // Self-locking; safe to call from any goroutine without external lock.
 func (a *App) activeCtrl() *control.Controller {
+	ctrl, _ := a.activeCtrlAndRoot()
+	return ctrl
+}
+
+// activeCtrlAndRoot returns the controller and workspace root of the active tab
+// in a single RLock snapshot, eliminating TOCTOU between ctrl and root reads.
+func (a *App) activeCtrlAndRoot() (*control.Controller, string) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	return a.activeCtrlLocked()
+	t := a.activeTabLocked()
+	if t == nil {
+		return nil, ""
+	}
+	return t.Ctrl, t.WorkspaceRoot
 }
 
 // activeCtrlLocked is like activeCtrl but assumes the caller already holds a.mu.
@@ -1393,7 +1404,11 @@ func loadProjectsFile() desktopProjectFile {
 	return normalizeProjectsFile(f)
 }
 
+var projectsMu sync.Mutex
+
 func saveProjectsFile(f desktopProjectFile) error {
+	projectsMu.Lock()
+	defer projectsMu.Unlock()
 	dir := desktopConfigDir()
 	os.MkdirAll(dir, 0o755)
 	f = normalizeProjectsFile(f)
@@ -1934,7 +1949,11 @@ func ensureTopicIndexed(scope, workspaceRoot, topicID, title, source string) err
 	return saveProjectsFile(f)
 }
 
+var telemSaveMu sync.Mutex
+
 func saveTelemetry(path string, snapshot tabTelemetrySnapshot) error {
+	telemSaveMu.Lock()
+	defer telemSaveMu.Unlock()
 	if snapshot.Version == 0 {
 		snapshot.Version = 2
 	}

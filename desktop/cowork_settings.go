@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/zzycxz/momapeer/internal/config"
 )
@@ -209,9 +210,13 @@ func loadCoworkEnv() map[string]string {
 	return out
 }
 
+var coworkMu sync.Mutex
+
 // saveCoworkEnv writes the map back as KEY=VALUE lines (atomic via tmp+rename).
 // Also updates the live process env so a save takes effect without restart.
 func saveCoworkEnv(m map[string]string) error {
+	coworkMu.Lock()
+	defer coworkMu.Unlock()
 	path := coworkEnvPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

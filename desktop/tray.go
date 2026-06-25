@@ -76,15 +76,20 @@ func (a *App) stopTray() {
 func (a *App) updateTrayLocale(locale string) {
 	a.mu.RLock()
 	t := a.tray
+	var openItem, quitItem *systray.MenuItem
+	if t != nil {
+		openItem = t.openItem
+		quitItem = t.quitItem
+	}
 	a.mu.RUnlock()
-	if t == nil || t.openItem == nil || t.quitItem == nil {
+	if openItem == nil || quitItem == nil {
 		return
 	}
 	labels := trayMenuLabels(locale)
-	t.openItem.SetTitle(labels.openTitle)
-	t.openItem.SetTooltip(labels.openTooltip)
-	t.quitItem.SetTitle(labels.quitTitle)
-	t.quitItem.SetTooltip(labels.quitTooltip)
+	openItem.SetTitle(labels.openTitle)
+	openItem.SetTooltip(labels.openTooltip)
+	quitItem.SetTitle(labels.quitTitle)
+	quitItem.SetTooltip(labels.quitTooltip)
 }
 
 func (a *App) trayLocale() string {

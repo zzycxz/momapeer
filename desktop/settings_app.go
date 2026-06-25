@@ -615,16 +615,23 @@ func (a *App) rebuild() error {
 	if tab == nil {
 		return fmt.Errorf("no active tab")
 	}
+	// Snapshot old controller + scalar fields under RLock to avoid TOCTOU on tab.Ctrl.
+	a.mu.RLock()
+	oldCtrl := tab.Ctrl
+	model := tab.model
+	root := tab.WorkspaceRoot
+	sink := tab.sink
+	effort := tab.effort
+	a.mu.RUnlock()
+
 	var carried []provider.Message
 	prevPath := ""
-	if tab.Ctrl != nil {
-		prevPath = tab.Ctrl.SessionPath()
-		_ = tab.Ctrl.Snapshot()
-		carried = tab.Ctrl.History()
-		tab.Ctrl.Close()
+	if oldCtrl != nil {
+		prevPath = oldCtrl.SessionPath()
+		_ = oldCtrl.Snapshot()
+		carried = oldCtrl.History()
 	}
-	model := tab.model
-	if cfg, err := config.LoadForRoot(tab.WorkspaceRoot); err == nil {
+	if cfg, err := config.LoadForRoot(root); err == nil {
 		if resolved, fallback, ok := cfg.ResolveModelWithFallback(model); ok {
 			if fallback && strings.TrimSpace(model) != "" {
 				a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", model, resolved))
@@ -634,10 +641,10 @@ func (a *App) rebuild() error {
 	}
 	ctrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model: model, RequireKey: false,
-		Sink:           tab.sink,
-		WorkspaceRoot:  tab.WorkspaceRoot,
+		Sink:           sink,
+		WorkspaceRoot:  root,
 		SessionDir:     tabSessionDir(tab),
-		EffortOverride: cloneStringPtr(tab.effort),
+		EffortOverride: cloneStringPtr(effort),
 	})
 	if err != nil {
 		a.mu.Lock()
@@ -649,7 +656,14 @@ func (a *App) rebuild() error {
 	}
 	a.bindControllerDisplayRecorder(ctrl)
 	a.mu.Lock()
-	tab.Ctrl = ctrl
+	if tab.Ctrl == oldCtrl {
+		tab.Ctrl = ctrl
+		if oldCtrl != nil {
+			oldCtrl.Close()
+		}
+	} else {
+		tab.Ctrl = ctrl
+	}
 	tab.model = model
 	tab.Label = ctrl.Label()
 	tab.StartupErr = ""

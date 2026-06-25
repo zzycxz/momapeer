@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/zzycxz/momapeer/internal/config"
 )
@@ -34,8 +35,12 @@ func workspaceListPath() string {
 	return filepath.Join(dir, "desktop-workspaces.json")
 }
 
+var workspaceMu sync.Mutex
+
 // saveWorkspace records dir as the last working folder.
 func saveWorkspace(dir string) {
+	workspaceMu.Lock()
+	defer workspaceMu.Unlock()
 	p := workspaceStatePath()
 	if p == "" || dir == "" {
 		return

@@ -1471,10 +1471,16 @@ func (a *App) ResumeSession(path string) ([]HistoryMessage, error) {
 // active by the time the async call reaches the backend.
 func (a *App) ResumeSessionForTab(tabID, path string) ([]HistoryMessage, error) {
 	tab := a.tabByID(tabID)
-	if tab == nil || tab.Ctrl == nil {
+	if tab == nil {
 		return []HistoryMessage{}, fmt.Errorf("tab is not ready")
 	}
+	// Snapshot ctrl under RLock to avoid TOCTOU.
+	a.mu.RLock()
 	ctrl := tab.Ctrl
+	a.mu.RUnlock()
+	if ctrl == nil {
+		return []HistoryMessage{}, fmt.Errorf("tab is not ready")
+	}
 	sessionPath, _, err := validateSessionPath(controllerSessionDir(ctrl), path)
 	if err != nil {
 		return nil, err
@@ -2017,22 +2023,47 @@ func (a *App) Meta() Meta {
 }
 
 func (a *App) MetaForTab(tabID string) Meta {
-	tab := a.tabByID(tabID)
+	// Snapshot ctrl pointer + scalar fields under a single RLock to avoid torn
+	// reads. Controller methods are called AFTER releasing the lock to avoid
+	// deadlock (controller internals may also acquire a.mu).
+	a.mu.RLock()
+	tab := a.tabByIDLocked(tabID)
 	if tab == nil {
+		a.mu.RUnlock()
 		return Meta{EventChannel: eventChannel}
 	}
+	ctrl := tab.Ctrl
+	label := tab.Label
+	ready := tab.Ready
+	startupErr := tab.StartupErr
 	cwd := tab.WorkspaceRoot
+	goal := tab.goal
+	toolApprovalMode := tab.toolApprovalMode
+	a.mu.RUnlock()
+
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	autoApproveTools := tab.Ctrl != nil && tab.Ctrl.AutoApproveTools()
-	toolApprovalMode := currentTabToolApprovalMode(tab)
-	goal := currentTabGoal(tab)
-	goalStatus := currentTabGoalStatus(tab)
+	autoApproveTools := ctrl != nil && ctrl.AutoApproveTools()
+	if ctrl != nil {
+		toolApprovalMode = ctrl.ToolApprovalMode()
+		goal = ctrl.Goal()
+	}
+	var goalStatus string
+	if ctrl != nil {
+		goalStatus = ctrl.GoalStatus()
+	} else if strings.TrimSpace(goal) != "" {
+		goalStatus = control.GoalStatusRunning
+	} else {
+		goalStatus = control.GoalStatusStopped
+	}
+	if toolApprovalMode == "" {
+		toolApprovalMode = control.ToolApprovalAsk
+	}
 	return Meta{
-		Label:            tab.Label,
-		Ready:            tab.Ready,
-		StartupErr:       tab.StartupErr,
+		Label:            label,
+		Ready:            ready,
+		StartupErr:       startupErr,
 		EventChannel:     eventChannel,
 		Cwd:              cwd,
 		AutoApproveTools: autoApproveTools,
@@ -3065,8 +3096,12 @@ func (a *App) ClearMCPServerAuthentication(name string) error {
 // for this session, off disconnects it (config untouched either way — like Claude
 // Code's per-conversation enable/disable, it resets on the next session start).
 func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
+	ctrl, root := a.activeCtrlAndRoot()
+	if ctrl == nil {
+		return fmt.Errorf("no active session")
+	}
 	tab := a.activeTab()
-	if tab == nil || tab.Ctrl == nil {
+	if tab == nil {
 		return fmt.Errorf("no active session")
 	}
 	if name == "codegraph" {
@@ -3081,7 +3116,7 @@ func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
 	}
 	_ = configuredEntry
 	if enabled {
-		_, err := a.connectConfiguredMCPServerForTab(tab, name)
+		_, err := a.connectConfiguredMCPServer(ctrl, root, name)
 		if err == nil {
 			a.mu.Lock()
 			delete(tab.disabledMCP, name)
@@ -3089,7 +3124,7 @@ func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
 		}
 		return err
 	}
-	if s, ok := findMCPServerView(tab.Ctrl, name); ok {
+	if s, ok := findMCPServerView(ctrl, name); ok {
 		s.Status = "disabled"
 		s.Error = ""
 		a.mu.Lock()
@@ -3100,7 +3135,7 @@ func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
 		tab.mcpOrder = mergeServerOrder(tab.mcpOrder, []ServerView{s})
 		a.mu.Unlock()
 	}
-	tab.Ctrl.DisconnectMCPServer(name)
+	ctrl.DisconnectMCPServer(name)
 	return nil
 }
 
@@ -3126,13 +3161,6 @@ func (a *App) connectConfiguredMCPServer(ctrl *control.Controller, root, name st
 	return 0, fmt.Errorf("no configured MCP server named %q", name)
 }
 
-func (a *App) connectConfiguredMCPServerForTab(tab *WorkspaceTab, name string) (int, error) {
-	if tab == nil {
-		return 0, fmt.Errorf("no active session")
-	}
-	return a.connectConfiguredMCPServer(tab.Ctrl, tab.WorkspaceRoot, name)
-}
-
 // SetMCPServerTier is kept for old desktop bindings. New config writes drop the
 // retired tier field; for CodeGraph this now means "enable and start in the
 // background".
@@ -3156,15 +3184,18 @@ func (a *App) SetMCPServerTier(name, tier string) error {
 	if err := a.saveDesktopMCPServer(updated); err != nil {
 		return err
 	}
-	tab := a.activeTab()
-	if tier != "lazy" && tab != nil && tab.Ctrl != nil && !mcpConnected(tab.Ctrl, name) {
-		if _, err := tab.Ctrl.ConnectMCPServer(updated); err != nil {
-			recordMCPFailure(tab.Ctrl, updated, err)
+	ctrl := a.activeCtrl()
+	if tier != "lazy" && ctrl != nil && !mcpConnected(ctrl, name) {
+		if _, err := ctrl.ConnectMCPServer(updated); err != nil {
+			recordMCPFailure(ctrl, updated, err)
 			return nil
 		}
-		a.mu.Lock()
-		delete(tab.disabledMCP, name)
-		a.mu.Unlock()
+		tab := a.activeTab()
+		if tab != nil {
+			a.mu.Lock()
+			delete(tab.disabledMCP, name)
+			a.mu.Unlock()
+		}
 	}
 	return nil
 }
@@ -3174,8 +3205,12 @@ func (a *App) setCodegraphEnabled(enabled bool) error {
 	if err != nil {
 		return err
 	}
+	ctrl, _ := a.activeCtrlAndRoot()
+	if ctrl == nil {
+		return fmt.Errorf("no active session")
+	}
 	tab := a.activeTab()
-	if tab == nil || tab.Ctrl == nil {
+	if tab == nil {
 		return fmt.Errorf("no active session")
 	}
 	cfg.Codegraph.Enabled = enabled
@@ -3189,16 +3224,16 @@ func (a *App) setCodegraphEnabled(enabled bool) error {
 		a.mu.Lock()
 		delete(tab.disabledMCP, "codegraph")
 		a.mu.Unlock()
-		if _, err := tab.Ctrl.ConnectCodegraphMCPServer(cfg); err != nil {
-			recordCodegraphFailure(tab.Ctrl, cfg.Codegraph, err)
+		if _, err := ctrl.ConnectCodegraphMCPServer(cfg); err != nil {
+			recordCodegraphFailure(ctrl, cfg.Codegraph, err)
 			return nil
 		}
 		return nil
 	}
-	if h := tab.Ctrl.Host(); h != nil {
+	if h := ctrl.Host(); h != nil {
 		h.ClearFailure("codegraph")
 	}
-	tab.Ctrl.DisconnectMCPServer("codegraph")
+	ctrl.DisconnectMCPServer("codegraph")
 	s := withCodegraphConfig(ServerView{Name: "codegraph", Status: "disabled"}, cfg.Codegraph)
 	a.mu.Lock()
 	if tab.disabledMCP == nil {
@@ -3225,8 +3260,12 @@ func (a *App) setBuiltinMCPEnabled(name string, enabled bool) error {
 	if !cfg.BuiltInMCP.SetEnabled(name, enabled) {
 		return fmt.Errorf("no built-in MCP server named %q", name)
 	}
+	ctrl, _ := a.activeCtrlAndRoot()
+	if ctrl == nil {
+		return fmt.Errorf("no active session")
+	}
 	tab := a.activeTab()
-	if tab == nil || tab.Ctrl == nil {
+	if tab == nil {
 		return fmt.Errorf("no active session")
 	}
 	if err := cfg.SaveTo(path); err != nil {
@@ -3239,17 +3278,17 @@ func (a *App) setBuiltinMCPEnabled(name string, enabled bool) error {
 		a.mu.Lock()
 		delete(tab.disabledMCP, name)
 		a.mu.Unlock()
-		_, err := tab.Ctrl.ConnectMCPServer(entry)
+		_, err := ctrl.ConnectMCPServer(entry)
 		if err != nil {
-			recordMCPFailure(tab.Ctrl, entry, err)
+			recordMCPFailure(ctrl, entry, err)
 			return nil
 		}
 		return nil
 	}
-	if h := tab.Ctrl.Host(); h != nil {
+	if h := ctrl.Host(); h != nil {
 		h.ClearFailure(name)
 	}
-	tab.Ctrl.DisconnectMCPServer(name)
+	ctrl.DisconnectMCPServer(name)
 	s := withBuiltInMCPConfig(ServerView{Name: name, Status: "disabled"}, entry, false)
 	a.mu.Lock()
 	if tab.disabledMCP == nil {
@@ -3291,16 +3330,19 @@ func (a *App) setCodegraphTier(_ string) error {
 	if err := a.syncProjectCodegraphOverride(cfg.Codegraph); err != nil {
 		return err
 	}
-	tab := a.activeTab()
-	if tab == nil || tab.Ctrl == nil {
+	ctrl := a.activeCtrl()
+	if ctrl == nil {
 		return nil
 	}
-	a.mu.Lock()
-	delete(tab.disabledMCP, "codegraph")
-	a.mu.Unlock()
-	if !mcpConnected(tab.Ctrl, "codegraph") {
-		if _, err := tab.Ctrl.ConnectCodegraphMCPServer(cfg); err != nil {
-			recordCodegraphFailure(tab.Ctrl, cfg.Codegraph, err)
+	tab := a.activeTab()
+	if tab != nil {
+		a.mu.Lock()
+		delete(tab.disabledMCP, "codegraph")
+		a.mu.Unlock()
+	}
+	if !mcpConnected(ctrl, "codegraph") {
+		if _, err := ctrl.ConnectCodegraphMCPServer(cfg); err != nil {
+			recordCodegraphFailure(ctrl, cfg.Codegraph, err)
 			return nil
 		}
 	}
@@ -3657,13 +3699,22 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	if tab == nil {
 		return nil
 	}
-	if name == tab.model {
+	// Snapshot old controller + scalar fields under RLock to avoid TOCTOU.
+	a.mu.RLock()
+	oldCtrl := tab.Ctrl
+	oldModel := tab.model
+	oldEffort := tab.effort
+	root := tab.WorkspaceRoot
+	sink := tab.sink
+	a.mu.RUnlock()
+
+	if name == oldModel {
 		return nil
 	}
-	if tab.Ctrl != nil && tab.Ctrl.Running() {
+	if oldCtrl != nil && oldCtrl.Running() {
 		return fmt.Errorf("finish or cancel the current turn before changing model")
 	}
-	cfg, err := config.LoadForRoot(tab.WorkspaceRoot)
+	cfg, err := config.LoadForRoot(root)
 	if err != nil {
 		return err
 	}
@@ -3675,7 +3726,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		return fmt.Errorf("model %q is not available because provider %q is not added", name, entry.Name)
 	}
 	name = entry.Name + "/" + entry.Model
-	effortOverride := cloneStringPtr(tab.effort)
+	effortOverride := cloneStringPtr(oldEffort)
 	if effortOverride != nil {
 		normalized, err := config.NormalizeEffort(entry, config.EffortDisplay(&config.ProviderEntry{Effort: *effortOverride}))
 		if err != nil {
@@ -3691,31 +3742,37 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	// never hits zero mid-switch (which would tear down subprocesses the new
 	// controller is about to reuse). The matching release runs after the old
 	// controller's Close, keeping the net reference count unchanged.
-	sharedHost := a.acquireSharedHost(tab.WorkspaceRoot)
-	if tab.Ctrl != nil {
-		prevPath = tab.Ctrl.SessionPath()
-		_ = tab.Ctrl.Snapshot()
-		carried = tab.Ctrl.History()
-		tab.Ctrl.Close()
-		a.releaseSharedHost(tab.WorkspaceRoot) // drop the old controller's reference
+	sharedHost := a.acquireSharedHost(root)
+	if oldCtrl != nil {
+		prevPath = oldCtrl.SessionPath()
+		_ = oldCtrl.Snapshot()
+		carried = oldCtrl.History()
 	}
 
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:          name,
 		RequireKey:     false,
-		Sink:           tab.sink,
-		WorkspaceRoot:  tab.WorkspaceRoot,
+		Sink:           sink,
+		WorkspaceRoot:  root,
 		SessionDir:     tabSessionDir(tab),
 		EffortOverride: cloneStringPtr(effortOverride),
 		Host:           sharedHost,
 	})
 	if err != nil {
-		a.releaseSharedHost(tab.WorkspaceRoot) // Build failed: drop our acquire
+		a.releaseSharedHost(root) // Build failed: drop our acquire
 		return err
 	}
 	a.bindControllerDisplayRecorder(newCtrl)
 	a.mu.Lock()
-	tab.Ctrl = newCtrl
+	if tab.Ctrl == oldCtrl {
+		tab.Ctrl = newCtrl
+		if oldCtrl != nil {
+			oldCtrl.Close()
+			a.releaseSharedHost(root) // drop the old controller's reference
+		}
+	} else {
+		tab.Ctrl = newCtrl
+	}
 	tab.model = name
 	tab.effort = cloneStringPtr(effortOverride)
 	tab.Label = newCtrl.Label()
@@ -3821,17 +3878,27 @@ func (a *App) SwitchProfileForTab(tabID, name string) error {
 	if tab == nil {
 		return nil
 	}
-	current := strings.ToLower(strings.TrimSpace(tab.profile))
+	// Snapshot old controller + scalar fields under RLock to avoid TOCTOU.
+	a.mu.RLock()
+	oldCtrl := tab.Ctrl
+	oldProfile := tab.profile
+	oldModel := tab.model
+	oldEffort := tab.effort
+	root := tab.WorkspaceRoot
+	sink := tab.sink
+	a.mu.RUnlock()
+
+	current := strings.ToLower(strings.TrimSpace(oldProfile))
 	if current == "" {
 		current = config.ProfileDev
 	}
 	if name == current {
 		return nil
 	}
-	if tab.Ctrl != nil && tab.Ctrl.Running() {
+	if oldCtrl != nil && oldCtrl.Running() {
 		return fmt.Errorf("finish or cancel the current turn before switching profile")
 	}
-	cfg, err := config.LoadForRoot(tab.WorkspaceRoot)
+	cfg, err := config.LoadForRoot(root)
 	if err != nil {
 		return err
 	}
@@ -3844,7 +3911,7 @@ func (a *App) SwitchProfileForTab(tabID, name string) error {
 	// pins one. We pass BOTH to boot.Build — Profile for the bundle, Model as the
 	// explicit winner. This lets a user pick a model inside cowork and keep it on
 	// switch-back, while a profile that pins a model still overrides the default.
-	modelName := strings.TrimSpace(tab.model)
+	modelName := strings.TrimSpace(oldModel)
 	if modelName == "" {
 		if strings.TrimSpace(prof.Model) != "" {
 			modelName = prof.Model
@@ -3857,7 +3924,7 @@ func (a *App) SwitchProfileForTab(tabID, name string) error {
 	// valid for the old model (e.g. "high" on a MoMA model) may be unsupported on
 	// the new one — drop it then rather than passing an invalid level that boot
 	// would silently keep.
-	effortOverride := cloneStringPtr(tab.effort)
+	effortOverride := cloneStringPtr(oldEffort)
 	if entry, ok := cfg.ResolveModel(modelName); ok && effortOverride != nil {
 		if normalized, err := config.NormalizeEffort(entry, config.EffortDisplay(&config.ProviderEntry{Effort: *effortOverride})); err != nil {
 			effortOverride = nil
@@ -3871,32 +3938,38 @@ func (a *App) SwitchProfileForTab(tabID, name string) error {
 	// Acquire the shared host BEFORE closing the old controller so the refcount
 	// never hits zero mid-switch (subprocess teardown). Same invariant as
 	// SetModelForTab — the matching release runs after the old Close.
-	sharedHost := a.acquireSharedHost(tab.WorkspaceRoot)
-	if tab.Ctrl != nil {
-		prevPath = tab.Ctrl.SessionPath()
-		_ = tab.Ctrl.Snapshot()
-		carried = tab.Ctrl.History()
-		tab.Ctrl.Close()
-		a.releaseSharedHost(tab.WorkspaceRoot)
+	sharedHost := a.acquireSharedHost(root)
+	if oldCtrl != nil {
+		prevPath = oldCtrl.SessionPath()
+		_ = oldCtrl.Snapshot()
+		carried = oldCtrl.History()
 	}
 
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:          modelName,
 		RequireKey:     false,
-		Sink:           tab.sink,
-		WorkspaceRoot:  tab.WorkspaceRoot,
+		Sink:           sink,
+		WorkspaceRoot:  root,
 		SessionDir:     tabSessionDir(tab),
 		EffortOverride: effortOverride, // already cloned+normalized above; no double-clone
 		Host:           sharedHost,
 		Profile:        prof,
 	})
 	if err != nil {
-		a.releaseSharedHost(tab.WorkspaceRoot)
+		a.releaseSharedHost(root)
 		return err
 	}
 	a.bindControllerDisplayRecorder(newCtrl)
 	a.mu.Lock()
-	tab.Ctrl = newCtrl
+	if tab.Ctrl == oldCtrl {
+		tab.Ctrl = newCtrl
+		if oldCtrl != nil {
+			oldCtrl.Close()
+			a.releaseSharedHost(root)
+		}
+	} else {
+		tab.Ctrl = newCtrl
+	}
 	tab.profile = name
 	tab.effort = cloneStringPtr(effortOverride) // persist the normalized effort
 	tab.Label = newCtrl.Label()
@@ -3966,8 +4039,15 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		}
 		return fmt.Errorf("tab %q not found", tabID)
 	}
-	ctrl := tab.Ctrl
-	if ctrl != nil && ctrl.Running() {
+	// Snapshot old controller + scalar fields under RLock to avoid TOCTOU.
+	a.mu.RLock()
+	oldCtrl := tab.Ctrl
+	oldModel := tab.model
+	root := tab.WorkspaceRoot
+	sink := tab.sink
+	a.mu.RUnlock()
+
+	if oldCtrl != nil && oldCtrl.Running() {
 		return fmt.Errorf("finish or cancel the current turn before changing effort")
 	}
 	entry, err := a.currentProviderEntryForTab(tabID)
@@ -3981,30 +4061,36 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	var carried []provider.Message
 	prevPath := ""
 	// Acquire before release so the shared host survives the controller swap.
-	sharedHost := a.acquireSharedHost(tab.WorkspaceRoot)
-	if tab.Ctrl != nil {
-		prevPath = tab.Ctrl.SessionPath()
-		_ = tab.Ctrl.Snapshot()
-		carried = tab.Ctrl.History()
-		tab.Ctrl.Close()
-		a.releaseSharedHost(tab.WorkspaceRoot)
+	sharedHost := a.acquireSharedHost(root)
+	if oldCtrl != nil {
+		prevPath = oldCtrl.SessionPath()
+		_ = oldCtrl.Snapshot()
+		carried = oldCtrl.History()
 	}
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model:          tab.model,
+		Model:          oldModel,
 		RequireKey:     false,
-		Sink:           tab.sink,
-		WorkspaceRoot:  tab.WorkspaceRoot,
+		Sink:           sink,
+		WorkspaceRoot:  root,
 		SessionDir:     tabSessionDir(tab),
 		EffortOverride: &effort,
 		Host:           sharedHost,
 	})
 	if err != nil {
-		a.releaseSharedHost(tab.WorkspaceRoot) // Build failed: drop our acquire
+		a.releaseSharedHost(root) // Build failed: drop our acquire
 		return err
 	}
 	a.bindControllerDisplayRecorder(newCtrl)
 	a.mu.Lock()
-	tab.Ctrl = newCtrl
+	if tab.Ctrl == oldCtrl {
+		tab.Ctrl = newCtrl
+		if oldCtrl != nil {
+			oldCtrl.Close()
+			a.releaseSharedHost(root)
+		}
+	} else {
+		tab.Ctrl = newCtrl
+	}
 	tab.effort = &effort
 	tab.Label = newCtrl.Label()
 	tab.StartupErr = ""
