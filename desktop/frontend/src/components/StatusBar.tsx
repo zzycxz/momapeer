@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, CircleDollarSign, CircleGauge, Database, Layers, Percent, RefreshCw, Wallet, Zap } from "lucide-react";
+import { Activity, CircleGauge, Database, Layers, Percent, RefreshCw, Zap } from "lucide-react";
 import { Tooltip } from "./Tooltip";
 import { useI18n, type Translator } from "../lib/i18n";
-import { type BalanceInfo, type CollaborationMode, type ContextInfo, type JobView, type ToolApprovalMode, type WireUsage } from "../lib/types";
+import { type CollaborationMode, type ContextInfo, type JobView, type ToolApprovalMode, type WireUsage } from "../lib/types";
 
 // JobsChip is the status-bar background-jobs indicator: a count that opens an
 // upward popover listing the running jobs (id · label · status), mirroring the
@@ -83,19 +83,6 @@ function rateValueClass(rate: string | null): string {
   return "statusbar__rate-value--critical";
 }
 
-function currencySymbol(currency?: string): string {
-  const value = (currency || "¥").trim();
-  if (/^(cny|rmb|yuan)$/i.test(value)) return "¥";
-  if (/^(usd|dollar)$/i.test(value)) return "$";
-  return value || "¥";
-}
-
-function formatMoney(amount?: number, currency?: string): string {
-  const symbol = currencySymbol(currency);
-  if (typeof amount !== "number" || amount <= 0) return `${symbol}0.0000`;
-  return `${symbol}${amount < 1 ? amount.toFixed(4) : amount.toFixed(2)}`;
-}
-
 function formatTokenCount(tokens?: number): string {
   if (typeof tokens !== "number" || tokens <= 0) return "-";
   return tokens.toLocaleString();
@@ -109,7 +96,6 @@ function formatTurnCount(turns: number | undefined, t: Translator): string {
 export function StatusBar({
   context,
   usage,
-  balance,
   jobs,
   running,
   collaborationMode,
@@ -117,13 +103,10 @@ export function StatusBar({
   sessionTurns,
   sessionTokens,
   turnTokens,
-  cost,
-  currency,
   modelLabel,
 }: {
   context: ContextInfo;
   usage?: WireUsage;
-  balance?: BalanceInfo;
   jobs?: JobView[];
   running: boolean;
   collaborationMode: CollaborationMode;
@@ -131,8 +114,6 @@ export function StatusBar({
   sessionTurns?: number;
   sessionTokens?: number;
   turnTokens?: number;
-  cost?: number;
-  currency?: string;
   modelLabel?: string;
 }) {
   const { t } = useI18n();
@@ -143,11 +124,9 @@ export function StatusBar({
   const nowPct = nowRate(usage);
   const avgPct = avgRate(usage);
   const jobsList = jobs ?? [];
-  const costLabel = formatMoney(cost, currency);
   const turnLabel = formatTurnCount(sessionTurns, t);
   const tokenLabel = formatTokenCount(sessionTokens);
   const turnTokenLabel = formatTokenCount(turnTokens);
-  const balanceLabel = balance?.available && balance.display ? balance.display : "-";
   const planMode = collaborationMode === "plan";
   const goalMode = collaborationMode === "goal";
 
@@ -219,18 +198,6 @@ export function StatusBar({
         </Tooltip>
       </div>
       <div className="statusbar__group statusbar__group--account">
-        <Tooltip label={t("status.spendTitle")} className="statusbar__metric statusbar__metric--cost">
-          <span className="stat statusbar__cost">
-            <span className="stat__label stat__label--icon" aria-hidden="true"><CircleDollarSign size={12} /></span>
-            <b>{costLabel}</b>
-          </span>
-        </Tooltip>
-        <Tooltip label={t("status.balanceTitle")} className="statusbar__metric statusbar__metric--balance">
-          <span className="stat stat--balance statusbar__balance">
-            <span className="stat__label stat__label--icon" aria-hidden="true"><Wallet size={12} /></span>
-            <b className={balanceLabel === "-" ? "stat__value--empty" : undefined}>{balanceLabel}</b>
-          </span>
-        </Tooltip>
         {planMode && <span className="statusbar__plan">{t("status.plan")}</span>}
         {goalMode && <span className="statusbar__plan">{t("composer.goalMode")}</span>}
         {toolApprovalMode === "auto" && (

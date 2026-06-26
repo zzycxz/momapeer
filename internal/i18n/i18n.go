@@ -349,7 +349,6 @@ type Messages struct {
 	// provider HTTP error explanations — actionable, reason + fix per status code
 	ProviderErrBadRequest          string // 400
 	ProviderErrAuth                string // 401
-	ProviderErrInsufficientBalance string // 402
 	ProviderErrUnprocessable       string // 422
 	ProviderErrRateLimited         string // 429
 	ProviderErrServer              string // 500
@@ -382,8 +381,6 @@ func (m Messages) ProviderStatusMessage(status int) string {
 		return m.ProviderErrBadRequest
 	case 401, 403:
 		return m.ProviderErrAuth
-	case 402:
-		return m.ProviderErrInsufficientBalance
 	case 422:
 		return m.ProviderErrUnprocessable
 	case 429:

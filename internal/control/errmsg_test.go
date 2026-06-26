@@ -14,11 +14,6 @@ func TestExplainError(t *testing.T) {
 		t.Error("nil should stay nil")
 	}
 
-	bal := explainError(&provider.APIError{Provider: "MoMA", Status: 402, Body: "Insufficient Balance"})
-	if bal.Error() != i18n.M.ProviderErrInsufficientBalance {
-		t.Errorf("402 = %q, want the insufficient-balance message", bal.Error())
-	}
-
 	auth := explainError(&provider.AuthError{Provider: "MoMA", KeyEnv: "JIUTIAN_API_KEY", Status: 401})
 	if !strings.Contains(auth.Error(), "JIUTIAN_API_KEY") {
 		t.Errorf("401 should name the key env: %q", auth.Error())

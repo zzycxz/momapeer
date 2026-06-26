@@ -74,12 +74,6 @@ type chatTUI struct {
 	// events) for the live "↓N" readout in the running status line.
 	turnTokens int
 
-	// balance is the last-fetched wallet-balance readout (e.g. "¥110.00"), "" when
-	// the provider declares no balance_url or a fetch failed. Refreshed async on
-	// startup and after each turn so the status line stays roughly current without
-	// blocking the event loop.
-	balance string
-
 	// todoArgs is the latest todo_write call's raw args; it drives the task list
 	// pinned just above the input (see renderTodoPanel). "" when there's no list.
 	// Persists across turns until the work completes or a new session starts.
@@ -321,10 +315,6 @@ type compactDoneMsg struct{ err error }
 // Ns" counter in the status line.
 type elapsedTickMsg struct{}
 
-// balanceMsg carries the result of an async wallet-balance fetch; text is the
-// formatted readout ("" when none/failed).
-type balanceMsg struct{ text string }
-
 // statuslineMsg carries the latest custom status-line output (one line, ""
 // when none/failed).
 type statuslineMsg struct{ out string }
@@ -392,19 +382,6 @@ type modelSwitchMsg struct {
 	skills   []skill.Skill
 	host     *plugin.Host
 	err      error
-}
-
-// fetchBalance queries the provider's wallet balance off the event loop. It's a
-// no-op readout ("") when the provider declares no balance_url or the fetch
-// fails, so the status line stays quiet rather than surfacing an error.
-func fetchBalance(ctrl *control.Controller) tea.Cmd {
-	return func() tea.Msg {
-		b, err := ctrl.Balance(context.Background())
-		if err != nil || b == nil {
-			return balanceMsg{}
-		}
-		return balanceMsg{text: b.Display()}
-	}
 }
 
 // promptResolvedMsg carries the result of fetching an MCP prompt (an async
@@ -643,7 +620,6 @@ func (m chatTUI) Init() tea.Cmd {
 	return tea.Batch(
 		textarea.Blink,
 		waitForAgentEvent(m.eventCh),
-		fetchBalance(m.ctrl),
 		m.runStatusline(), // nil (no-op) unless a custom status line is configured
 		m.refreshGitStatus(),
 	)
@@ -1198,10 +1174,9 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		cmds = append(cmds, waitForAgentEvent(m.eventCh))
-		// A turn just spent tokens (and money) — refresh the balance readout and
-		// the custom status line (its context/cost inputs just changed).
+		// A turn just spent tokens — refresh the custom status line (its
+		// context/cost inputs just changed).
 		if turnDone {
-			cmds = append(cmds, fetchBalance(m.ctrl))
 			if c := m.runStatusline(); c != nil {
 				cmds = append(cmds, c)
 			}
@@ -1219,9 +1194,6 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, c)
 			}
 		}
-
-	case balanceMsg:
-		m.balance = msg.text
 
 	case statuslineMsg:
 		m.statuslineOut = msg.out
@@ -1258,7 +1230,6 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.oldControllers = append(m.oldControllers, msg.oldCtrl)
 			}
 			m.notice(fmt.Sprintf(i18n.M.ModelSwitchedFmt, m.label))
-			cmds = append(cmds, fetchBalance(m.ctrl))
 			if c := m.runStatusline(); c != nil {
 				cmds = append(cmds, c)
 			}
@@ -2264,9 +2235,6 @@ func (m chatTUI) View() tea.View {
 	if jt := m.jobsTag(); jt != "" {
 		data = append(data, jt)
 	}
-	if m.balance != "" {
-		data = append(data, dim(m.balance))
-	}
 	dataLine := "  " + strings.Join(data, " · ")
 	// A configured custom status line replaces the built-in data row entirely.
 	if m.statuslineCmd != "" && m.statuslineOut != "" {
@@ -2729,9 +2697,6 @@ func (m chatTUI) computeStatusLineCount(width int) int {
 	}
 	if jt := m.jobsTag(); jt != "" {
 		data = append(data, jt)
-	}
-	if m.balance != "" {
-		data = append(data, m.balance)
 	}
 	dataLine := "  " + strings.Join(data, " · ")
 	if m.statuslineCmd != "" && m.statuslineOut != "" {

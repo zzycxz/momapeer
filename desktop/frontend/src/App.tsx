@@ -38,6 +38,8 @@ import { SidebarFooter } from "./components/SidebarFooter";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { ShortcutsCheatsheet } from "./components/ShortcutsCheatsheet";
+import { useGlobalShortcut } from "./lib/keyboardShortcuts";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ContextPanel } from "./components/ContextPanel";
 import { WorkspacePanel } from "./components/WorkspacePanel";
@@ -589,43 +591,6 @@ function safeFilename(name: string): string {
   return cleaned || "momapeer-session";
 }
 
-/** Global hotkey handler for shell-expand toggle (Ctrl/Cmd+B). */
-function ShellHotkeys() {
-  const shellExpand = useShellExpand();
-  useEffect(() => {
-    if (!shellExpand) return;
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "b") {
-        e.preventDefault();
-        shellExpand.toggleLast();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [shellExpand]);
-  return null;
-}
-
-/** Global hotkey handler for text-size shortcuts (Ctrl/Cmd + Plus/Minus/0). */
-function TextSizeHotkeys() {
-  useEffect(() => {
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      if (e.key !== "+" && e.key !== "=" && e.key !== "-" && e.key !== "0") return;
-
-      e.preventDefault();
-      if (e.key === "0") {
-        applyTextSize(DEFAULT_TEXT_SIZE);
-        return;
-      }
-      applyTextSize(nextTextSize(getTextSize(), e.key === "-" ? -1 : 1));
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, []);
-  return null;
-}
-
 export default function App() {
   const {
     state,
@@ -689,6 +654,7 @@ export default function App() {
   const [startupUpdateChecksEnabled, setStartupUpdateChecksEnabled] = useState<boolean | null>(null);
   const [histView, setHistView] = useState<HistoryViewState | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteSessions, setPaletteSessions] = useState<SessionMeta[]>([]);
   const { showToast } = useToast();
   const [sidebarImConnections, setSidebarImConnections] = useState<SidebarImConnection[]>([]);
@@ -2069,21 +2035,20 @@ export default function App() {
     setPaletteOpen(true);
     setPaletteSessions(await listSessions().catch(() => []));
   }, [closeTransientOverlays, listSessions]);
-  useEffect(() => {
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setPaletteOpen((cur) => {
-          if (!cur) void openPalette();
-          return cur;
-        });
-      } else if (e.key === "Escape") {
-        setPaletteOpen(false);
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [openPalette]);
+  // Global keyboard shortcuts — all wired through the centralized
+  // keyboardShortcuts registry so they're self-documenting (Shift+? cheatsheet)
+  // and share platform-aware matching, editable-target filtering, and a single
+  // capture-phase listener per action. Replaces the old hand-rolled
+  // ShellHotkeys / TextSizeHotkeys / CommandPalette Ctrl+K listeners.
+  useGlobalShortcut("commandPalette.open", () => { if (!paletteOpen) void openPalette(); }, [paletteOpen, openPalette]);
+  useGlobalShortcut("shortcuts.show", () => setShortcutsOpen(true));
+  useGlobalShortcut("settings.open", () => setSettingsTarget("general"));
+  useGlobalShortcut("app.newSession", () => { void handleNewTab(); });
+  const shellExpand = useShellExpand();
+  useGlobalShortcut("shell.toggle", () => shellExpand?.toggleLast(), [shellExpand]);
+  useGlobalShortcut("textSize.increase", () => applyTextSize(nextTextSize(getTextSize(), 1)));
+  useGlobalShortcut("textSize.decrease", () => applyTextSize(nextTextSize(getTextSize(), -1)));
+  useGlobalShortcut("textSize.reset", () => applyTextSize(DEFAULT_TEXT_SIZE));
   const paletteItems = useMemo<PaletteItem[]>(() => {
     const cmds: PaletteItem[] = [
       { id: "cmd-new", group: t("palette.group.commands"), title: t("palette.cmd.newSession"), icon: <SquarePen size={15} />, compact: true, keywords: ["new", "新建"], run: () => void handleNewTab() },
@@ -2360,7 +2325,6 @@ export default function App() {
       <StatusBar
         context={state.context}
         usage={state.usage}
-        balance={state.balance}
         jobs={state.jobs}
         running={state.running}
         collaborationMode={collaborationMode}
@@ -2368,8 +2332,6 @@ export default function App() {
         sessionTurns={sessionTurns}
         sessionTokens={state.sessionTokens}
         turnTokens={state.turnTotalTokens}
-        cost={state.sessionCost}
-        currency={state.sessionCurrency}
         modelLabel={state.meta?.label}
       />
     </footer>
@@ -2395,8 +2357,6 @@ export default function App() {
 
   return (
     <ShellExpandProvider>
-    <ShellHotkeys />
-    <TextSizeHotkeys />
     <div ref={appRef} className={["app", `app--${desktopPlatform}`, browserPreviewChrome ? "app--browser-preview" : "", coworkActive ? "app--cowork" : ""].filter(Boolean).join(" ")}>
       <div
         className={[
@@ -2710,8 +2670,6 @@ export default function App() {
                   context={state.context}
                   usage={state.usage}
                   sessionTokens={state.sessionTokens}
-                  sessionCost={state.sessionCost}
-                  sessionCurrency={state.sessionCurrency}
                   refreshKey={dockRefreshKey}
                   onOpenWorkspaceMode={openRightDockMode}
                   onOpenWorkspaceFile={openRightDockFile}
@@ -2783,6 +2741,13 @@ export default function App() {
         items={paletteItems}
         placeholder={t("palette.placeholder")}
         emptyText={t("palette.empty")}
+      />
+
+      <ShortcutsCheatsheet
+        open={shortcutsOpen}
+        platform={desktopPlatform}
+        onClose={() => setShortcutsOpen(false)}
+        t={t}
       />
 
       {startupSplashVisible && (

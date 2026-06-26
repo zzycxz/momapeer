@@ -13,8 +13,6 @@ interface ContextPanelProps {
   context?: ContextInfo;
   usage?: WireUsage;
   sessionTokens?: number;
-  sessionCost?: number;
-  sessionCurrency?: string;
   refreshKey?: number;
   onOpenWorkspaceMode?: (mode: "files" | "changed") => void;
   onOpenWorkspaceFile?: (path: string) => void;
@@ -40,19 +38,6 @@ function fmtDuration(ms: number, t: Translator): string {
   const seconds = totalSeconds % 60;
   if (minutes <= 0) return t("context.durationSeconds", { seconds });
   return t("context.durationMinutesSeconds", { minutes, seconds });
-}
-
-function currencySymbol(currency?: string): string {
-  const value = (currency || "¥").trim();
-  if (/^(cny|rmb|yuan)$/i.test(value)) return "¥";
-  if (/^(usd|dollar)$/i.test(value)) return "$";
-  return value || "¥";
-}
-
-function fmtMoney(amount: number, currency?: string): string {
-  if (amount <= 0) return "-";
-  const symbol = currencySymbol(currency);
-  return `${symbol}${amount < 1 ? amount.toFixed(4) : amount.toFixed(2)}`;
 }
 
 interface HealthResult {
@@ -153,8 +138,6 @@ export function ContextPanel({
   context,
   usage,
   sessionTokens,
-  sessionCost,
-  sessionCurrency,
   refreshKey,
   onOpenWorkspaceMode,
   onOpenWorkspaceFile,
@@ -206,8 +189,6 @@ export function ContextPanel({
   const reasoningTokens = hasPanelUsage ? info?.reasoningTokens ?? 0 : usage?.reasoningTokens ?? 0;
   const cacheHitTokens = hasPanelUsage ? info?.cacheHitTokens ?? 0 : usage?.cacheHitTokens ?? 0;
   const cacheMissTokens = hasPanelUsage ? info?.cacheMissTokens ?? 0 : usage?.cacheMissTokens ?? 0;
-  const cost = info?.sessionCost && info.sessionCost > 0 ? info.sessionCost : sessionCost && sessionCost > 0 ? sessionCost : info?.sessionCostUsd ?? 0;
-  const currency = sessionCurrency || info?.sessionCurrency || usage?.currency || "¥";
   const readFiles = asArray(info?.readFiles);
   const changedFiles = asArray(info?.changedFiles);
 
@@ -282,7 +263,6 @@ export function ContextPanel({
             <SectionHeading title={t("context.costMetrics")} />
             <div className="context-panel__stats">
               <MetricCard label={t("context.cacheHit")} value={cachePct > 0 ? `${cachePct}%` : "-"} tone="accent" />
-              <MetricCard label={t("context.sessionCost")} value={fmtMoney(cost, currency)} />
             </div>
           </section>
           <section className="context-panel__section context-panel__section--status">

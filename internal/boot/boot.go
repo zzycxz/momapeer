@@ -196,7 +196,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// default) disables limiting; NewProviderWithProxy then passes providers
 	// through unwrapped, preserving backward compatibility.
 	globalBudget = provider.NewRequestBudget(cfg.LLM.RPM, cfg.LLM.ReserveMain)
-	balanceClient, err := netclient.NewHTTPClient(proxySpec, netclient.TransportOptions{})
+	httpClient, err := netclient.NewHTTPClient(proxySpec, netclient.TransportOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -730,12 +730,21 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// file scans when no index can be opened.
 	if mem.Store.Dir != "" {
 		if svc, err := memory.NewSearchService(mem.Store); err == nil {
-			_ = svc.EnsureSchema() // migrate FTS/facts schema if needed
+			// migrate FTS/facts schema if needed. A failure here (e.g. SQLite
+			// version too old, permission error) silently degrades memory search
+			// to file scans — log it so the degradation is diagnosable rather
+			// than invisible.
+			if err := svc.EnsureSchema(); err != nil {
+				slog.Warn("memory: FTS schema migration failed; search will fall back to file scans", "err", err)
+			}
 			// Recover from any crash that left the index mid-write: re-sync the
 			// whole index with disk so List/ListAsOf/ListActiveByType (which read
 			// the index directly, without the lazy Reconcile that Search runs)
 			// never observe a drifted state carried over from the last session.
-			_ = svc.Reconcile()
+			// Non-fatal: a stale index still serves correct (if slower) queries.
+			if err := svc.Reconcile(); err != nil {
+				slog.Warn("memory: index reconcile failed after startup", "err", err)
+			}
 			mem.Store = mem.Store.AttachIndex(svc.Index())
 			// Chain FTS DB cleanup so the file handle is released on session end.
 			prev := cleanup
@@ -877,7 +886,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	reg.Add(skill.NewInstallSkillTool(skillStore, nil))
 	reg.Add(installsource.NewTool(installsource.Options{
 		ProjectRoot: root,
-		HTTPClient:  balanceClient,
+		HTTPClient:  httpClient,
 		ConnectMCP: func(e config.PluginEntry) (installsource.MCPConnectResult, error) {
 			exp := e.ExpandedPlugin()
 			spec := plugin.Spec{
@@ -1036,9 +1045,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Hooks:         hookRunner,
 		Memory:        mem,
 		Cleanup:       cleanup,
-		BalanceURL:    entry.BalanceURL,
-		BalanceKey:    entry.APIKey(),
-		BalanceClient: balanceClient,
 		Jobs:          jm,
 		Registry:      reg,
 		PluginCtx:     ctx,

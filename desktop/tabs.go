@@ -97,9 +97,6 @@ type sessionUsageStats struct {
 	CacheMissTokens  int     `json:"cacheMissTokens"`
 	RequestCount     int     `json:"requestCount"`
 	ElapsedMs        int64   `json:"elapsedMs"`
-	SessionCost      float64 `json:"sessionCost,omitempty"`
-	SessionCurrency  string  `json:"sessionCurrency,omitempty"`
-	SessionCostUsd   float64 `json:"sessionCostUsd,omitempty"`
 
 	activeTurnStartedAt int64
 }
@@ -190,12 +187,6 @@ func (t *WorkspaceTab) recordUsage(e event.Event) {
 		t.usageTelemetry.CacheMissTokens += u.CacheMissTokens
 	}
 	t.usageTelemetry.RequestCount++
-	if e.Pricing != nil {
-		cost := e.Pricing.Cost(u)
-		t.usageTelemetry.SessionCost += cost
-		t.usageTelemetry.SessionCostUsd = t.usageTelemetry.SessionCost
-		t.usageTelemetry.SessionCurrency = e.Pricing.Symbol()
-	}
 	t.telemMu.Unlock()
 }
 
@@ -408,9 +399,6 @@ func toWireTab(e event.Event, tabID string) wireEventTab {
 		TabID:             tabID,
 		SessionHitTokens:  e.SessionHit,
 		SessionMissTokens: e.SessionMiss,
-		SessionCost:       0, // filled by frontend accumulator per tab
-		SessionCurrency:   "",
-		SessionCostUsd:    0, // deprecated compatibility alias
 	}
 }
 
@@ -422,12 +410,6 @@ type wireEventTab struct {
 	// Session-cumulative tokens per tab.
 	SessionHitTokens  int `json:"sessionHitTokens,omitempty"`
 	SessionMissTokens int `json:"sessionMissTokens,omitempty"`
-	// SessionCost is filled by the frontend's per-tab accumulator.
-	SessionCost     float64 `json:"sessionCost,omitempty"`
-	SessionCurrency string  `json:"sessionCurrency,omitempty"`
-	// SessionCostUsd is a deprecated compatibility alias. It mirrors
-	// SessionCost and does not imply USD.
-	SessionCostUsd float64 `json:"sessionCostUsd,omitempty"`
 }
 
 // --- Tab management on App --------------------------------------------------
@@ -547,11 +529,15 @@ func (a *App) OpenProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 	a.tabOrder = append(a.tabOrder, tabID)
 	a.activeTabID = tabID
 	a.saveTabsLocked()
+	// Snapshot tabMeta under the lock so currentTabMode reads tab.Ctrl
+	// consistently (it's nil here — controller builds async below — but the
+	// read must still be lock-protected, not torn by a concurrent rebuild).
+	meta := a.tabMeta(tab, true)
 	a.mu.Unlock()
 
 	a.startTabControllerBuild(tab)
 	a.emitProjectTreeChanged()
-	return a.tabMeta(tab, true), nil
+	return meta, nil
 }
 
 // OpenGlobalTab opens a new global-scope tab (no project root). The global
@@ -591,10 +577,12 @@ func (a *App) OpenGlobalTab(topicID string) (TabMeta, error) {
 	a.tabOrder = append(a.tabOrder, tabID)
 	a.activeTabID = tabID
 	a.saveTabsLocked()
+	// Snapshot tabMeta under the lock (same TOCTOU guard as OpenProjectTab).
+	meta := a.tabMeta(tab, true)
 	a.mu.Unlock()
 
 	a.startTabControllerBuild(tab)
-	return a.tabMeta(tab, true), nil
+	return meta, nil
 }
 
 // EnsureBlankTab activates the existing blank tab for the target scope, or
@@ -1234,17 +1222,16 @@ func topicTitleFromSession(path string) string {
 
 func topicTitleFromText(text string) string {
 	text = strings.TrimSpace(text)
-	text = strings.Replace(text, "Plan mode — read-o...", "【计划】", 1)
-	text = strings.Replace(text, "Plan mode — read-o…", "【计划】", 1)
-	text = strings.Replace(text, "Plan mode —", "【计划】 —", 1)
-	text = strings.Replace(text, "[Plan mode —", "【计划】 —", 1)
+	if strings.HasPrefix(text, "【计划】 —") || strings.HasPrefix(text, "[Plan mode") || strings.HasPrefix(text, "Plan mode") {
+		return "【计划】"
+	}
 	text = strings.Replace(text, "<active-goal>", "【目标】", 1)
 
 	if text == "" {
 		return ""
 	}
 	text = strings.Join(strings.Fields(text), " ")
-	text = strings.Trim(text, " \t\r\n，。！？；：、,.!?;:\"'`“”‘’()（）[]【】")
+	text = strings.Trim(text, " \t\r\n，。！？；：、,.!?;:\"'`“”‘’()（）")
 	if text == "" {
 		return ""
 	}
@@ -1980,9 +1967,6 @@ func loadTelemetry(path string) tabTelemetrySnapshot {
 	if err := json.Unmarshal(b, &snapshot); err == nil && (snapshot.Version > 0 || snapshot.ReadFiles != nil) {
 		if snapshot.ReadFiles == nil {
 			snapshot.ReadFiles = []readFileRecord{}
-		}
-		if snapshot.Usage.SessionCost == 0 && snapshot.Usage.SessionCostUsd > 0 {
-			snapshot.Usage.SessionCost = snapshot.Usage.SessionCostUsd
 		}
 		return snapshot
 	}
@@ -2870,9 +2854,6 @@ type ContextPanelInfo struct {
 	CacheMissTokens  int               `json:"cacheMissTokens"`
 	RequestCount     int               `json:"requestCount"`
 	ElapsedMs        int64             `json:"elapsedMs"`
-	SessionCost      float64           `json:"sessionCost"`
-	SessionCurrency  string            `json:"sessionCurrency,omitempty"`
-	SessionCostUsd   float64           `json:"sessionCostUsd,omitempty"`
 	Mock             bool              `json:"mock,omitempty"`
 	ReadFiles        []readFileRecord  `json:"readFiles"`
 	ChangedFiles     []ChangedFileInfo `json:"changedFiles"`
@@ -2927,9 +2908,6 @@ func (a *App) ContextPanel(tabID string) ContextPanelInfo {
 	info.TotalTokens = usage.TotalTokens
 	info.RequestCount = usage.RequestCount
 	info.ElapsedMs = usage.ElapsedMs
-	info.SessionCost = usage.SessionCost
-	info.SessionCurrency = usage.SessionCurrency
-	info.SessionCostUsd = usage.SessionCostUsd
 
 	// Gather workspace changes for this tab's root.
 	if ctrl != nil && tab.WorkspaceRoot != "" {

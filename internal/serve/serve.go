@@ -778,9 +778,6 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	if u := s.ctl().LastUsage(); u != nil {
 		sess["lastUsage"] = u
 	}
-	if b, err := s.ctl().Balance(r.Context()); err == nil && b != nil {
-		sess["balance"] = b
-	}
 	if j := s.ctl().Jobs(); len(j) > 0 {
 		sess["jobs"] = j
 	}

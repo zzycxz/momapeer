@@ -310,7 +310,6 @@ var Chinese = Messages{
 
 	ProviderErrBadRequest:          "请求格式错误 (HTTP 400)：请求体被拒绝，通常是程序缺陷。若持续出现请反馈。",
 	ProviderErrAuth:                "认证失败 (HTTP 401)：API key 缺失、错误或已过期。请检查 .env 中的密钥，或运行 `momapeer setup`。",
-	ProviderErrInsufficientBalance: "余额不足 (HTTP 402)：账户余额不足，请前往充值后重试。",
 	ProviderErrUnprocessable:       "参数错误 (HTTP 422)：某个请求参数被拒绝，通常是程序缺陷。若持续出现请反馈。",
 	ProviderErrRateLimited:         "请求速率达到上限 (HTTP 429)：请求过于频繁 (TPM/RPM)。已退避重试，请放慢速率或稍后再试。",
 	ProviderErrServer:              "服务器故障 (HTTP 500)：服务端内部错误。已退避重试；若持续失败请稍后再试。",

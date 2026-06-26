@@ -36,7 +36,6 @@ type ProviderView struct {
 	Default           string   `json:"default"`
 	APIKeyEnv         string   `json:"apiKeyEnv"`
 	KeySet            bool     `json:"keySet"` // the env var currently resolves to a non-empty value
-	BalanceURL        string   `json:"balanceUrl"`
 	ContextWindow     int      `json:"contextWindow"`
 	ReasoningProtocol string   `json:"reasoningProtocol"`
 	SupportedEfforts  []string `json:"supportedEfforts"`
@@ -277,7 +276,6 @@ func providerViewFromEntry(p config.ProviderEntry, builtIn, added bool) Provider
 		Models: nonNil(p.ChatModelList()), ModelsURL: p.ModelsURL, Default: p.DefaultModel(),
 		APIKeyEnv:         p.APIKeyEnv,
 		KeySet:            p.APIKeyEnv != "" && os.Getenv(p.APIKeyEnv) != "",
-		BalanceURL:        p.BalanceURL,
 		ContextWindow:     p.ContextWindow,
 		ReasoningProtocol: p.ReasoningProtocol,
 		SupportedEfforts:  nonNil(p.SupportedEfforts),
@@ -881,7 +879,6 @@ func (a *App) SaveProvider(p ProviderView) error {
 		e.BaseURL = p.BaseURL
 		e.ModelsURL = p.ModelsURL
 		e.APIKeyEnv = p.APIKeyEnv
-		e.BalanceURL = strings.TrimSpace(p.BalanceURL)
 		e.ContextWindow = p.ContextWindow
 		e.ReasoningProtocol = p.ReasoningProtocol
 		e.SupportedEfforts = p.SupportedEfforts

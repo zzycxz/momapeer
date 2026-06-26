@@ -51,7 +51,6 @@ func TestWorkspaceTabAggregatesSessionUsageTelemetry(t *testing.T) {
 		Usage:       &provider.Usage{PromptTokens: 100, CompletionTokens: 40, TotalTokens: 140, CacheHitTokens: 70, CacheMissTokens: 30, ReasoningTokens: 10},
 		SessionHit:  70,
 		SessionMiss: 30,
-		Pricing:     &provider.Pricing{CacheHit: 1, Input: 2, Output: 3, Currency: "¥"},
 	})
 	tab.recordTurnDone(start + 1500)
 
@@ -64,9 +63,6 @@ func TestWorkspaceTabAggregatesSessionUsageTelemetry(t *testing.T) {
 	}
 	if got.ElapsedMs != 1500 {
 		t.Fatalf("elapsed = %d, want 1500", got.ElapsedMs)
-	}
-	if got.SessionCost <= 0 || got.SessionCurrency != "¥" {
-		t.Fatalf("cost = %f %q, want positive ¥", got.SessionCost, got.SessionCurrency)
 	}
 
 	app := &App{tabs: map[string]*WorkspaceTab{"tab": tab}}

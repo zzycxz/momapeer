@@ -93,13 +93,8 @@ type wireUsage struct {
 	// Session-cumulative cache tokens — the status line shows the aggregate
 	// hit-rate Σhit/Σ(hit+miss), steadier than the single-turn CacheHitTokens.
 	// MoMA currently does not report cache tokens, so these stay at 0.
-	SessionCacheHitTokens  int     `json:"sessionCacheHitTokens"`
-	SessionCacheMissTokens int     `json:"sessionCacheMissTokens"`
-	Cost                   float64 `json:"cost,omitempty"`
-	Currency               string  `json:"currency,omitempty"`
-	// CostUSD is kept for older frontend/status consumers. It mirrors Cost and
-	// does not imply USD.
-	CostUSD float64 `json:"costUsd,omitempty"`
+	SessionCacheHitTokens  int `json:"sessionCacheHitTokens"`
+	SessionCacheMissTokens int `json:"sessionCacheMissTokens"`
 }
 
 type wireCacheDiagnostics struct {
@@ -193,12 +188,6 @@ func toWire(e event.Event) wireEvent {
 			}
 			if e.CacheDiagnostics != nil {
 				w.Usage.CacheDiagnostics = toWireCacheDiagnostics(e.CacheDiagnostics)
-			}
-			if e.Pricing != nil {
-				cost := e.Pricing.Cost(u)
-				w.Usage.Cost = cost
-				w.Usage.Currency = e.Pricing.Symbol()
-				w.Usage.CostUSD = cost
 			}
 		}
 	case event.ApprovalRequest:

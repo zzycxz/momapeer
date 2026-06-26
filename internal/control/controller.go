@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
@@ -29,7 +28,6 @@ import (
 	"unicode"
 
 	"github.com/zzycxz/momapeer/internal/agent"
-	"github.com/zzycxz/momapeer/internal/billing"
 	"github.com/zzycxz/momapeer/internal/builtinmcp"
 	"github.com/zzycxz/momapeer/internal/checkpoint"
 	"github.com/zzycxz/momapeer/internal/codegraph"
@@ -80,13 +78,6 @@ type Controller struct {
 	startedOnce   bool                             // guards the one-shot SessionStart hook on first turn
 	onRemember    func(rule string) RememberResult // set via Options; invoked when user picks "always allow"
 	onTurnEnd     func(ctx context.Context, lastUserMsg, lastAssistant string) // set via Options; passive memory capture
-
-	// balanceURL/balanceKey target the active provider's optional wallet-balance
-	// endpoint (empty when the provider declares none). Captured at build so a
-	// model/key switch — which rebuilds the controller — refreshes them.
-	balanceURL    string
-	balanceKey    string
-	balanceClient *http.Client
 
 	// jobs is the session-scoped background-job manager. The agent's background
 	// tools spawn into it; Compose drains its completion notes into the next turn;
@@ -247,11 +238,6 @@ type Options struct {
 	Hooks         *hook.Runner
 	Memory        *memory.Set
 	Cleanup       func()
-	// BalanceURL/BalanceKey wire the active provider's optional wallet-balance
-	// endpoint and bearer key; empty when the provider declares no balance_url.
-	BalanceURL    string
-	BalanceKey    string
-	BalanceClient *http.Client
 	// Jobs is the session-scoped background-job manager (nil disables background jobs).
 	Jobs *jobs.Manager
 	// Registry is the executor's live tool set, and PluginCtx the session-scoped
@@ -319,9 +305,6 @@ func New(opts Options) *Controller {
 		classifier:       classifier,
 		onRemember:       opts.OnRemember,
 		onTurnEnd:        opts.OnTurnEnd,
-		balanceURL:       opts.BalanceURL,
-		balanceKey:       opts.BalanceKey,
-		balanceClient:    opts.BalanceClient,
 		jobs:             opts.Jobs,
 		reg:              opts.Registry,
 		pluginCtx:        pluginCtx,
@@ -2178,18 +2161,6 @@ func (c *Controller) SessionCache() (hit, miss int) {
 	return c.executor.SessionCache()
 }
 
-// Balance queries the active provider's wallet balance, or (nil, nil) when the
-// provider declares no balance_url — so a caller treats "not configured" and
-// "fetched" the same and just omits the readout when nil.
-func (c *Controller) Balance(ctx context.Context) (*billing.Balance, error) {
-	if strings.TrimSpace(c.balanceURL) == "" {
-		return nil, nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
-	defer cancel()
-	return billing.FetchWithClient(ctx, c.balanceClient, c.balanceURL, c.balanceKey)
-}
-
 // Host returns the running MCP host (nil when no plugins), for frontends that
 // list servers / resolve MCP prompts.
 func (c *Controller) Host() *plugin.Host { return c.host }
@@ -2275,8 +2246,10 @@ func (c *Controller) maybeDreamDistill(ctx context.Context) {
 	// The cadence + master-switch gate lives inside agent.ShouldAutoDream /
 	// ShouldAutoDistill (which read live config), so this is a cheap no-op when
 	// self-evolution is disabled or not yet due.
-	agent.SpawnDream(ctx, c.sessionDir, c.executor.Provider(), c.reg, c.executor.Session(), c.sink)
-	agent.SpawnDistill(ctx, c.sessionDir, c.executor.Provider(), c.reg, c.executor.Session(), c.sink)
+	// Tracked on autosaveWG so Close drains these instead of orphaning a
+	// background dream/distill mid-write to a closing store.
+	agent.SpawnDream(ctx, c.sessionDir, c.executor.Provider(), c.reg, c.executor.Session(), c.sink, &c.autosaveWG)
+	agent.SpawnDistill(ctx, c.sessionDir, c.executor.Provider(), c.reg, c.executor.Session(), c.sink, &c.autosaveWG)
 }
 
 // TriggerDream runs a Dream consolidation pass on demand, blocking until it

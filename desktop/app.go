@@ -28,7 +28,6 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/zzycxz/momapeer/internal/agent"
-	"github.com/zzycxz/momapeer/internal/billing"
 	"github.com/zzycxz/momapeer/internal/boot"
 	"github.com/zzycxz/momapeer/internal/bot"
 	"github.com/zzycxz/momapeer/internal/builtinmcp"
@@ -1934,39 +1933,6 @@ func (a *App) ContextUsageForTab(tabID string) ContextInfo {
 	return ContextInfo{Used: used, Window: window, SessionTokens: sessionTokens, CompactRatio: ctrl.CompactRatio()}
 }
 
-// BalanceInfo is the wallet-balance readout for the status bar. Available is true
-// only when a balance was fetched; Display is the formatted amount (e.g. "¥110.00")
-// and is "" when the active provider declares no balance_url — the frontend then
-// omits the readout. Err carries a fetch failure for an optional tooltip.
-type BalanceInfo struct {
-	Available bool   `json:"available"`
-	Display   string `json:"display"`
-	Err       string `json:"err,omitempty"`
-}
-
-// Balance queries the active provider's wallet balance (a network call). It
-// returns an empty (unavailable) readout when no provider balance_url is set, the
-// controller is down, or the fetch fails — so the status bar simply shows nothing
-// rather than an error.
-func (a *App) Balance() BalanceInfo {
-	return a.BalanceForTab("")
-}
-
-func (a *App) BalanceForTab(tabID string) BalanceInfo {
-	ctrl := a.ctrlByTabID(tabID)
-	if ctrl == nil {
-		return BalanceInfo{}
-	}
-	b, err := ctrl.Balance(a.ctx)
-	if err != nil {
-		return BalanceInfo{Err: err.Error()}
-	}
-	if b == nil {
-		return BalanceInfo{} // provider declares no balance endpoint
-	}
-	return BalanceInfo{Available: true, Display: b.Display()}
-}
-
 // JobView is one running background job (bash/task started with
 // run_in_background) for the status-bar indicator.
 type JobView struct {
@@ -2795,6 +2761,26 @@ func (a *App) PickSkillFolder() (string, error) {
 	return normalizeSkillPath(dir), nil
 }
 
+// PickDirectory opens a system directory picker and returns the chosen path.
+// Used by settings fields that would otherwise be "fill-in-the-blank" path
+// inputs (sandbox workspace_root, bot workspace_root, allow_write paths): a
+// folder picker is far less error-prone than hand-typing an absolute path.
+// Returns ("", nil) if the user cancels. title localizes the dialog caption.
+func (a *App) PickDirectory(title string) (string, error) {
+	if a.ctx == nil {
+		return "", nil
+	}
+	cur, _ := os.Getwd()
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:            title,
+		DefaultDirectory: dialogDefaultDirectory(cur),
+	})
+	if err != nil || dir == "" {
+		return "", err
+	}
+	return dir, nil
+}
+
 // AddSkillPath adds a custom skill root to the user config and rebuilds the
 // controller so the skills index and slash menu reflect it immediately.
 func (a *App) AddSkillPath(path string) error {
@@ -3224,9 +3210,11 @@ func (a *App) setCodegraphEnabled(enabled bool) error {
 		a.mu.Lock()
 		delete(tab.disabledMCP, "codegraph")
 		a.mu.Unlock()
-		if _, err := ctrl.ConnectCodegraphMCPServer(cfg); err != nil {
-			recordCodegraphFailure(ctrl, cfg.Codegraph, err)
-			return nil
+		if !mcpConnected(ctrl, "codegraph") {
+			if _, err := ctrl.ConnectCodegraphMCPServer(cfg); err != nil {
+				recordCodegraphFailure(ctrl, cfg.Codegraph, err)
+				return nil
+			}
 		}
 		return nil
 	}
@@ -3278,10 +3266,12 @@ func (a *App) setBuiltinMCPEnabled(name string, enabled bool) error {
 		a.mu.Lock()
 		delete(tab.disabledMCP, name)
 		a.mu.Unlock()
-		_, err := ctrl.ConnectMCPServer(entry)
-		if err != nil {
-			recordMCPFailure(ctrl, entry, err)
-			return nil
+		if !mcpConnected(ctrl, name) {
+			_, err := ctrl.ConnectMCPServer(entry)
+			if err != nil {
+				recordMCPFailure(ctrl, entry, err)
+				return nil
+			}
 		}
 		return nil
 	}
@@ -4996,11 +4986,6 @@ func parseScope(s string) memory.Scope {
 // onboardingKeyEnv is the default provider (moma) key from config.Default().
 const onboardingKeyEnv = "JIUTIAN_API_KEY"
 
-// onboardingBalanceURL doubles as a zero-token connectivity + auth probe.
-// MoMA does not support the MoMA balance API, so we leave this empty
-// and use probeProviderKey below for key validation instead.
-const onboardingBalanceURL = ""
-
 // probeProviderKey validates an API key by hitting the provider's /models endpoint.
 // This is a lightweight connectivity + auth check used during onboarding when the
 // provider has no balance API. The baseURL is read from the default config so it
@@ -5105,7 +5090,7 @@ func (a *App) NeedsOnboarding() bool {
 	return strings.TrimSpace(os.Getenv(onboardingKeyEnv)) == ""
 }
 
-// ConnectKey validates apiKey against the balance endpoint, persists it to the
+// ConnectKey validates apiKey against the provider endpoint, persists it to the
 // global credentials file, and rebuilds the controller so the new key takes effect.
 func (a *App) ConnectKey(apiKey string) error {
 	apiKey = strings.TrimSpace(apiKey)
@@ -5114,16 +5099,8 @@ func (a *App) ConnectKey(apiKey string) error {
 	}
 	ctx, cancel := context.WithTimeout(a.ctx, 8*time.Second)
 	defer cancel()
-	// Try balance endpoint first (MoMA-compatible providers).
-	// If no balance URL is configured, use MoMA /models probe instead.
-	if onboardingBalanceURL != "" {
-		if _, err := billing.FetchWithClient(ctx, nil, onboardingBalanceURL, apiKey); err != nil {
-			return fmt.Errorf("validate: %w", err)
-		}
-	} else {
-		if err := probeProviderKey(ctx, apiKey); err != nil {
-			return fmt.Errorf("validate: %w", err)
-		}
+	if err := probeProviderKey(ctx, apiKey); err != nil {
+		return fmt.Errorf("validate: %w", err)
 	}
 	if err := upsertDotEnv(onboardingKeyEnv, apiKey); err != nil {
 		return fmt.Errorf("save: %w", err)

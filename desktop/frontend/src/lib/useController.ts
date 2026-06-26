@@ -10,7 +10,6 @@ import { createRafBatch } from "./rafBatch";
 import { t } from "./i18n";
 import { modeHasAutoApproveTools } from "./types";
 import type {
-  BalanceInfo,
   CheckpointMeta,
   CollaborationMode,
   ContextInfo,
@@ -77,7 +76,6 @@ interface State {
   usage?: WireUsage;
   context: ContextInfo;
   meta?: Meta;
-  balance?: BalanceInfo;
   effort?: EffortInfo;
   jobs: JobView[];
   checkpoints: CheckpointMeta[];
@@ -90,8 +88,6 @@ interface State {
   turnTokens: number;
   turnTotalTokens: number;
   sessionTokens: number;
-  sessionCost: number;
-  sessionCurrency: string;
   retry?: { attempt: number; max: number };
   seq: number;
 }
@@ -107,10 +103,20 @@ export const initialState: State = {
   turnTokens: 0,
   turnTotalTokens: 0,
   sessionTokens: 0,
-  sessionCost: 0,
-  sessionCurrency: "¥",
   seq: 0,
 };
+
+// isShellTool decides whether a tool card should render in the "live shell"
+// style (10-line preview + show-all + Ctrl+B). The backend already streams
+// bash stdout chunk-by-chunk via tool_progress; this gate just decides whether
+// the card *presents* it as a shell panel. We match on tool name so agent-
+// initiated bash calls (whose IDs are provider-generated like "call_xxx") are
+// treated the same as user "!" shell commands (whose IDs carry a "shell-"
+// prefix). Keeping the prefix check preserves backward compat for the user-
+// initiated path.
+function isShellTool(name: string, id: string): boolean {
+  return name === "bash" || id.startsWith("shell-");
+}
 
 function usageTotalTokens(usage?: WireUsage): number {
   if (!usage) return 0;
@@ -144,7 +150,6 @@ type Action =
   | { type: "backend_status"; running: boolean }
   | { type: "meta"; meta: Meta }
   | { type: "context"; context: ContextInfo }
-  | { type: "balance"; balance: BalanceInfo }
   | { type: "effort"; effort: EffortInfo }
   | { type: "jobs"; jobs: JobView[] }
   | { type: "checkpoints"; checkpoints: CheckpointMeta[] }
@@ -224,27 +229,27 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
           status: error ? "error" : "done",
           output,
           error,
-          isShell: (tc.id || "").startsWith("shell-"),
-        });
-        seq++;
-      }
-      continue;
-    }
-    if (m.role === "tool") {
-      if (m.toolCallId && consumedToolIDs.has(m.toolCallId)) continue;
-      const output = m.content;
-      const error = output.startsWith("[error") || output.startsWith("Error:") ? output : undefined;
-      items.push({
-        kind: "tool",
-        id: m.toolCallId || `${idPrefix}tool${seq}`,
-        name: m.toolName || "tool",
-        args: "",
-        readOnly: false,
-        status: error ? "error" : "done",
-        output,
-        error,
-        isShell: (m.toolCallId || "").startsWith("shell-"),
+        isShell: isShellTool(tc.name, tc.id || ""),
       });
+      seq++;
+    }
+    continue;
+  }
+  if (m.role === "tool") {
+    if (m.toolCallId && consumedToolIDs.has(m.toolCallId)) continue;
+    const output = m.content;
+    const error = output.startsWith("[error") || output.startsWith("Error:") ? output : undefined;
+    items.push({
+      kind: "tool",
+      id: m.toolCallId || `${idPrefix}tool${seq}`,
+      name: m.toolName || "tool",
+      args: "",
+      readOnly: false,
+      status: error ? "error" : "done",
+      output,
+      error,
+      isShell: isShellTool(m.toolName || "tool", m.toolCallId || ""),
+    });
       seq++;
       continue;
     }
@@ -327,7 +332,7 @@ function applyEvent(s: State, e: WireEvent): State {
         if (it.kind === "tool") next[idx] = { ...it, name: t.name, args: t.args ? t.args : it.args, readOnly: t.readOnly, profile: t.profile ?? it.profile };
         return { ...s, items: next };
       }
-      return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "tool", id, name: t.name, args: t.args ?? "", readOnly: t.readOnly, status: "running", isShell: id.startsWith("shell-"), parentId: t.parentId, profile: t.profile }] };
+      return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "tool", id, name: t.name, args: t.args ?? "", readOnly: t.readOnly, status: "running", isShell: isShellTool(t.name, id), parentId: t.parentId, profile: t.profile }] };
     }
     case "tool_result": {
       const t = e.tool;
@@ -362,10 +367,7 @@ function applyEvent(s: State, e: WireEvent): State {
       const usageTokens = usageTotalTokens(e.usage);
       const turnTotalTokens = s.turnTotalTokens + usageTokens;
       const sessionTokens = s.sessionTokens + usageTokens;
-      const usageCost = e.usage?.cost ?? e.usage?.costUsd ?? 0;
-      const sessionCost = s.sessionCost + usageCost;
-      const sessionCurrency = e.usage?.currency || s.sessionCurrency || "¥";
-      return { ...s, usage: e.usage, context: { ...s.context, used, sessionTokens }, turnTokens, turnTotalTokens, sessionTokens, sessionCost, sessionCurrency };
+      return { ...s, usage: e.usage, context: { ...s.context, used, sessionTokens }, turnTokens, turnTotalTokens, sessionTokens };
     }
     case "notice":
       return { ...s, running: s.turnActive ? s.running : false, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `n${s.seq}`, level: e.level ?? "info", text: e.text ?? "" }] };
@@ -450,7 +452,6 @@ export function reducer(s: State, a: Action): State {
         : s.sessionTokens;
       return { ...s, context: a.context, sessionTokens };
     }
-    case "balance": return { ...s, balance: a.balance };
     case "effort": return { ...s, effort: a.effort };
     case "jobs": return { ...s, jobs: a.jobs };
     case "checkpoints": return { ...s, checkpoints: a.checkpoints };
@@ -463,7 +464,7 @@ export function reducer(s: State, a: Action): State {
     case "local_notice": return { ...s, running: false, turnActive: false, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `n${s.seq}`, level: a.level, text: a.text }] };
     case "clearApproval": return { ...s, approval: undefined };
     case "clearAsk": return { ...s, ask: undefined };
-    case "reset": return { ...initialState, meta: s.meta, context: { ...s.context, used: 0, sessionTokens: 0 }, balance: s.balance, effort: s.effort, jobs: s.jobs };
+    case "reset": return { ...initialState, meta: s.meta, context: { ...s.context, used: 0, sessionTokens: 0 }, effort: s.effort, jobs: s.jobs };
     case "event": return applyEvent(s, a.e);
     default: return s;
   }
@@ -564,11 +565,10 @@ export function useController() {
   const loadSessionDataForTab = useCallback(async (tabId: string, reset = false) => {
     const seq = bumpSessionLoadSeq(tabId);
     const safe = <T,>(p: Promise<T>): Promise<T | undefined> => p.catch(() => undefined);
-    const [meta, context, effort, balance, jobs, checkpoints, history] = await Promise.all([
+    const [meta, context, effort, jobs, checkpoints, history] = await Promise.all([
       safe(app.MetaForTab(tabId)),
       safe(app.ContextUsageForTab(tabId)),
       safe(app.EffortForTab(tabId)),
-      safe(app.BalanceForTab(tabId)),
       safe(app.JobsForTab(tabId)),
       safe(app.CheckpointsForTab(tabId)),
       safe(app.HistoryForTab(tabId)),
@@ -578,7 +578,6 @@ export function useController() {
     if (meta) dispatchTo(tabId, { type: "meta", meta });
     if (context) dispatchTo(tabId, { type: "context", context });
     if (effort) dispatchTo(tabId, { type: "effort", effort });
-    if (balance) dispatchTo(tabId, { type: "balance", balance });
     if (jobs) dispatchTo(tabId, { type: "jobs", jobs: asArray(jobs) });
     if (checkpoints) dispatchTo(tabId, { type: "checkpoints", checkpoints: asArray(checkpoints) });
     const messages = asArray(history);
@@ -619,14 +618,12 @@ export function useController() {
       await loadSessionDataForTab(tabId, missedTurnDone);
       return;
     }
-    const [jobs, effort, balance] = await Promise.all([
+    const [jobs, effort] = await Promise.all([
       app.JobsForTab(tabId).catch(() => undefined),
       app.EffortForTab(tabId).catch(() => undefined),
-      app.BalanceForTab(tabId).catch(() => undefined),
     ]);
     if (jobs) dispatchTo(tabId, { type: "jobs", jobs: asArray(jobs) });
     if (effort) dispatchTo(tabId, { type: "effort", effort });
-    if (balance) dispatchTo(tabId, { type: "balance", balance });
   }, [dispatchTo, loadSessionDataForTab]);
 
   useEffect(() => {
@@ -651,7 +648,6 @@ export function useController() {
           .ContextUsageForTab(targetTabId)
           .then((context) => dispatchTo(targetTabId, { type: "context", context }))
           .catch(() => {});
-        app.BalanceForTab(targetTabId).then((balance) => dispatchTo(targetTabId, { type: "balance", balance })).catch(() => {});
         app.EffortForTab(targetTabId).then((effort) => dispatchTo(targetTabId, { type: "effort", effort })).catch(() => {});
         void refreshCheckpoints(targetTabId);
       }

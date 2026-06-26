@@ -213,6 +213,10 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	}
 	b.WriteString("\n")
 
+	b.WriteString("[llm]\n")
+	fmt.Fprintf(&b, "rpm = %d   # max requests/minute per API key (0 = unlimited)\n", c.LLM.RPM)
+	b.WriteString("\n")
+
 	if shouldRenderProviders(c, defaults, scope) {
 		for _, p := range c.Providers {
 			b.WriteString("[[providers]]\n")
@@ -231,9 +235,6 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 				fmt.Fprintf(&b, "models_url  = %q   # auto-fetch models from this URL on startup\n", p.ModelsURL)
 			}
 			fmt.Fprintf(&b, "api_key_env = %q\n", p.APIKeyEnv)
-			if p.BalanceURL != "" {
-				fmt.Fprintf(&b, "balance_url = %q   # optional; wallet-balance endpoint shown in the status bar\n", p.BalanceURL)
-			}
 			if p.ContextWindow > 0 {
 				fmt.Fprintf(&b, "context_window = %d   # tokens; compaction triggers near this limit\n", p.ContextWindow)
 			}

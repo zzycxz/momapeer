@@ -64,10 +64,6 @@ export interface WireUsage {
   // MoMA currently does not report these fields, so they remain 0.
   sessionCacheHitTokens: number;
   sessionCacheMissTokens: number;
-  cost?: number;
-  currency?: string;
-  // Deprecated compatibility alias. Prefer cost + currency.
-  costUsd?: number;
 }
 
 export interface WireApproval {
@@ -118,10 +114,6 @@ export interface WireEvent {
   tabId?: string;
   sessionHitTokens?: number;
   sessionMissTokens?: number;
-  sessionCost?: number;
-  sessionCurrency?: string;
-  // Deprecated compatibility alias. Prefer sessionCost + sessionCurrency.
-  sessionCostUsd?: number;
 }
 
 // Tab management types (desktop/tabs.go).
@@ -185,10 +177,6 @@ export interface ContextPanelInfo {
   cacheMissTokens: number;
   requestCount?: number;
   elapsedMs?: number;
-  sessionCost?: number;
-  sessionCurrency?: string;
-  // Deprecated compatibility alias. Prefer sessionCost + sessionCurrency.
-  sessionCostUsd?: number;
   mock?: boolean;
   readFiles: ReadFileRecord[];
   changedFiles: ChangedFileInfo[];
@@ -788,16 +776,15 @@ export interface ProviderView {
   default: string;
   apiKeyEnv: string;
   keySet: boolean; // the env var currently resolves to a value
-  balanceUrl: string; // optional wallet-balance endpoint; "" disables the readout
   contextWindow: number;
   reasoningProtocol: string; // auto|moma|MoMA|openai|none; empty = auto/model registry
   supportedEfforts: string[]; // custom /effort levels; empty = use built-in Kind/BaseURL default
   defaultEffort: string; // /effort level when user picks "auto" or unset; "" = supportedEfforts[0]
 }
 
-// BalanceInfo is the wallet-balance readout (desktop/app.go Balance). available
-// is false when the provider declares no balanceUrl or a fetch failed; display is
-// the formatted amount (e.g. "¥110.00").
+// BalanceInfo is the wallet-balance readout (desktop/app.go Balance). kept in
+// the type file only so the bridge contract (AppBindings) compiles; the frontend
+// no longer displays it.
 export interface BalanceInfo {
   available: boolean;
   display: string;
@@ -961,6 +948,7 @@ export interface SMTPSettings {
   username: string;
   passwordEnv: string;
   useTLS: boolean;
+  encryptionMode?: string; // "tls" | "starttls" | "none"; empty → migrate from useTLS
 }
 
 export interface IMAPSettings {

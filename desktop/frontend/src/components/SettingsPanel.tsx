@@ -353,7 +353,7 @@ function settingsTabMeta(id: SettingsTab, s: SettingsView, t: ReturnType<typeof 
     case "updates":
       return t("settings.updatesMeta");
     case "cowork":
-      return "";
+      return t("settings.tabSub.cowork");
   }
 }
 
@@ -405,6 +405,29 @@ const PROXY_MODES = ["auto", "custom", "off"] as const;
 // here is what the user sees in the dropdown.
 const EFFORT_PRESETS: readonly string[] = ["low", "medium", "high", "xhigh", "max"];
 const REASONING_PROTOCOLS: readonly string[] = ["", "moma", "MoMA", "openai", "none"];
+
+// COMMON_PROVIDER_PRESETS are one-click base_url + context_window shortcuts for
+// the most popular OpenAI-compatible platforms, so users don't have to look up
+// and hand-type the API endpoint. Selecting a preset fills both fields; the
+// user can then edit freely.
+const COMMON_PROVIDER_PRESETS: { label: string; baseUrl: string; context: number }[] = [
+  { label: "DeepSeek", baseUrl: "https://api.deepseek.com", context: 128000 },
+  { label: "Kimi", baseUrl: "https://api.moonshot.cn/v1", context: 128000 },
+  { label: "智谱", baseUrl: "https://open.bigmodel.cn/api/paas/v4", context: 128000 },
+  { label: "通义", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", context: 128000 },
+  { label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", context: 200000 },
+];
+
+// COMMON_MAIL_PRESETS are one-click SMTP host/port/encryption shortcuts for
+// popular Chinese and international mail providers. The user only needs to
+// fill in username + password after picking one. useTLS=true means implicit
+// TLS (port 465); false means STARTTLS (port 587).
+const COMMON_MAIL_PRESETS: { label: string; host: string; port: number; useTLS: boolean }[] = [
+  { label: "QQ", host: "smtp.qq.com", port: 465, useTLS: true },
+  { label: "163", host: "smtp.163.com", port: 465, useTLS: true },
+  { label: "Gmail", host: "smtp.gmail.com", port: 587, useTLS: false },
+  { label: "Outlook", host: "smtp.office365.com", port: 587, useTLS: false },
+];
 const PROXY_TYPES = ["http", "https", "socks5", "socks5h"] as const;
 const LANGUAGE_PREFS: LangPref[] = ["", "zh", "en"];
 const AUTO_PLAN_MODES = ["off", "on"] as const;
@@ -636,6 +659,37 @@ function reasoningProtocolLabel(protocol: string, t: ReturnType<typeof useT>): s
       return t("settings.reasoningProtocol.none");
     default:
       return t("settings.reasoningProtocol.auto");
+  }
+}
+
+// effortLabel maps raw effort levels (low/medium/high/xhigh/max) to localized
+// friendly names so users don't see raw English enum values in dropdowns and
+// checkboxes. Falls back to the raw value if unrecognized.
+export function effortLabel(level: string, t: ReturnType<typeof useI18n>["t"]): string {
+  switch (level) {
+    case "low":
+      return t("settings.effortLow");
+    case "medium":
+      return t("settings.effortMedium");
+    case "high":
+      return t("settings.effortHigh");
+    case "xhigh":
+      return t("settings.effortXhigh");
+    case "max":
+      return t("settings.effortMax");
+    default:
+      return level;
+  }
+}
+
+// protocolLabel maps provider "kind" values to friendly names for the protocol
+// dropdown, hiding raw enum strings from end users.
+export function protocolLabel(kind: string, t: ReturnType<typeof useI18n>["t"]): string {
+  switch (kind) {
+    case "openai":
+      return t("settings.protocolOpenai");
+    default:
+      return kind;
   }
 }
 
@@ -1691,7 +1745,7 @@ function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) 
                 <option value="">{t("settings.subagentEffortDefault")}</option>
                 {EFFORT_PRESETS.map((level) => (
                   <option key={level} value={level}>
-                    {level}
+                    {effortLabel(level, t)}
                   </option>
                 ))}
               </select>
@@ -2035,6 +2089,7 @@ const JIUTIAN_TOOL_KEYS: Record<string, keyof { imageUnderstand: boolean; imageG
 };
 
 function JiutianSection() {
+  const t = useT();
   const [jiutian, setJiutian] = useState<{ imageUnderstand: boolean; imageGenerate: boolean; videoUnderstand: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -2065,22 +2120,25 @@ function JiutianSection() {
 
   if (!jiutian) return null;
 
-  const fields: Array<{ key: keyof typeof jiutian; label: string; hint: string; toolName: string }> = [
-    { key: "imageUnderstand", label: "图片理解", hint: "分析截图、UI、错误信息、架构图（LLMImage2Text）", toolName: "image_understand" },
-    { key: "imageGenerate",   label: "图片生成", hint: "文生图、图生图（cntxt2image）",                  toolName: "image_generate" },
-    { key: "videoUnderstand", label: "视频理解", hint: "分析操作录屏、演示视频（video_to_text）",        toolName: "video_understand" },
+  const fields: Array<{ key: keyof typeof jiutian; labelKey: DictKey; hintKey: DictKey; toolName: string }> = [
+    { key: "imageUnderstand", labelKey: "settings.jiutianImageUnderstand", hintKey: "settings.jiutianImageUnderstandHint", toolName: "image_understand" },
+    { key: "imageGenerate",   labelKey: "settings.jiutianImageGenerate",   hintKey: "settings.jiutianImageGenerateHint",   toolName: "image_generate" },
+    { key: "videoUnderstand", labelKey: "settings.jiutianVideoUnderstand", hintKey: "settings.jiutianVideoUnderstandHint", toolName: "video_understand" },
   ];
 
   return (
     <section className="mem-section">
       <div className="cap-skills-head">
         <div className="cap-skills-head__copy">
-          <div className="cap-skills-head__title">九天多模态能力</div>
-          <div className="cap-skills-head__summary">开关九天平台的图片/视频处理工具。关闭后对应工具不会注册给 LLM。</div>
+          <div className="cap-skills-head__title">{t("settings.jiutianTitle")}</div>
+          <div className="cap-skills-head__summary">{t("settings.jiutianSummary")}</div>
         </div>
       </div>
       <div className="cap-skills">
-        {fields.map(({ key, label, hint, toolName }) => (
+        {fields.map(({ key, labelKey, hintKey, toolName }) => {
+          const label = t(labelKey);
+          const hint = t(hintKey);
+          return (
           <div key={key} className={`cap-skill-card${!jiutian[key] ? " cap-skill-card--disabled" : ""}`}>
             <div className="cap-skill-card__top">
               <button className="cap-skill-card__toggle" type="button" tabIndex={-1}>
@@ -2089,14 +2147,14 @@ function JiutianSection() {
                   <span className="cap-skill-card__main">
                     <span className="cap-skill-card__command">{label}</span>
                     <span className="cap-skill-card__badges">
-                      <span className="cap-skill-badge cap-skill-badge--project">九天</span>
-                      {!jiutian[key] && <span className="cap-skill-badge cap-skill-badge--off">已关闭</span>}
+                      <span className="cap-skill-badge cap-skill-badge--project">{t("settings.jiutianBadge")}</span>
+                      {!jiutian[key] && <span className="cap-skill-badge cap-skill-badge--off">{t("settings.jiutianOff")}</span>}
                     </span>
                   </span>
                 </span>
               </button>
-              <Tooltip label={`${label}${jiutian[key] ? "关闭" : "开启"}`}>
-                <label className="cap-switch" aria-label={`${label}${jiutian[key] ? "关闭" : "开启"}`}>
+              <Tooltip label={`${label}${jiutian[key] ? t("settings.jiutianDisable") : t("settings.jiutianEnable")}`}>
+                <label className="cap-switch" aria-label={`${label}${jiutian[key] ? t("settings.jiutianDisable") : t("settings.jiutianEnable")}`}>
                   <input
                     type="checkbox"
                     checked={jiutian[key]}
@@ -2109,7 +2167,8 @@ function JiutianSection() {
             </div>
             <div className="cap-skill-card__desc">{hint}</div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
@@ -2906,7 +2965,6 @@ function ProviderEditor({
   const [modelsUrl] = useState(initial?.modelsUrl ?? "");
   const [apiKeyEnv, setApiKeyEnv] = useState(initial?.apiKeyEnv ?? "");
   const [keyDraft, setKeyDraft] = useState("");
-  const [balanceUrl, setBalanceUrl] = useState(initial?.balanceUrl ?? "");
   // Empty when unset so the placeholder (and its "0 = default" hint) reads instead
   // of a bare "0"; saved back as 0.
   const [ctx, setCtx] = useState(initial?.contextWindow ? String(initial.contextWindow) : "");
@@ -2973,7 +3031,6 @@ function ProviderEditor({
         default: "",
         apiKeyEnv: effectiveApiKeyEnv,
         keySet: Boolean(keyDraft.trim()) || (initial?.keySet ?? false),
-        balanceUrl: balanceUrl.trim(),
         contextWindow: Number(ctx) || 0,
         reasoningProtocol,
         supportedEfforts,
@@ -3009,7 +3066,6 @@ function ProviderEditor({
       apiKeyEnv: effectiveApiKeyEnv,
       modelsUrl,
       keySet: Boolean(keyDraft.trim()) || (initial?.keySet ?? false),
-      balanceUrl: balanceUrl.trim(),
       contextWindow: Number(ctx) || 0,
       reasoningProtocol,
       supportedEfforts,
@@ -3083,9 +3139,6 @@ function ProviderEditor({
           onChange={(e) => setApiKeyEnv(e.target.value)}
         />
         <div className="mem-hint">{t("settings.providerApiKeyEnvHint")}</div>
-        <label className="set-label">{t("settings.providerBalanceUrl")}</label>
-        <input className="mem-input" placeholder={t("settings.balanceUrlPlaceholder")} value={balanceUrl} onChange={(e) => setBalanceUrl(e.target.value)} />
-        <div className="mem-hint">{t("settings.balanceUrlHint")}</div>
         <label className="set-label">{t("settings.providerContextWindow")}</label>
         <input className="mem-input" placeholder={t("settings.contextWindowPlaceholder")} value={ctx} onChange={(e) => setCtx(e.target.value)} inputMode="numeric" />
         <div className="mem-hint">{t("settings.contextWindowHint")}</div>
@@ -3106,7 +3159,7 @@ function ProviderEditor({
               checked={presetEfforts.includes(level)}
               onChange={() => togglePreset(level)}
             />
-            {level}
+            {effortLabel(level, t)}
           </label>
         ))}
         <div className="set-row">
@@ -3163,7 +3216,7 @@ function ProviderEditor({
             <option value="">{t("settings.defaultEffortAuto")}</option>
             {supportedEfforts.map((level) => (
               <option key={level} value={level}>
-                {level}
+                {effortLabel(level, t)}
               </option>
             ))}
           </select>
@@ -3184,6 +3237,21 @@ function ProviderEditor({
       <label className="set-label">{t("settings.providerProtocol")}</label>
       {protocolField}
       <label className="set-label">{t("settings.providerBaseUrlLabel")}</label>
+      <div className="provider-presets">
+        {COMMON_PROVIDER_PRESETS.map((preset) => (
+          <button
+            key={preset.label}
+            type="button"
+            className={"set-seg__btn provider-presets__btn" + (baseUrl === preset.baseUrl ? " set-seg__btn--on" : "")}
+            onClick={() => {
+              setBaseUrl(preset.baseUrl);
+              if (preset.context) setCtx(String(preset.context));
+            }}
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
       <input className="mem-input" placeholder={t("settings.providerBaseUrl")} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
       {!initial && (
         <>
@@ -3367,7 +3435,7 @@ function RuleList({
       <div className="set-rules__add">
         <input
           className="mem-input"
-          placeholder={t("settings.addRule", { list })}
+          placeholder={t("settings.addRule", { list: ruleListLabel(list, t) })}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
@@ -3405,6 +3473,8 @@ function ruleListHint(list: string, t: ReturnType<typeof useT>): string {
       return t("settings.ruleAskHint");
     case "allow":
       return t("settings.ruleAllowHint");
+    case "allow_write":
+      return t("settings.ruleAllowWriteHint");
     default:
       return "";
   }
@@ -3432,14 +3502,30 @@ function SandboxSection({ s, busy, apply }: SectionProps) {
         </label>
       </SettingsField>
       <SettingsField label={t("settings.workspaceRoot")}>
-        <input
-          className="mem-input set-grow"
-          placeholder={t("settings.workspaceDefault")}
-          value={root}
-          disabled={busy}
-          onChange={(e) => setRoot(e.target.value)}
-          onBlur={() => root !== sb.workspaceRoot && void set({ workspaceRoot: root })}
-        />
+        <div className="set-input-browse">
+          <input
+            className="mem-input set-grow"
+            placeholder={t("settings.workspaceDefault")}
+            value={root}
+            disabled={busy}
+            onChange={(e) => setRoot(e.target.value)}
+            onBlur={() => root !== sb.workspaceRoot && void set({ workspaceRoot: root })}
+          />
+          <button
+            type="button"
+            className="btn btn--small set-input-browse__btn"
+            disabled={busy}
+            onClick={async () => {
+              const dir = await app.PickDirectory(t("settings.workspaceRoot"));
+              if (dir) {
+                setRoot(dir);
+                void set({ workspaceRoot: dir });
+              }
+            }}
+          >
+            {t("settings.browse")}
+          </button>
+        </div>
       </SettingsField>
       <RuleList
         list="allow_write"
@@ -3707,6 +3793,40 @@ function UpdatesSection({
 }
 
 
+/** Collapsible optional-module card with a toggle switch. When disabled the
+ *  body (config fields) is hidden and the card appears muted. */
+function OptionalModule({
+  title,
+  description,
+  enabled,
+  onToggle,
+  children,
+}: {
+  title: string;
+  description: string;
+  enabled: boolean;
+  onToggle: (v: boolean) => void;
+  children: ReactNode;
+}) {
+  const t = useT();
+  return (
+    <div className={`optional-module${enabled ? " optional-module--enabled" : ""}`}>
+      <div className="optional-module__head">
+        <div className="optional-module__copy">
+          <div className="optional-module__title">{title}</div>
+          <div className="optional-module__desc">{description}</div>
+        </div>
+        <label className="settings-toggle">
+          <input type="checkbox" checked={enabled} onChange={e => onToggle(e.target.checked)} />
+          <span>{enabled ? t("settings.toggleOn") : t("settings.toggleOff")}</span>
+        </label>
+      </div>
+      {enabled && <div className="optional-module__body">{children}</div>}
+    </div>
+  );
+}
+
+
 function CoWorkSection({ s, busy, apply }: SectionProps) {
   const t = useT();
   const [draft, setDraft] = useState(s.cowork ?? {
@@ -3720,6 +3840,7 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
   const [browserDetecting, setBrowserDetecting] = useState(false);
   const [depsChecking, setDepsChecking] = useState(false);
   const [depsInstalling, setDepsInstalling] = useState(false);
+  const [recordingHotkey, setRecordingHotkey] = useState(false);
 
   const isDirty = JSON.stringify(draft) !== JSON.stringify(s.cowork ?? {});
 
@@ -3757,186 +3878,271 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
     }
   };
 
+  // Derive enabled state from draft values — empty = disabled.
+  const browserOn = !!(draft.detectedBrowser || draft.browserPath);
+  const pptOn = !!draft.wpsPptServerPath;
+  const smtpOn = !!(draft.smtp?.host);
+  const imapOn = !!(draft.imap?.host);
+  const ragOn = !!draft.embeddingModel;
+
+  // Toggle helpers: disabling clears related fields so the backend treats them
+  // as "not configured". Enabling just expands the card (user fills in values).
+  const toggleBrowser = (on: boolean) => {
+    if (!on) setDraft(d => ({ ...d, browserPath: "", detectedBrowser: "" }));
+  };
+  const togglePpt = (on: boolean) => {
+    if (!on) setDraft(d => ({ ...d, wpsPptServerPath: "", wpsPptPython: "", wpsPptDepsMissing: [] }));
+  };
+  const toggleSmtp = (on: boolean) => {
+    if (!on) setDraft(d => ({ ...d, smtp: { ...d.smtp, host: "", port: 0, from: "", username: "" }, smtpPassword: "" }));
+  };
+  const toggleImap = (on: boolean) => {
+    if (!on) setDraft(d => ({ ...d, imap: { ...d.imap, host: "", port: 0, username: "" }, imapPassword: "" }));
+  };
+  const toggleRag = (on: boolean) => {
+    if (!on) setDraft(d => ({ ...d, embeddingModel: "" }));
+  };
+
   return (
     <div className="settings-section">
       <SettingsSection title={t("settings.tab.cowork")}>
-        <SettingsField label={t("cowork.browser")} hint={t("cowork.browserHint")} stacked>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" }}>
-            <button className="btn btn--small" disabled={busy || browserDetecting} onClick={checkBrowser}>
-              {browserDetecting ? <Loader2 className="spinner" size={14} /> : t("cowork.browserDetect")}
-            </button>
-            <span className="mem-hint">
-              {draft.detectedBrowser ? t("cowork.browserDetected", { name: draft.detectedBrowser }) : ""}
-            </span>
-          </div>
-          <input 
-            className="mem-input set-grow" 
-            placeholder={t("cowork.browserPath")} 
-            value={draft.browserPath} 
-            onChange={e => setDraft({ ...draft, browserPath: e.target.value })} 
-          />
-        </SettingsField>
 
-        <SettingsField label={t("cowork.ppt")} stacked>
-          <input 
-            className="mem-input set-grow" 
-            style={{ marginBottom: "8px" }}
-            placeholder={t("cowork.pptServerPath")} 
-            value={draft.wpsPptServerPath} 
-            onChange={e => setDraft({ ...draft, wpsPptServerPath: e.target.value })} 
-          />
-          <input 
-            className="mem-input set-grow" 
-            style={{ marginBottom: "8px" }}
-            placeholder={t("cowork.pptPython")} 
-            value={draft.wpsPptPython} 
-            onChange={e => setDraft({ ...draft, wpsPptPython: e.target.value })} 
-          />
-          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-            <button className="btn btn--small" disabled={busy || depsChecking} onClick={checkDeps}>
-              {depsChecking ? <Loader2 className="spinner" size={14} /> : t("cowork.pptCheckDeps")}
-            </button>
-            {draft.wpsPptDepsMissing?.length > 0 && (
-              <button className="btn btn--small" disabled={busy || depsInstalling} onClick={installDeps}>
-                {depsInstalling ? <Loader2 className="spinner" size={14} /> : t("cowork.pptInstallDeps")}
+        {/* ── 浏览器自动化 ── */}
+        <OptionalModule title={t("cowork.browser")} description={t("cowork.browserModDesc")} enabled={browserOn} onToggle={toggleBrowser}>
+          <SettingsField label={t("cowork.browser")} hint={t("cowork.browserHint")} stacked>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" }}>
+              <button className="btn btn--small" disabled={busy || browserDetecting} onClick={checkBrowser}>
+                {browserDetecting ? <Loader2 className="spinner" size={14} /> : t("cowork.browserDetect")}
               </button>
-            )}
-            <span className="mem-hint">
-              {draft.wpsPptDepsMissing !== undefined && draft.wpsPptDepsMissing !== null ? (
-                draft.wpsPptDepsMissing.length > 0 
-                  ? t("cowork.pptDepsMissing", { deps: draft.wpsPptDepsMissing.join(", ") })
-                  : t("cowork.pptDepsOk")
-              ) : ""}
-            </span>
-          </div>
-        </SettingsField>
+              <span className="mem-hint">
+                {draft.detectedBrowser ? t("cowork.browserDetected", { name: draft.detectedBrowser }) : ""}
+              </span>
+            </div>
+            <input
+              className="mem-input set-grow"
+              placeholder={t("cowork.browserPath")}
+              value={draft.browserPath}
+              onChange={e => setDraft({ ...draft, browserPath: e.target.value })}
+            />
+          </SettingsField>
+        </OptionalModule>
 
-        <SettingsField label={t("cowork.smtp")} stacked>
-          <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
-            <input 
-              className="mem-input set-grow" 
-              placeholder={t("cowork.smtpHost")} 
-              value={draft.smtp?.host || ""} 
-              onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, host: e.target.value } })} 
+        {/* ── PPT（WPS COM）── */}
+        <OptionalModule title={t("cowork.ppt")} description={t("cowork.pptModDesc")} enabled={pptOn} onToggle={togglePpt}>
+          <SettingsField label={t("cowork.ppt")} stacked>
+            <input
+              className="mem-input set-grow"
+              style={{ marginBottom: "8px" }}
+              placeholder={t("cowork.pptServerPath")}
+              value={draft.wpsPptServerPath}
+              onChange={e => setDraft({ ...draft, wpsPptServerPath: e.target.value })}
             />
-            <input 
-              className="mem-input" 
-              style={{ width: "80px" }}
-              placeholder="Port" 
-              type="number"
-              value={draft.smtp?.port || ""} 
-              onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, port: parseInt(e.target.value, 10) || 0 } })} 
+            <input
+              className="mem-input set-grow"
+              style={{ marginBottom: "8px" }}
+              placeholder={t("cowork.pptPython")}
+              value={draft.wpsPptPython}
+              onChange={e => setDraft({ ...draft, wpsPptPython: e.target.value })}
             />
-          </div>
-          <input 
-            className="mem-input set-grow" 
-            style={{ marginBottom: "8px" }}
-            placeholder={t("cowork.smtpFrom")} 
-            value={draft.smtp?.from || ""} 
-            onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, from: e.target.value } })} 
-          />
-          <input 
-            className="mem-input set-grow" 
-            style={{ marginBottom: "8px" }}
-            placeholder={t("cowork.smtpUser")} 
-            value={draft.smtp?.username || ""} 
-            onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, username: e.target.value } })} 
-          />
-          <input 
-            className="mem-input set-grow" 
-            style={{ marginBottom: "8px" }}
-            type="password"
-            placeholder={t("cowork.smtpPass")} 
-            value={draft.smtpPassword || ""} 
-            onChange={e => setDraft({ ...draft, smtpPassword: e.target.value })} 
-          />
-          <div className="set-seg">
-            <button
-              className={`set-seg__btn${draft.smtp?.useTLS ? " set-seg__btn--on" : ""}`}
-              onClick={() => setDraft({ ...draft, smtp: { ...draft.smtp!, useTLS: true } })}
-            >
-              TLS
-            </button>
-            <button
-              className={`set-seg__btn${!draft.smtp?.useTLS ? " set-seg__btn--on" : ""}`}
-              onClick={() => setDraft({ ...draft, smtp: { ...draft.smtp!, useTLS: false } })}
-            >
-              STARTTLS/Off
-            </button>
-          </div>
-        </SettingsField>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              <button className="btn btn--small" disabled={busy || depsChecking} onClick={checkDeps}>
+                {depsChecking ? <Loader2 className="spinner" size={14} /> : t("cowork.pptCheckDeps")}
+              </button>
+              {draft.wpsPptDepsMissing?.length > 0 && (
+                <button className="btn btn--small" disabled={busy || depsInstalling} onClick={installDeps}>
+                  {depsInstalling ? <Loader2 className="spinner" size={14} /> : t("cowork.pptInstallDeps")}
+                </button>
+              )}
+              <span className="mem-hint">
+                {draft.wpsPptDepsMissing !== undefined && draft.wpsPptDepsMissing !== null ? (
+                  draft.wpsPptDepsMissing.length > 0
+                    ? t("cowork.pptDepsMissing", { deps: draft.wpsPptDepsMissing.join(", ") })
+                    : t("cowork.pptDepsOk")
+                ) : ""}
+              </span>
+            </div>
+          </SettingsField>
+        </OptionalModule>
 
-        <SettingsField label={t("cowork.imap")} stacked>
-          <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
-            <input 
-              className="mem-input set-grow" 
-              placeholder={t("cowork.imapHost")} 
-              value={draft.imap?.host || ""} 
-              onChange={e => setDraft({ ...draft, imap: { ...draft.imap!, host: e.target.value } })} 
+        {/* ── 邮件发送（SMTP）── */}
+        <OptionalModule title={t("cowork.smtp")} description={t("cowork.smtpModDesc")} enabled={smtpOn} onToggle={toggleSmtp}>
+          <SettingsField label={t("cowork.smtp")} stacked>
+            <div className="provider-presets" style={{ marginBottom: "6px" }}>
+              {COMMON_MAIL_PRESETS.map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  className={"set-seg__btn provider-presets__btn" + (draft.smtp?.host === preset.host ? " set-seg__btn--on" : "")}
+                  onClick={() => setDraft({ ...draft, smtp: { ...draft.smtp!, host: preset.host, port: preset.port, useTLS: preset.useTLS, encryptionMode: preset.useTLS ? "tls" : "starttls" } })}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+              <input
+                className="mem-input set-grow"
+                placeholder={t("cowork.smtpHost")}
+                value={draft.smtp?.host || ""}
+                onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, host: e.target.value } })}
+              />
+              <input
+                className="mem-input"
+                style={{ width: "80px" }}
+                placeholder={t("settings.portPlaceholder")}
+                type="number"
+                value={draft.smtp?.port || ""}
+                onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, port: parseInt(e.target.value, 10) || 0 } })}
+              />
+            </div>
+            <input
+              className="mem-input set-grow"
+              style={{ marginBottom: "8px" }}
+              placeholder={t("cowork.smtpFrom")}
+              value={draft.smtp?.from || ""}
+              onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, from: e.target.value } })}
             />
-            <input 
-              className="mem-input" 
-              style={{ width: "80px" }}
-              placeholder="Port" 
-              type="number"
-              value={draft.imap?.port || ""} 
-              onChange={e => setDraft({ ...draft, imap: { ...draft.imap!, port: parseInt(e.target.value, 10) || 0 } })} 
+            <input
+              className="mem-input set-grow"
+              style={{ marginBottom: "8px" }}
+              placeholder={t("cowork.smtpUser")}
+              value={draft.smtp?.username || ""}
+              onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, username: e.target.value } })}
             />
-          </div>
-          <input 
-            className="mem-input set-grow" 
-            style={{ marginBottom: "8px" }}
-            placeholder={t("cowork.imapUser")} 
-            value={draft.imap?.username || ""} 
-            onChange={e => setDraft({ ...draft, imap: { ...draft.imap!, username: e.target.value } })} 
-          />
-          <input 
-            className="mem-input set-grow" 
-            type="password"
-            placeholder={t("cowork.imapPass")} 
-            value={draft.imapPassword || ""} 
-            onChange={e => setDraft({ ...draft, imapPassword: e.target.value })} 
-          />
-        </SettingsField>
+            <input
+              className="mem-input set-grow"
+              style={{ marginBottom: "8px" }}
+              type="password"
+              placeholder={t("cowork.smtpPass")}
+              value={draft.smtpPassword || ""}
+              onChange={e => setDraft({ ...draft, smtpPassword: e.target.value })}
+            />
+            <div className="set-seg">
+              {(() => {
+                const mode = draft.smtp?.encryptionMode || (draft.smtp?.useTLS ? "tls" : "starttls");
+                const setMode = (m: string) => setDraft({ ...draft, smtp: { ...draft.smtp!, encryptionMode: m, useTLS: m === "tls" } });
+                return (
+                  <>
+                    <button className={`set-seg__btn${mode === "tls" ? " set-seg__btn--on" : ""}`} onClick={() => setMode("tls")}>
+                      {t("settings.encryptionTls")}
+                    </button>
+                    <button className={`set-seg__btn${mode === "starttls" ? " set-seg__btn--on" : ""}`} onClick={() => setMode("starttls")}>
+                      {t("settings.encryptionStarttls")}
+                    </button>
+                    <button className={`set-seg__btn${mode === "none" ? " set-seg__btn--on" : ""}`} onClick={() => setMode("none")}>
+                      {t("settings.encryptionNone")}
+                    </button>
+                  </>
+                );
+              })()}
+            </div>
+          </SettingsField>
+        </OptionalModule>
 
-        <SettingsField label={t("cowork.rag")} hint={t("cowork.ragHint")} stacked>
-          <input 
-            className="mem-input set-grow" 
-            placeholder={t("cowork.ragModel")} 
-            value={draft.embeddingModel} 
-            onChange={e => setDraft({ ...draft, embeddingModel: e.target.value })} 
-          />
-        </SettingsField>
+        {/* ── 邮件接收（IMAP）── */}
+        <OptionalModule title={t("cowork.imap")} description={t("cowork.imapModDesc")} enabled={imapOn} onToggle={toggleImap}>
+          <SettingsField label={t("cowork.imap")} stacked>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+              <input
+                className="mem-input set-grow"
+                placeholder={t("cowork.imapHost")}
+                value={draft.imap?.host || ""}
+                onChange={e => setDraft({ ...draft, imap: { ...draft.imap!, host: e.target.value } })}
+              />
+              <input
+                className="mem-input"
+                style={{ width: "80px" }}
+                placeholder={t("settings.portPlaceholder")}
+                type="number"
+                value={draft.imap?.port || ""}
+                onChange={e => setDraft({ ...draft, imap: { ...draft.imap!, port: parseInt(e.target.value, 10) || 0 } })}
+              />
+            </div>
+            <input
+              className="mem-input set-grow"
+              style={{ marginBottom: "8px" }}
+              placeholder={t("cowork.imapUser")}
+              value={draft.imap?.username || ""}
+              onChange={e => setDraft({ ...draft, imap: { ...draft.imap!, username: e.target.value } })}
+            />
+            <input
+              className="mem-input set-grow"
+              type="password"
+              placeholder={t("cowork.imapPass")}
+              value={draft.imapPassword || ""}
+              onChange={e => setDraft({ ...draft, imapPassword: e.target.value })}
+            />
+          </SettingsField>
+        </OptionalModule>
+
+        {/* ── RAG 语义检索 ── */}
+        <OptionalModule title={t("cowork.rag")} description={t("cowork.ragModDesc")} enabled={ragOn} onToggle={toggleRag}>
+          <SettingsField label={t("cowork.rag")} hint={t("cowork.ragHint")} stacked>
+            <input
+              className="mem-input set-grow"
+              placeholder={t("cowork.ragModel")}
+              value={draft.embeddingModel}
+              onChange={e => setDraft({ ...draft, embeddingModel: e.target.value })}
+            />
+          </SettingsField>
+        </OptionalModule>
+
       </SettingsSection>
 
       {/* --- 快捷截屏（全局热键 → VLM 识别 → IM 回复） --- */}
-      <SettingsSection title="快捷截屏">
-        <SettingsField label="启用快捷截屏" hint="开启后，按快捷键（任意应用前台）截屏 → AI 识别 → 结果发 IM + 弹窗。默认关闭。">
+      <SettingsSection title={t("settings.screenshotTitle")}>
+        <SettingsField label={t("settings.screenshotEnableLabel")} hint={t("settings.screenshotEnableHint")}>
           <label className="settings-toggle">
             <input
               type="checkbox"
               checked={draft.screenshotEnabled ?? false}
               onChange={e => setDraft({ ...draft, screenshotEnabled: e.target.checked })}
             />
-            <span>{(draft.screenshotEnabled ?? false) ? "已开启" : "未开启"}</span>
+            <span>{(draft.screenshotEnabled ?? false) ? t("settings.toggleOn") : t("settings.toggleOff")}</span>
           </label>
         </SettingsField>
-        <SettingsField label="快捷键" hint='组合键，如 Ctrl+Shift+S。修改后保存并重启生效。'>
-          <input
-            className="mem-input"
-            value={draft.screenshotHotkey ?? "Ctrl+Shift+S"}
-            onChange={e => setDraft({ ...draft, screenshotHotkey: e.target.value })}
-            placeholder="Ctrl+Shift+S"
-          />
+        <SettingsField label={t("settings.screenshotHotkeyLabel")} hint={t("settings.screenshotHotkeyHint")}>
+          <div className="set-input-browse">
+            <input
+              className="mem-input"
+              value={recordingHotkey ? t("settings.hotkeyRecord") : (draft.screenshotHotkey ?? "Ctrl+Shift+S")}
+              readOnly={recordingHotkey}
+              placeholder="Ctrl+Shift+S"
+              onKeyDown={(e) => {
+                if (!recordingHotkey) return;
+                const modKeys = ["Control", "Alt", "Shift", "Meta"];
+                if (modKeys.includes(e.key)) return;
+                e.preventDefault();
+                const parts: string[] = [];
+                if (e.ctrlKey) parts.push("Ctrl");
+                if (e.altKey) parts.push("Alt");
+                if (e.shiftKey) parts.push("Shift");
+                if (e.metaKey) parts.push(e.metaKey ? "Win" : "");
+                const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+                parts.push(key);
+                setDraft({ ...draft, screenshotHotkey: parts.filter(Boolean).join("+") });
+                setRecordingHotkey(false);
+              }}
+              onBlur={() => recordingHotkey && setRecordingHotkey(false)}
+              onChange={e => !recordingHotkey && setDraft({ ...draft, screenshotHotkey: e.target.value })}
+            />
+            <button
+              type="button"
+              className={"btn btn--small set-input-browse__btn" + (recordingHotkey ? " btn--primary" : "")}
+              onClick={() => setRecordingHotkey(!recordingHotkey)}
+            >
+              {recordingHotkey ? "Esc" : t("settings.hotkeyRecordBtn")}
+            </button>
+          </div>
         </SettingsField>
-        <SettingsField label="图片识别模型" hint="截屏识别用的多模态模型。默认 qwen/qwen3.6-27b（轻量快速），可选 qwen/qwen3.5-397b-a17b（更强但更慢）。">
+        <SettingsField label={t("settings.screenshotVlmLabel")} hint={t("settings.screenshotVlmHint")}>
           <select
             className="mem-input"
             value={draft.screenshotVlmModel ?? "qwen/qwen3.6-27b"}
             onChange={e => setDraft({ ...draft, screenshotVlmModel: e.target.value })}
           >
-            <option value="qwen/qwen3.6-27b">qwen/qwen3.6-27b（默认·轻量）</option>
-            <option value="qwen/qwen3.5-397b-a17b">qwen/qwen3.5-397b-a17b（强力）</option>
+            <option value="qwen/qwen3.6-27b">qwen/qwen3.6-27b — {t("settings.screenshotVlmLight")}</option>
+            <option value="qwen/qwen3.5-397b-a17b">qwen/qwen3.5-397b-a17b — {t("settings.screenshotVlmStrong")}</option>
           </select>
         </SettingsField>
 

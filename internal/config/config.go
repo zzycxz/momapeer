@@ -513,7 +513,23 @@ type SMTPConfig struct {
 	From        string `toml:"from"`         // sender address, e.g. agent@example.com
 	Username    string `toml:"username"`     // SMTP auth username (often = From); empty = no auth
 	PasswordEnv string `toml:"password_env"` // env var holding the SMTP password (never stored)
-	UseTLS      bool   `toml:"use_tls"`      // implicit TLS (port 465); false = STARTTLS/plain
+	UseTLS      bool   `toml:"use_tls"`      // implicit TLS (port 465); false = STARTTLS/plain. DEPRECATED: use encryption_mode.
+	EncryptionMode string `toml:"encryption_mode"` // "tls" (implicit, 465) | "starttls" (587) | "none" (25). Empty → migrate from use_tls.
+}
+
+// normalizeSMTP migrates the deprecated use_tls bool onto encryption_mode and
+// validates the value. Called once after config load.
+func normalizeSMTP(c *SMTPConfig) {
+	switch strings.ToLower(strings.TrimSpace(c.EncryptionMode)) {
+	case "tls", "starttls", "none":
+		return // already canonical
+	}
+	// Migrate from legacy use_tls: true → tls, false → starttls.
+	if c.UseTLS {
+		c.EncryptionMode = "tls"
+	} else {
+		c.EncryptionMode = "starttls"
+	}
 }
 
 // BotAllowlist 控制哪些用户可以使用 bot。
@@ -592,7 +608,7 @@ type BotConnectionSessionMapping struct {
 }
 
 // NetworkConfig controls ordinary outbound HTTP traffic such as model providers,
-// wallet-balance lookups, updater checks, CodeGraph downloads, and web_fetch.
+// updater checks, CodeGraph downloads, and web_fetch.
 // web_fetch reuses these proxy settings while keeping its own SSRF-guarded
 // dialer.
 type NetworkConfig struct {
@@ -869,7 +885,6 @@ type ProviderEntry struct {
 	ModelsURL     string            `toml:"models_url"` // auto-fetch models from this URL on startup
 	Default       string            `toml:"default"`    // default model when Models is set (else Models[0])
 	APIKeyEnv     string            `toml:"api_key_env"`
-	BalanceURL    string            `toml:"balance_url"` // optional; a provider-specific wallet-balance endpoint (MoMA: https://api.jiutian.10086.cn/user/balance). Empty = no balance readout.
 	ContextWindow int               `toml:"context_window"`
 	Price         *provider.Pricing `toml:"price"`
 	// Thinking / Effort are provider-kind-specific knobs forwarded to the provider
@@ -1230,7 +1245,11 @@ func Default() *Config {
 			Feishu:     FeishuBotConfig{Domain: "feishu", AppSecretEnv: "FEISHU_BOT_APP_SECRET", Mode: "webhook", WebhookPort: 8080, RequireMention: true},
 			Weixin:     WeixinBotConfig{AccountID: "default", TokenEnv: "WEIXIN_BOT_TOKEN", APIBase: "https://ilinkai.weixin.qq.com"},
 		},
-		LLM:       LLMConfig{ReserveMain: 2},
+		// RPM default 5: MoMA's per-key rate limit is 5/min, so defaulting to
+		// 0 (unlimited) would let the agent burst past the quota and hit 429s.
+		// Users with higher tiers can raise this. ReserveMain=2 keeps requests
+		// in reserve for the main agent under concurrent load.
+		LLM:       LLMConfig{RPM: 5, ReserveMain: 2},
 		Providers: []ProviderEntry{
 			{Name: "moma", Kind: "openai", BaseURL: "https://jiutian.10086.cn/largemodel/moma/api/v3", Models: BuiltinMoMAModels, Default: "qwen/qwen3.6-35b", APIKeyEnv: "JIUTIAN_API_KEY", ContextWindow: 200_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},
 		},
@@ -1310,6 +1329,7 @@ func LoadForRoot(root string) (*Config, error) {
 	normalizeDesktopOfficialProviderAccess(cfg)
 	normalizeEffortConfig(cfg)
 	normalizeCoworkDefaults(cfg)
+	normalizeSMTP(&cfg.Cowork.SMTP)
 	// First run (no config file anywhere): keep CodeGraph off until the user opts
 	// in. An existing config — even one without a [codegraph] section — keeps the
 	// built-in default (on), so an upgrade never silently drops code intelligence.
