@@ -1011,8 +1011,8 @@ func fetchModelListCompat(ctx context.Context, baseURL, apiKey string) ([]string
 // first selected model if it would otherwise reference a model the user
 // didn't pick (or was empty).
 // buildFamilyEntries splits the user's selection back across the family's preset
-// members so each model keeps its own entry — and therefore its own pricing,
-// context window, and balance URL. A family like MoMA ships flash and pro as
+// members so each model keeps its own entry — and therefore its own pricing
+// and context window. A family like MoMA ships flash and pro as
 // separate presets with different prices; collapsing them into one entry would
 // bill pro at flash's rate. Models the live /models list returned that match no
 // preset (a new SKU) fall under the probe entry. Member order is preserved;

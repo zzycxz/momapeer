@@ -46,7 +46,6 @@ make test     # 运行完整的测试套件
 | `internal/bot` | 多通道 IM 机器人网关 (QQ, 飞书, 微信) |
 | `internal/acp` | 代理控制协议服务器 (Agent Control Protocol) |
 | `internal/lsp` | LSP 客户端集成 |
-| `internal/billing` | Token 消耗/余额追踪 |
 | `internal/codegraph` | CodeGraph 集成 (基于 tree-sitter 的代码智能) |
 | `internal/i18n` | 国际化 (en + zh) |
 | `internal/evidence` | 最终答案生成前的工具回执账本 |

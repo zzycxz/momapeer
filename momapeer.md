@@ -65,7 +65,6 @@ momapeer 是一个基于 Go 语言构建的、配置驱动的 AI 编程智能体
 | `internal/bot` | 多通道 IM Bot（QQ / 飞书 / 微信） |
 | `internal/acp` | Agent Control Protocol 服务端 |
 | `internal/lsp` | LSP 客户端集成 |
-| `internal/billing` | Token 计费 / 余额追踪 |
 | `internal/codegraph` | CodeGraph（tree-sitter 代码智能） |
 | `internal/i18n` | 国际化（en + zh） |
 | `internal/evidence` | 工具收据账本（最终答案就绪判断） |

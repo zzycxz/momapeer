@@ -640,7 +640,7 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	// Recompute the wrapped status-line count so bottomRows reserves the right
 	// height for the viewport. The data-line tags (model, git, effort, context,
-	// cache, jobs, balance) are the ones most likely to wrap on a narrow terminal.
+	// cache, jobs) are the ones most likely to wrap on a narrow terminal.
 	cm.statusLineCount = cm.computeStatusLineCount(contentW)
 	cm.viewport.SetWidth(contentW)
 	// Recompute the wrapped status-line count so bottomRows reserves the right
@@ -2218,7 +2218,7 @@ func (m chatTUI) View() tea.View {
 		}
 	}
 	// Second status row: the live data (model, git, effort, context gauge, cache
-	// rates, jobs, balance). It lives on its own row so it's always visible; if it
+	// rates, jobs). It lives on its own row so it's always visible; if it
 	// exceeds the terminal width it wraps to additional rows instead of being
 	// truncated. Wrapping is safe in the alt-screen view — there's no scrollback
 	// to strand — and computeStatusLineCount reserves the correct height.
