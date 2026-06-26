@@ -4987,9 +4987,9 @@ func parseScope(s string) memory.Scope {
 const onboardingKeyEnv = "JIUTIAN_API_KEY"
 
 // probeProviderKey validates an API key by hitting the provider's /models endpoint.
-// This is a lightweight connectivity + auth check used during onboarding when the
-// provider has no balance API. The baseURL is read from the default config so it
-// adapts to whatever provider is actually configured.
+// This is a lightweight connectivity + auth check used during onboarding.
+// The baseURL is read from the default config so it adapts to whatever
+// provider is actually configured.
 func probeProviderKey(ctx context.Context, apiKey string) error {
 	cfg, err := config.Load()
 	if err != nil {

@@ -397,7 +397,6 @@ export const en = {
   "status.cacheTitle": "Prompt cache hit rate when reported by the provider; MoMA currently does not report cache tokens, so this shows -",
   "status.cacheAvgLabel": "avg cache",
   "status.cacheAvgTitle": "Session-average prompt cache hit rate when reported by the provider; MoMA currently does not report cache tokens, so this shows -",
-  "status.balanceLabel": "balance",
   "status.jobsLabel": "jobs",
   "status.plan": "PLAN",
   "status.switchModel": "Switch model",

@@ -11,7 +11,6 @@ import { t } from "./i18n";
 import { modeWithAutoApproveTools, modeWithPlan, normalizeCollaborationMode, normalizeMode, normalizeToolApprovalMode } from "./types";
 
 import type {
-  BalanceInfo,
   BotConnectionDiagnostic,
   BotInstallPollResult,
   BotInstallStartResult,
@@ -157,8 +156,6 @@ export interface AppBindings {
   RemoveWorkspace(path: string): Promise<void>;
   ContextUsage(): Promise<ContextInfo>;
   ContextUsageForTab(tabID: string): Promise<ContextInfo>;
-  Balance(): Promise<BalanceInfo>;
-  BalanceForTab(tabID: string): Promise<BalanceInfo>;
   Jobs(): Promise<JobView[]>;
   JobsForTab(tabID: string): Promise<JobView[]>;
   Meta(): Promise<Meta>;
@@ -1864,12 +1861,6 @@ function makeMockApp(): AppBindings {
         async ContextUsageForTab() {
           return this.ContextUsage();
         },
-        async Balance() {
-          return { available: false, display: "" };
-        },
-        async BalanceForTab() {
-          return this.Balance();
-        },
         async Jobs() {
           return []; // browser dev mock has no background jobs
         },
@@ -3036,9 +3027,6 @@ function makeMockApp(): AppBindings {
         cacheMissTokens: 0,
         requestCount: 6,
         elapsedMs: 33 * 60 * 1000,
-        sessionCost: 0.018,
-        sessionCurrency: "¥",
-        sessionCostUsd: 0.018,
         mock: true,
         readFiles: [
           { path: "README.md", turn: 2, time: now - 34 * 60 * 1000 },

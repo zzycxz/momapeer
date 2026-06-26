@@ -210,7 +210,7 @@ func TestStatusLineWrapAccounting(t *testing.T) {
 	m.state = tuiIdle
 	m.pendingInterject = nil
 	m.statuslineCmd = "custom"
-	m.statuslineOut = "model: claude-3 · ctx: 45% · tokens: 128K · cache: 87% · rate: 1.2s · jobs: 3 running · balance: ¥152.30"
+	m.statuslineOut = "model: claude-3 · ctx: 45% · tokens: 128K · cache: 87% · rate: 1.2s · jobs: 3 running"
 	m0, _ = m.Update(tea.WindowSizeMsg{Width: 35, Height: 12})
 	m = m0.(chatTUI)
 	if m.statusLineCount <= 2 {

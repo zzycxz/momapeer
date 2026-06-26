@@ -207,6 +207,10 @@
     "Segoe UI", Roboto, sans-serif;
 }
 
+button {
+  cursor: pointer;
+}
+
 :root[data-font-family="noto"] {
   --sans: "Noto Sans SC", "Noto Sans", "PingFang SC",
     "Microsoft YaHei", -apple-system, BlinkMacSystemFont,
@@ -4903,26 +4907,16 @@ a[href] {
   color: var(--danger);
   font-weight: 700;
 }
-.statusbar__cost b,
-.statusbar__balance b {
-  color: var(--ok);
-}
 .statusbar__compact b.statusbar__compact-value--warn {
   color: var(--warn);
 }
 .statusbar__compact b.statusbar__compact-value--critical {
   color: var(--danger);
 }
-.statusbar__cost {
-  justify-content: flex-start;
-}
 .stat--jobs,
 .statusbar__jobswrap {
   flex: 0 0 auto;
   justify-content: center;
-}
-.statusbar__balance {
-  justify-content: flex-start;
 }
 .statusbar__jobswrap {
   position: relative;
@@ -9697,6 +9691,62 @@ a[href] {
   white-space: nowrap;
 }
 
+/* ── optional module card (cowork settings) ─────────────────────────── */
+.optional-module {
+  margin-bottom: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+
+.optional-module:last-child {
+  margin-bottom: 0;
+}
+
+.optional-module--enabled {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--bg-elev-2) 50%, var(--bg-elev));
+}
+
+.optional-module__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.optional-module__copy {
+  min-width: 0;
+}
+
+.optional-module__title {
+  font-size: var(--font-control-small);
+  font-weight: 650;
+  color: var(--fg);
+}
+
+.optional-module__desc {
+  margin-top: 2px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  line-height: 1.4;
+}
+
+.optional-module__body {
+  padding: 0 14px 14px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.optional-module__body .settings-field {
+  padding: 10px 0;
+}
+
+.optional-module__body .settings-field:first-child {
+  padding-top: 8px;
+}
+
 .settings-field__control {
   min-width: 0;
   display: flex;
@@ -10308,7 +10358,10 @@ a[href] {
 }
 .provider-access-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  /* Wide screens show 2+ columns of provider cards; narrow screens fall back
+     to a single column. auto-fill keeps cards ≥360px so they don't get
+     cramped, while avoiding a lonely second column. */
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
   gap: 12px;
 }
 .provider-add-panel {
@@ -10895,6 +10948,29 @@ a[href] {
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 650;
+}
+
+/* Provider base_url one-click presets row (batch 2 UX: 填空题→选择题). */
+.provider-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.provider-presets__btn {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+/* "input + Browse button" combo for path fields (sandbox workspace_root, etc.)
+   so users pick a folder instead of hand-typing a path. */
+.set-input-browse {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.set-input-browse__btn {
+  flex-shrink: 0;
 }
 .bot-channel-grid {
   display: grid;
@@ -16343,11 +16419,6 @@ a[href] {
   background: var(--accent-3, var(--ok));
 }
 
-.statusbar__balance,
-.statusbar__cost {
-  color: var(--ok);
-}
-
 .workspace-panel-resizer::after {
   background: var(--border-soft);
 }
@@ -17792,11 +17863,6 @@ a[href] {
 :root[data-theme-style] .statusbar__cache b,
 :root[data-theme-style] .statusbar__plan {
   color: var(--accent);
-}
-
-:root[data-theme-style] .statusbar__cost b,
-:root[data-theme-style] .statusbar__balance b {
-  color: var(--ok);
 }
 
 :root[data-theme-style] .statusbar .stat b.stat__value--empty {
@@ -20177,4 +20243,104 @@ a[href] {
 .app-chrome__profile-label {
   white-space: nowrap;
 }
+.app-chrome__profile-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok, #22c55e);
+  margin-right: 5px;
+  flex-shrink: 0;
+}
+.app-chrome__profile-toggle--cowork .app-chrome__profile-dot {
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3);
+}
 
+
+/* === Keyboard shortcuts cheatsheet (Shift+?) + combo display === */
+/* Reuses .drawer / .drawer--wide / .drawer-backdrop from the shared drawer
+   system; these classes only add the cheatsheet-specific layout (section
+   groups, key-cap rows) and the kbd styling for the combo segments. */
+.shortcuts-cheatsheet__body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.shortcuts-cheatsheet__section h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-faint, #858b96);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.shortcuts-cheatsheet__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.shortcuts-cheatsheet__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+.shortcuts-cheatsheet__row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.shortcuts-cheatsheet__row strong {
+  font-size: 13.5px;
+  font-weight: 550;
+  color: var(--fg);
+}
+.shortcuts-cheatsheet__desc {
+  font-size: 12px;
+  color: var(--fg-faint, #858b96);
+  line-height: 1.4;
+}
+
+/* Key-cap combo segments. kbd inside the cheatsheet gets a pressed-button
+   look; the generic .shortcut-combo works inline anywhere. */
+.shortcut-combo {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.shortcut-combo__part {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--border-soft, rgba(128, 128, 128, 0.3));
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--bg-elev, var(--bg));
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--fg);
+}
+.shortcut-combo__separator {
+  font-size: 11px;
+  color: var(--fg-faint, #858b96);
+}
+
+/* "System-level" badge for displayOnly shortcuts (e.g. screenshot hotkey
+   registered via Win32 RegisterHotKey, not the frontend keymap). */
+.shortcuts-cheatsheet__badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  vertical-align: middle;
+  color: var(--accent, #d97757);
+  background: var(--accent-soft, rgba(217, 119, 87, 0.14));
+}

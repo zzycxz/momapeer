@@ -68,14 +68,14 @@ func TestStreamRetriesThenSucceeds(t *testing.T) {
 	}
 }
 
-// TestStreamInsufficientBalance verifies a 402 fails fast (no retry) as a typed
-// *provider.APIError carrying the status, so the display layer can explain it.
-func TestStreamInsufficientBalance(t *testing.T) {
+// TestStreamPaymentRequired verifies a 402 fails fast (no retry) as a typed
+// *provider.APIError carrying the status.
+func TestStreamPaymentRequired(t *testing.T) {
 	var reqs int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqs++
 		w.WriteHeader(http.StatusPaymentRequired)
-		_, _ = w.Write([]byte(`{"error":"Insufficient Balance"}`))
+		_, _ = w.Write([]byte(`{"error":"payment required"}`))
 	}))
 	defer srv.Close()
 

@@ -397,7 +397,6 @@ export const zh: Record<DictKey, string> = {
   "status.cacheTitle": "Provider 返回时的 prompt cache 命中率；MoMA 当前不返回 cache token，因此显示为 -",
   "status.cacheAvgLabel": "平均缓存",
   "status.cacheAvgTitle": "Provider 返回时的会话平均 prompt cache 命中率；MoMA 当前不返回 cache token，因此显示为 -",
-  "status.balanceLabel": "余额",
   "status.jobsLabel": "任务",
   "status.plan": "计划",
   "status.switchModel": "切换模型",

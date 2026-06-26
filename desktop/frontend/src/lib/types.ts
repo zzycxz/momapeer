@@ -782,15 +782,6 @@ export interface ProviderView {
   defaultEffort: string; // /effort level when user picks "auto" or unset; "" = supportedEfforts[0]
 }
 
-// BalanceInfo is the wallet-balance readout (desktop/app.go Balance). kept in
-// the type file only so the bridge contract (AppBindings) compiles; the frontend
-// no longer displays it.
-export interface BalanceInfo {
-  available: boolean;
-  display: string;
-  err?: string;
-}
-
 // JobView is one running background job (desktop/app.go Jobs) for the status bar.
 export interface JobView {
   id: string;
