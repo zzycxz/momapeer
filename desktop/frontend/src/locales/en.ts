@@ -1286,7 +1286,7 @@ export const en = {
   "onboarding.getKey": "How do I get a key?",
   "onboarding.privacy": "Stored only in this app's local credentials",
   "onboarding.error.empty": "Please paste a key first.",
-  "onboarding.error.invalid": "That key didn't work — double-check it's active and has billing set up.",
+  "onboarding.error.invalid": "That key didn't work — double-check it's active and has API access enabled.",
   "onboarding.error.network": "Couldn't reach MoMA (九天) — check your network and try again.",
   "onboarding.error.unknown": "Something went wrong: {msg}",
   "onboarding.skip": "Skip for now",

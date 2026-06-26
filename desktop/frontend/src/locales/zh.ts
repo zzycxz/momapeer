@@ -1287,7 +1287,7 @@ export const zh: Record<DictKey, string> = {
   "onboarding.getKey": "如何获取 API key？",
   "onboarding.privacy": "仅保存在本应用的本地凭据文件",
   "onboarding.error.empty": "请先粘贴密钥。",
-  "onboarding.error.invalid": "这个 key 无法使用 —— 检查一下是否已激活、是否开通了计费。",
+  "onboarding.error.invalid": "这个 key 无法使用 —— 检查一下是否已激活、是否有 API 访问权限。",
   "onboarding.error.network": "无法连接 MoMA（九天）—— 检查网络后再试。",
   "onboarding.error.unknown": "出错啦：{msg}",
   "onboarding.skip": "稍后设置",
