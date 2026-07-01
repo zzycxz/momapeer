@@ -18,15 +18,38 @@ type Runner interface {
 }
 
 // DefaultPlannerPrompt steers the planner toward concise plans, not execution.
-const DefaultPlannerPrompt = `You are the planner in a two-model coding agent.
-Given a task, produce a concise, ordered plan for the executor model to carry out.
-Use the read-only tools available to you when the task needs context from the
-workspace, user rules, or docs; keep that research targeted and stop once you
-have enough evidence. Do not write full implementations or attempt side effects.
-Do not ask the user how to trigger the executor and do not say you are waiting
-for the executor. Output executor-ready instructions: what to do, which files or
-commands are relevant, expected blockers, and key decisions. Keep it short and
-actionable.`
+const DefaultPlannerPrompt = `You are the PLANNER in a two-model agent. Your ONLY job is to produce a step-by-step plan. You MUST NOT execute any actions.
+
+RULES:
+1. You may ONLY use read-only tools (screenshot, screen_perceive, get_ui_tree, read_file, grep) to gather context.
+2. You MUST NOT call any action tools (bash, screen_click, screen_type, screen_key, window_focus, write_file, edit_file). They are NOT available to you.
+3. Output a numbered, step-by-step plan. Each step must specify:
+   - The exact tool to call (e.g. "screen_type", "screen_key", "window_focus")
+   - The exact arguments (e.g. {"text": "CUA测试成功"}, {"keys": "ctrl+s"})
+   - The expected result (e.g. "文字出现在记事本中")
+   - How to verify success (e.g. "截图确认文字显示")
+4. For desktop tasks (CUA), include these details in your plan:
+   - Before typing in a save dialog, ALWAYS include a step to press Ctrl+A to select all existing text first
+   - Use FULL file paths (e.g. "C:\\Users\\13852\\Desktop\\file.txt") not relative paths
+   - After each critical action, include a verification step (screenshot or file check)
+   - If the target window might be behind other windows, include a window_focus step first
+5. Keep the plan concise (5-10 steps). Do NOT explain reasoning.
+6. End your plan with "## Plan complete. Executor: proceed with the above steps."
+
+EXAMPLE output for "save text to desktop":
+1. window_focus {"title": "Notepad"} — focus the notepad window
+2. window_maximize {"title": "Notepad"} — ensure full visibility
+3. screen_click {"x": 960, "y": 400} — click the edit area
+4. screen_type {"text": "CUA测试成功"} — type the text
+5. screenshot {} — verify text appears
+6. screen_key {"keys": "ctrl+s"} — open save dialog
+7. screenshot {} — verify save dialog appeared
+8. screen_key {"keys": "ctrl+a"} — select existing filename
+9. screen_type {"text": "C:\\Users\\13852\\Desktop\\cua-test.txt"} — enter full path
+10. screen_key {"keys": "enter"} — confirm save
+11. bash {"command": "cat C:\\Users\\13852\\Desktop\\cua-test.txt"} — verify file content
+
+## Plan complete. Executor: proceed with the above steps.`
 
 const executorHandoffMarker = "momapeer executor handoff"
 
@@ -57,6 +80,13 @@ type Coordinator struct {
 	// trivial, non-work turn (a question, a greeting) skip straight to the
 	// executor instead of paying a planner round on it.
 	shouldPlan func(string) bool
+	// verify, when non-nil, runs a post-execution verification pass (e.g. go
+	// test/build for a coding workspace) and retries on failure. nil keeps the
+	// original plan->exec behaviour unchanged.
+	verify verifyOptions
+	// workspaceRoot is the directory verify runs in (the project root). Empty
+	// disables verify regardless of the verify field.
+	workspaceRoot string
 }
 
 // NewCoordinator wires a planner provider (with its own session) to an executor.
@@ -88,13 +118,25 @@ func NewCoordinator(planner provider.Provider, plannerSession *Session, plannerP
 	}
 }
 
-// Run plans with the planner model, then hands the plan to the executor.
+// SetVerify installs an optional post-execution verify + retry stage. verifier
+// is profile-specific (DevVerifier for coding, a screenshot verifier for
+// desktop); maxRetries bounds the debug loop (0 = verify once, no retry).
+// workspaceRoot is where verification commands run. A nil verifier or empty
+// workspaceRoot disables the stage, so callers can wire this unconditionally.
+func (c *Coordinator) SetVerify(verifier Verifier, maxRetries int, workspaceRoot string) {
+	c.verify = verifyOptions{Verifier: verifier, MaxRetries: maxRetries}
+	c.workspaceRoot = workspaceRoot
+}
+
+// Run plans with the planner model, then hands the plan to the executor. When a
+// verifier is configured (SetVerify), the executor's changes are checked after
+// it finishes and, on failure, retried for a bounded number of debug rounds.
 func (c *Coordinator) Run(ctx context.Context, input any) error {
 	c.sink.Emit(event.Event{Kind: event.TurnStarted})
 	textInput := provider.ContentString(input)
 	if c.shouldPlan != nil && !c.shouldPlan(textInput) {
 		c.sink.Emit(event.Event{Kind: event.Phase, Text: c.executor.prov.Name() + " · executing"})
-		return c.executor.Run(ctx, input)
+		return c.executeThenVerify(ctx, input)
 	}
 	c.sink.Emit(event.Event{Kind: event.Phase, Text: c.planner.Name() + " · planning"})
 	plan, err := c.plan(ctx, textInput)
@@ -102,7 +144,17 @@ func (c *Coordinator) Run(ctx context.Context, input any) error {
 		return fmt.Errorf("planner: %w", err)
 	}
 	c.sink.Emit(event.Event{Kind: event.Phase, Text: c.executor.prov.Name() + " · executing"})
-	return c.executor.Run(ctx, formatHandoff(textInput, plan))
+	return c.executeThenVerify(ctx, formatHandoff(textInput, plan))
+}
+
+// executeThenVerify runs the executor and, when a verifier is wired, follows it
+// with the verify + retry stage. With no verifier it is just executor.Run, so
+// the original single-pass behaviour is preserved byte-for-byte.
+func (c *Coordinator) executeThenVerify(ctx context.Context, input any) error {
+	if err := c.executor.Run(ctx, input); err != nil {
+		return err
+	}
+	return c.verifyAndRetry(ctx, c.verify, c.workspaceRoot)
 }
 
 // plan streams a plan from the planner and appends it to the planner session, so

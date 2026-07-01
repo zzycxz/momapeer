@@ -420,15 +420,25 @@ type BotConfig struct {
 // surfaces a clear error guiding them to fill [cowork] browser_path.
 type CoworkConfig struct {
 	BrowserPath string `toml:"browser_path"` // absolute path to a Chromium-based browser exe; empty = auto-detect
-	// WPSPPTServerPath points at the wps-ppt-mcp-server's server.py. When set,
-	// cowork registers a "wps-ppt" MCP server (PPT generation via WPS COM).
-	// Empty disables the PPT capability (the rest of cowork still works).
-	// The server needs Python + fastmcp + pywin32 installed (see cowork.WPSPPTEntry).
-	WPSPPTServerPath string `toml:"wps_ppt_server_path"`
-	// WPSPPTPython overrides the python executable used to launch the server
-	// (default: "python" on PATH). Set when your fastmcp/pywin32 live in a
-	// specific interpreter.
-	WPSPPTPython string `toml:"wps_ppt_python"`
+	// BrowserHeadless controls whether the driven browser runs headless. Default
+	// false (headed/visible) — a visible browser behaves closer to a human user,
+	// keeps login state in a persistent profile, and avoids the rendering
+	// quirks headless has on JS-heavy/anti-bot sites (e.g. GitHub's challenge
+	// page). Set true for servers/CI where there is no display.
+	BrowserHeadless bool `toml:"browser_headless"`
+	// BrowserUserDataDir gives the driven browser a persistent user-data
+	// directory. Empty = a fresh temp profile per launch (state is lost on
+	// restart). Set to a fixed path to keep cookies/login across sessions —
+	// essential for sites that require sign-in, and it reduces the "verify you
+	// are human" friction on revisit.
+	BrowserUserDataDir string `toml:"browser_user_data_dir"`
+	// PPTActiveTemplate is the id of the active PPT template (from the templates
+	// dir <user-config>/momapeer/ppt-templates/<id>.json). When set, the ppt-wizard
+	// skill generates decks from that template: it opens the template's master_file
+	// in WPS (if any) and places content at the template's pre-defined layout
+	// coordinates, so most slides don't need per-step VLM perception. Empty = no
+	// template, the CUA builds from a blank deck.
+	PPTActiveTemplate string `toml:"ppt_active_template"`
 	// SMTP configures outbound email (email_send). All fields required to enable
 	// sending; empty SMTPHost disables email_send (it returns a config error).
 	SMTP SMTPConfig `toml:"smtp"`
@@ -449,6 +459,12 @@ type CoworkConfig struct {
 	// return "not configured". Reading uses go-imap + go-message (protocol-level
 	// correct: full SEARCH, RFC 2047 header decoding, multipart MIME).
 	IMAP IMAPConfig `toml:"imap"`
+	// EmailAccounts holds the mailboxes MoMAPeer can talk to. At load time
+	// normalizeEmailAccounts folds the legacy single [cowork.smtp]/[cowork.imap]
+	// pair above into EmailAccounts[0] when this slice is empty, so existing
+	// single-account configs keep working unchanged; new configs may use either
+	// form. Tools select an account by Name; Default (or [0]) is the fallback.
+	EmailAccounts []EmailAccount `toml:"email_accounts"`
 	// ExtractModel is the LLM used by the RAG deep-extraction pipeline (turns
 	// imported documents into a structured entity/relation graph). Empty = fall
 	// back to the active profile's main model. Pair with ExtractInterval /
@@ -478,6 +494,14 @@ type CoworkConfig struct {
 	// 397b-a17b". This is the SINGLE place all image-recognition config lives
 	// — set it once in the cowork settings page.
 	ScreenshotVLMModel string `toml:"screenshot_vlm_model"`
+
+	// EStopHotkey is the global EMERGENCY-STOP hotkey for coWork desktop
+	// automation. Pressing it anywhere (even with MoMAPeer minimized) cancels
+	// the in-flight turn on the active tab — the kill switch for screen_* tools,
+	// whose clicks/typing are irreversible. Registered via Win32 RegisterHotKey
+	// like the screenshot hotkey. Default "Ctrl+Shift+Pause". Set to "off" to
+	// disable the feature entirely.
+	EStopHotkey string `toml:"estop_hotkey"`
 }
 
 // LLMConfig holds the global LLM request budget (rate limiting). It applies
@@ -517,6 +541,18 @@ type SMTPConfig struct {
 	EncryptionMode string `toml:"encryption_mode"` // "tls" (implicit, 465) | "starttls" (587) | "none" (25). Empty → migrate from use_tls.
 }
 
+// EmailAccount bundles one mailbox's inbound (IMAP) and outbound (SMTP) settings
+// under a user-chosen name, so MoMAPeer can talk to multiple mailboxes at once
+// (e.g. a personal 139 box and a work CMCC box). Tools/scheduler select an
+// account by Name; the one flagged Default (or else the first) is used when the
+// caller omits a name.
+type EmailAccount struct {
+	Name    string     `toml:"name"`    // stable handle tools/scheduler address (e.g. "personal-139")
+	Default bool       `toml:"default"` // used when a tool omits an account name
+	SMTP    SMTPConfig `toml:"smtp"`
+	IMAP    IMAPConfig `toml:"imap"`
+}
+
 // normalizeSMTP migrates the deprecated use_tls bool onto encryption_mode and
 // validates the value. Called once after config load.
 func normalizeSMTP(c *SMTPConfig) {
@@ -530,6 +566,82 @@ func normalizeSMTP(c *SMTPConfig) {
 	} else {
 		c.EncryptionMode = "starttls"
 	}
+}
+
+// normalizeEmailAccounts migrates the legacy single [cowork.smtp]/[cowork.imap]
+// pair into the EmailAccounts slice when the slice is empty, re-runs per-account
+// SMTP normalization (encryption_mode migration), and ensures exactly one
+// account is flagged Default. It then mirrors the default account back onto the
+// single SMTP/IMAP fields, so older code paths that still read cfg.Cowork.SMTP /
+// cfg.Cowork.IMAP (e.g. the desktop settings panel) keep seeing the active
+// mailbox. Existing multi-account configs are left intact apart from this.
+func normalizeEmailAccounts(c *CoworkConfig) {
+	for i := range c.EmailAccounts {
+		normalizeSMTP(&c.EmailAccounts[i].SMTP)
+	}
+	if len(c.EmailAccounts) == 0 {
+		// Fold the legacy single pair into a one-element account when either
+		// side is configured. Name "primary" for a stable handle; mark Default.
+		if strings.TrimSpace(c.SMTP.Host) != "" || strings.TrimSpace(c.IMAP.Host) != "" {
+			c.EmailAccounts = []EmailAccount{{
+				Name:    "primary",
+				Default: true,
+				SMTP:    c.SMTP,
+				IMAP:    c.IMAP,
+			}}
+		}
+		return
+	}
+	// Ensure exactly one Default: flag the first Default found, clear the rest;
+	// if none is flagged, flag the first account.
+	seenDefault := false
+	for i := range c.EmailAccounts {
+		if c.EmailAccounts[i].Default {
+			if seenDefault {
+				c.EmailAccounts[i].Default = false
+			} else {
+				seenDefault = true
+			}
+		}
+	}
+	if !seenDefault {
+		c.EmailAccounts[0].Default = true
+	}
+	// Keep the legacy single fields in sync with the default account.
+	if a, ok := c.DefaultEmailAccount(); ok {
+		c.SMTP = a.SMTP
+		c.IMAP = a.IMAP
+	}
+}
+
+// DefaultEmailAccount returns the account to use when no name is given: the one
+// flagged Default, else the first, else a zero account with ok=false.
+func (c CoworkConfig) DefaultEmailAccount() (EmailAccount, bool) {
+	for _, a := range c.EmailAccounts {
+		if a.Default {
+			return a, true
+		}
+	}
+	if len(c.EmailAccounts) > 0 {
+		return c.EmailAccounts[0], true
+	}
+	return EmailAccount{}, false
+}
+
+// EmailAccountByName returns the account whose Name matches (case-insensitive),
+// or the default account when name is empty. ok=false when the name is non-empty
+// and unknown, or when there are no accounts at all.
+func (c CoworkConfig) EmailAccountByName(name string) (EmailAccount, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return c.DefaultEmailAccount()
+	}
+	for _, a := range c.EmailAccounts {
+		if strings.EqualFold(a.Name, name) {
+			return a, true
+		}
+	}
+	return EmailAccount{}, false
 }
 
 // BotAllowlist 控制哪些用户可以使用 bot。
@@ -867,6 +979,16 @@ type AgentConfig struct {
 	// AutoPlanClassifier optionally names a provider/model used to classify
 	// borderline auto-plan decisions. Empty keeps the zero-cost heuristic path.
 	AutoPlanClassifier string `toml:"auto_plan_classifier"`
+	// Verify enables an optional post-execution verification stage on the
+	// planner-executor Coordinator: after the executor finishes, run the
+	// workspace's verification commands (go vet/build/test for a Go project)
+	// and, on failure, hand the failures back to the executor for a bounded
+	// number of debug retries. "off" (the default) keeps the original
+	// plan->exec single-pass behaviour; "on" enables it.
+	Verify string `toml:"verify"`
+	// VerifyMaxRetries bounds the debug loop after a failed verify (default 1).
+	// 0 = verify once with no retry. Only meaningful when Verify = "on".
+	VerifyMaxRetries int `toml:"verify_max_retries"`
 	// Compaction window fractions: soft = notice only, compact = trigger, force = hard ceiling.
 	SoftCompactRatio  float64 `toml:"soft_compact_ratio"`
 	CompactRatio      float64 `toml:"compact_ratio"`
@@ -1175,7 +1297,7 @@ var BuiltinMoMAModels = []string{
 	// DeepSeek
 	"deepseek/deepseek-v4-flash", "deepseek/deepseek-v32",
 	// 智谱
-	"z.ai/glm-5.1", "z.ai/glm-5",
+	"z.ai/glm-5.1", "z.ai/glm-5.2",
 	// MiniMax
 	"minimax/minimax-m2.7", "minimax/minimax-m2.5",
 	// 月之暗面
@@ -1330,6 +1452,8 @@ func LoadForRoot(root string) (*Config, error) {
 	normalizeEffortConfig(cfg)
 	normalizeCoworkDefaults(cfg)
 	normalizeSMTP(&cfg.Cowork.SMTP)
+	normalizeEmailAccounts(&cfg.Cowork)
+	normalizePermissionDefaults(&cfg.Permissions)
 	// First run (no config file anywhere): keep CodeGraph off until the user opts
 	// in. An existing config — even one without a [codegraph] section — keeps the
 	// built-in default (on), so an upgrade never silently drops code intelligence.
@@ -1360,15 +1484,70 @@ func normalizeLegacyEffort(c *Config) {
 
 // normalizeCoworkDefaults fills in cowork defaults that the user hasn't set.
 // ScreenshotVLMModel defaults to qwen/qwen3.6-27b (lightweight multimodal);
-// ScreenshotHotkey defaults to Ctrl+Shift+S. These are only applied when the
-// TOML didn't specify them (empty → default), so explicit user config always wins.
+// ScreenshotHotkey defaults to Ctrl+Shift+S; EStopHotkey defaults to
+// Ctrl+Shift+Pause. These are only applied when the TOML didn't specify them
+// (empty → default), so explicit user config always wins.
 func normalizeCoworkDefaults(c *Config) {
 	if strings.TrimSpace(c.Cowork.ScreenshotVLMModel) == "" {
-		c.Cowork.ScreenshotVLMModel = "qwen/qwen3.6-27b"
+		c.Cowork.ScreenshotVLMModel = "qwen/qwen3.5-397b-a17b"
 	}
 	if strings.TrimSpace(c.Cowork.ScreenshotHotkey) == "" {
 		c.Cowork.ScreenshotHotkey = "Ctrl+Shift+S"
 	}
+	if strings.TrimSpace(c.Cowork.EStopHotkey) == "" {
+		c.Cowork.EStopHotkey = "Ctrl+Shift+Pause"
+	}
+}
+
+// coworkDefaultAskRules are the coWork tools that always prompt for approval on
+// first use: email_send (irreversible, outward-facing — once sent it's gone) and
+// rag_delete (irreversible — a deleted knowledge base can't be restored). These
+// are the narrow HITL scope from the coWork Harness security plan: browser and
+// screen_* are intentionally NOT here (browser is reversible, screen_* has the
+// emergency-stop hotkey), so coWork stays usable while the genuinely dangerous
+// actions still ask. The user can approve-and-remember per session so it's not
+// repetitive, or remove these rules in config to go fully autonomous.
+var coworkDefaultAskRules = []string{"email_send", "rag_delete"}
+
+// normalizePermissionDefaults ensures the coWork irreversible-action ask rules
+// (email_send, rag_delete) are present. It ADDS any that are missing without
+// touching rules the user already configured, so:
+//   - A config with no [permissions] section gets the defaults.
+//   - A config with a custom ask list KEEPS those rules and gains the cowork
+//     ones it's missing.
+//   - A user who explicitly denies/allows email_send is respected (deny has
+//     higher precedence; an explicit allow rule is left as-is, but the ask is
+//     still added — precedence deny > ask > allow means a user allow alone
+//     would still prompt; if they truly want no prompt they should use the
+//     permission UI's "remember allow" which adds to Allow, and we leave the
+//     ask in place as a baseline. To fully silence, deny the ask rule in config.)
+//
+// We de-duplicate case-insensitively against existing rules.
+func normalizePermissionDefaults(p *PermissionsConfig) {
+	for _, rule := range coworkDefaultAskRules {
+		if permissionRuleListHas(p.Ask, rule) {
+			continue
+		}
+		p.Ask = append(p.Ask, rule)
+	}
+}
+
+// permissionRuleListHas reports whether rules already contains target, matching
+// the tool name case-insensitively (a rule may carry a subject glob like
+// "email_send:example.com"; we only compare the tool-name prefix).
+func permissionRuleListHas(rules []string, target string) bool {
+	t := strings.ToLower(strings.TrimSpace(target))
+	for _, r := range rules {
+		// A rule is "ToolName" or "ToolName(subject)". Compare the tool prefix.
+		tool := strings.TrimSpace(r)
+		if i := strings.IndexAny(tool, "(:"); i >= 0 {
+			tool = tool[:i]
+		}
+		if strings.ToLower(strings.TrimSpace(tool)) == t {
+			return true
+		}
+	}
+	return false
 }
 
 // mergeTOMLPlugins merges [[plugins]] across TOML sources by name (later source wins).

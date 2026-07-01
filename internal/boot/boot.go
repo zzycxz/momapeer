@@ -1100,6 +1100,17 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				CompactForceRatio: cfg.Agent.CompactForceRatio,
 				ArchiveDir:        config.ArchiveDir(),
 			}, executor, cfg.Agent.Temperature, sink, control.TaskWarrantsPlanner)
+			// Optional post-execution verify stage (go vet/build/test + bounded
+			// debug retry). Only the dev/coding profile wires DevVerifier; the
+			// coWork desktop profile leaves it off (a desktop task has no test
+			// suite). Off by default to preserve the original single-pass flow.
+			if coord, ok := runner.(*agent.Coordinator); ok && strings.EqualFold(strings.TrimSpace(cfg.Agent.Verify), "on") && (opts.Profile == nil || opts.Profile.Name != config.ProfileCowork) {
+				retries := cfg.Agent.VerifyMaxRetries
+				if retries <= 0 {
+					retries = 1
+				}
+				coord.SetVerify(agent.DevVerifier{}, retries, root)
+			}
 			label = entry.Model + " + planner " + pe.Model
 		}
 	}
