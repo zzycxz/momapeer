@@ -71,16 +71,29 @@ func (e editFile) Preview(args json.RawMessage) (diff.Change, error) {
 		return diff.Change{}, fmt.Errorf("read %s: %w", p.Path, err)
 	}
 
-	switch strings.Count(content, p.OldString) {
-	case 0:
+	// Preview must use the same match rule as Execute (exact first, then the
+	// fuzzy fallbacks in fuzzyMatch) so a preview never reports "not found"
+	// for an edit that would in fact succeed, nor shows a change the call
+	// couldn't make. matchLineEndings normalizes CRLF the same way Execute does.
+	old, newStr := matchLineEndings(content, p.OldString, p.NewString)
+	region, found, unique := fuzzyMatch(content, old)
+	if !found {
 		return diff.Change{}, fmt.Errorf("old_string not found in %s", p.Path)
-	case 1:
-		// ok
-	default:
+	}
+	if !unique {
 		return diff.Change{}, fmt.Errorf("old_string is not unique in %s; add more surrounding context", p.Path)
 	}
+	// Guard against fuzzy-match fallback returning a region that is not an
+	// exact substring of the file content (mirrors editFile.Execute): a
+	// fully-stripped indent-normalized region would otherwise make
+	// strings.Replace replace zero occurrences, showing a preview that lies.
+	if !strings.Contains(content, region) {
+		return diff.Change{}, fmt.Errorf(
+			"fuzzy match found %q but it does not appear verbatim in %s; "+
+				"please supply the exact text from the file (including indentation)", old, p.Path)
+	}
 
-	updated := strings.Replace(content, p.OldString, p.NewString, 1)
+	updated := strings.Replace(content, region, newStr, 1)
 	return diff.Build(p.Path, content, updated, diff.Modify), nil
 }
 
@@ -114,21 +127,29 @@ func (m multiEdit) Preview(args json.RawMessage) (diff.Change, error) {
 		if step.OldString == "" {
 			return diff.Change{}, fmt.Errorf("edit %d: old_string is required", i+1)
 		}
+		old, newStr := matchLineEndings(content, step.OldString, step.NewString)
 		if step.ReplaceAll {
-			if strings.Count(content, step.OldString) == 0 {
+			if strings.Count(content, old) == 0 {
 				return diff.Change{}, fmt.Errorf("edit %d: old_string not found", i+1)
 			}
-			content = strings.ReplaceAll(content, step.OldString, step.NewString)
+			content = strings.ReplaceAll(content, old, newStr)
 			continue
 		}
-		switch strings.Count(content, step.OldString) {
-		case 0:
+		// Same fuzzy match rule as multiEdit.Execute so preview and execute
+		// agree on whether each step is found/unique.
+		region, found, unique := fuzzyMatch(content, old)
+		if !found {
 			return diff.Change{}, fmt.Errorf("edit %d: old_string not found", i+1)
-		case 1:
-			content = strings.Replace(content, step.OldString, step.NewString, 1)
-		default:
+		}
+		if !unique {
 			return diff.Change{}, fmt.Errorf("edit %d: old_string is not unique; add more surrounding context or set replace_all", i+1)
 		}
+		if !strings.Contains(content, region) {
+			return diff.Change{}, fmt.Errorf(
+				"edit %d: fuzzy match found %q but it does not appear verbatim in %s; "+
+					"please supply the exact text from the file (including indentation)", i+1, old, p.Path)
+		}
+		content = strings.Replace(content, region, newStr, 1)
 	}
 	return diff.Build(p.Path, original, content, diff.Modify), nil
 }

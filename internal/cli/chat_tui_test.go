@@ -1395,6 +1395,49 @@ func TestPasteMsgFoldsBeforeTextareaConsumesNewlines(t *testing.T) {
 	}
 }
 
+// TestFoldedPasteExpandsForRunner is a regression test: a folded paste must be
+// fully expanded before reaching the controller. startTurnWithRaw's `raw`
+// argument (the 4th) feeds auto-plan scoring, so if it carries the folded label
+// the plan classifier — and thus the model path chosen — sees only
+// "[Pasted text #1 · N lines]" and never the pasted code. The runner (what the
+// model ultimately gets) must contain the expanded content, not just the label.
+func TestFoldedPasteExpandsForRunner(t *testing.T) {
+	runner := &recordingTurnRunner{}
+	events := make(chan event.Event, 8)
+	ctrl := control.New(control.Options{
+		AutoPlan: "off",
+		Runner:   runner,
+		Sink: event.FuncSink(func(e event.Event) { events <- e }),
+	})
+	m := newTestChatTUI()
+	m.ctrl = ctrl
+
+	// A multi-line paste that meets the fold threshold (>=5 lines).
+	pasted := strings.Repeat("line of pasted content\n", 10)
+	mdl, _ := m.Update(tea.PasteMsg{Content: pasted})
+	m = mdl.(chatTUI)
+	if display := m.input.Value(); !strings.Contains(display, "[Pasted text #1") {
+		t.Fatalf("paste should be folded, got %q", display)
+	}
+
+	// Submit with Enter (real terminals send KeyEnter with empty Text).
+	mdl, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mdl.(chatTUI)
+
+	waitForCLIEvent(t, events, event.TurnDone)
+	if len(runner.inputs) == 0 {
+		t.Fatal("runner.Run was not called — the paste was never submitted")
+	}
+	sent := runner.inputs[0]
+	// The runner must receive the FULL expanded paste, not just the label.
+	if strings.Contains(sent, "[Pasted text #1") && !strings.Contains(sent, "line of pasted content") {
+		t.Fatalf("runner got only the folded label, not the expanded paste:\n%q", sent)
+	}
+	if !strings.Contains(sent, "line of pasted content") {
+		t.Fatalf("runner input must contain the expanded paste content, got:\n%q", sent)
+	}
+}
+
 func TestUnsendRestoresFoldedPastePlaceholder(t *testing.T) {
 	m := newTestChatTUI()
 	m.ctrl = control.New(control.Options{})

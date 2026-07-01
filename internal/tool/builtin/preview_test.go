@@ -69,6 +69,28 @@ func TestPreviewMatchesExecute(t *testing.T) {
 				}}
 			},
 		},
+		// Regression: trailing-whitespace drift. Execute matches via the
+		// fuzzy fallback; before the fix Preview used strict strings.Count and
+		// returned "old_string not found", so the two disagreed. Both paths
+		// now share fuzzyMatch, so Preview reports the same edit Execute makes.
+		{
+			name: "edit_file fuzzy trailing whitespace",
+			tool: editFile{},
+			seed: "func main() {   \n\tfmt.Println(\"hi\")  \n}\n",
+			args: func(p string) map[string]any {
+				return map[string]any{"path": p, "old_string": "func main() {\n\tfmt.Println(\"hi\")\n}", "new_string": "func main() {\n\tfmt.Println(\"bye\")\n}"}
+			},
+		},
+		{
+			name: "multi_edit fuzzy trailing whitespace",
+			tool: multiEdit{},
+			seed: "alpha   \nbeta\t\n",
+			args: func(p string) map[string]any {
+				return map[string]any{"path": p, "edits": []map[string]any{
+					{"old_string": "alpha\nbeta", "new_string": "ALPHA\nBETA"},
+				}}
+			},
+		},
 	}
 
 	for _, tc := range cases {
