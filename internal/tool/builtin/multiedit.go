@@ -98,7 +98,7 @@ func (m multiEdit) Execute(ctx context.Context, args json.RawMessage) (string, e
 		if step.ReplaceAll {
 			count := strings.Count(content, old)
 			if count == 0 {
-				return "", fmt.Errorf("edit %d: old_string not found", i+1)
+				return "", multiOldStringNotFoundError(i+1, step.OldString, content)
 			}
 			content = strings.ReplaceAll(content, old, newStr)
 			applied += count
@@ -106,7 +106,7 @@ func (m multiEdit) Execute(ctx context.Context, args json.RawMessage) (string, e
 		}
 		region, found, unique := fuzzyMatch(content, old)
 		if !found {
-			return "", fmt.Errorf("edit %d: old_string not found", i+1)
+			return "", multiOldStringNotFoundError(i+1, step.OldString, content)
 		}
 		if !unique {
 			return "", fmt.Errorf("edit %d: old_string is not unique; add more surrounding context or set replace_all", i+1)
@@ -119,4 +119,18 @@ func (m multiEdit) Execute(ctx context.Context, args json.RawMessage) (string, e
 		return "", fmt.Errorf("write %s: %w", p.Path, err)
 	}
 	return fmt.Sprintf("multi_edit %s: %d edits applied (%d total replacements)", p.Path, len(p.Edits), applied), nil
+}
+
+// multiOldStringNotFoundError is the multi_edit analogue of edit_file's
+// oldStringNotFoundError: it includes a closest-match hint (the line most
+// similar to old_string) so the model can locate its target, prefixed with the
+// 1-based edit index that failed.
+func multiOldStringNotFoundError(index int, oldString, content string) error {
+	if line, text, sim, ok := nearestLine(content, oldString); ok {
+		if len(text) > 100 {
+			text = text[:97] + "..."
+		}
+		return fmt.Errorf("edit %d: old_string not found (nearest line %d, %d%% similar: %q)", index, line, int(sim*100), text)
+	}
+	return fmt.Errorf("edit %d: old_string not found", index)
 }

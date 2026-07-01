@@ -419,9 +419,15 @@ func DefaultSpawner(ctx context.Context, in SpawnInput) SpawnResult {
 	return res
 }
 
+// shellInvocation returns the argv that runs a user hook command through the
+// platform shell. On Windows it prefixes `chcp 65001 >nul &&` so the child
+// process emits UTF-8 instead of the OEM code page (e.g. CP936 on Chinese
+// Windows) — otherwise CJK output captured into the hook result comes back as
+// mojibake. The redirect hides chcp's own "Active code page" line. Mirrors the
+// bash tool's psUTF8Prologue approach for PowerShell.
 func shellInvocation(command string) (string, []string) {
 	if runtime.GOOS == "windows" {
-		return "cmd", []string{"/c", command}
+		return "cmd", []string{"/c", "chcp 65001 >nul && " + command}
 	}
 	return "sh", []string{"-c", command}
 }

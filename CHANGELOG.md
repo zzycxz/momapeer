@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.3.7] — 2026-07-02
+
+**借鉴 MiMo-Code / DeepSeek-Reasonix 的编码质量与稳定性提升：执行后验证（verify + TDD retry）、edit 最近行提示、输出循环检测、Windows UTF-8 收口。** 每项均经源码核实为 momapeer 真实缺口（撤掉了不扎实的「token 压缩」建议——momapeer 已有 compact+prune+truncate 完整体系）。
+
+---
+
+### Added — 执行后验证阶段（verify + TDD retry，扩展 planner-executor）
+
+借鉴 MiMo-Code compose 的 Verify/TDD 阶段，给 momapeer 的 Coordinator（planner-executor）补上"执行后验证 + 失败重试"。momapeer 原有 plan→exec 两阶段到此为止，无任何验证/重试——这是编码质量的核心瓶颈。
+
+- **`internal/agent/verify.go`（新）**：
+  - `Verifier` 接口（可插拔，按 profile 分发）——dev 跑 go test，cowork 可挂截图验证器（接口就绪，未实装）。
+  - `DevVerifier`：go vet → go build → go test，首个失败即返回（feed 给 executor 修）；非 Go 工作区（无 go.mod）返回 skip。
+  - `verifyAndRetry`：执行后验证，失败则把 failures 喂回 executor 重试（默认 1 次），retry 耗尽只发 Notice 告警**不中断**（advisory，不丢弃已完成工作）。
+- **`coordinator.go` 扩展**：Coordinator 加 `verify`/`workspaceRoot` 字段 + `SetVerify` + `executeThenVerify`；Run 改为 plan→exec→**verify→retry**。**保留**既有 shouldPlan 网关 + 双 session + planWithTools。
+- **boot 接线**：dev profile（非 cowork）+ `verify="on"` 时注入 DevVerifier；`config.go` 加 `verify`/`verify_max_retries` 开关（**默认 off**，向后兼容，原 plan→exec 行为字节不变）。
+- 测试：`verify_test.go`（5 用例：no-verifier 跳过、pass 首检、skip-on-error、非 Go 工作区、notice 截断）。
+
+### Added — 输出循环检测（n-gram 保守告警）
+
+借鉴 MiMo-Code 的 `TextNgramMonitor`，补上 momapeer 缺失的"文字维度"循环检测。
+
+- **`internal/agent/repeat_text.go`（新）**：`repeatTextMonitor`——n-gram（8 词）+ 滑动窗口（400 token）+ 阈值 2。
+- **`agent.go` 接入**：流式 assistant 文本路径 feed 监控器，**检测到只发一次 Notice 告警，不中断 turn**（保守，避免误伤中文场景正常的重复表述；与既有 stormBreak/repeatSuccessBlock 并存——那些防工具循环，这个防文字循环）。
+- 测试：`repeat_text_test.go`（6 用例：正常不触发、verbatim 循环检出、reset、短文本不触发、CJK 段落、n-gram 边界）。
+
+### Changed — edit 失败加 closest-match 提示（edit_file + multi_edit）
+
+edit 找不到 old_string 时原本只报 "not found"，现附加最接近行的提示，帮模型快速定位（减少反复试错）。借鉴 MiMo `refactor: default edit tool to exact matching with closest-match error hints`。
+
+- `edit_fuzzy.go`：加 `nearestLine`（Jaccard 词相似度，阈值 0.2）+ `normSpace` + `jaccardNorm`。
+- `editfile.go`：not-found 分支用 `oldStringNotFoundError`（"nearest line N, X% similar: ..."）。
+- `multiedit.go`：两个 not-found 分支（ReplaceAll + fuzzy）用 `multiOldStringNotFoundError`（带 edit 序号）。
+
+### Fixed — Windows hook 输出 CJK 乱码（UTF-8 收口）
+
+`hook.go` 的 Windows `cmd /c` 路径前缀加 `chcp 65001 >nul &&`，让 hook 子进程输出 UTF-8 而非 OEM codepage（如中文 Windows 的 CP936），根治 hook 结果的 CJK 乱码。借鉴 MiMo #1418。bash 工具本身透传 UTF-8 不受影响。
+
+### 跳过 — 经核实不适用（避免做多余的事）
+
+| 项 | 跳过原因 |
+|---|---|
+| ~~token 压缩~~ | momapeer 已有 compact（上下文压缩）+ prune + truncateToolOutput + prefix cache + FTS5 memory 完整体系 |
+| ~~agent 时间维度 stuck 检测~~ | momapeer 已有 stormBreak（连续失败 3 次）+ compactStuck + repeatSuccessBlock（次数维度） |
+| ~~budgeted-read（按 token 预算读文件）~~ | momapeer read_file 已有 offset/limit（按行），够用；token 预算是优化非缺口，暂缓 |
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| `go build ./cmd/... ./internal/...` | ✅ |
+| agent / tool.builtin / hook 测试 | ✅ 全过 |
+| 我引入的 gofmt 对齐（repeatText 字段） | ✅ 已修 |
+
+---
+
 ## [0.3.6] — 2026-07-01
 
 **对照 DeepSeek-Reasonix 上游（v1.12.0 → desktop-v1.13.1，186 commits）拣选移植 + 导出/冷启动 hook 补齐 + 取消报错根治 + ACP 测试 flake 修复。** 本次升级的核心原则是「针对 DeepSeek 的修正不做、不适配 momapeer 结构的要做改造」——上游 186 个 commit 中约 90%（Memory v5 / controlplane / accounts / macOS sandbox / 桌面 UX）因 momapeer 无对应结构或已有更优实现而跳过，只取真正适用 momapeer 的实证修复与新功能，并按 momapeer 自身架构改造。

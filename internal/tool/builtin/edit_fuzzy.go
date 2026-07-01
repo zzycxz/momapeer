@@ -342,3 +342,86 @@ func isCJK(r rune) bool {
 		unicode.Is(unicode.Katakana, r) ||
 		unicode.Is(unicode.Hangul, r)
 }
+
+// nearestLine returns the 1-based line number and trimmed text of the content
+// line most similar to oldString's first non-empty line, plus a similarity
+// fraction (0..1). It is used to give a closest-match hint when an edit fails
+// to find old_string, so the model can see what's actually near its target
+// instead of a bare "not found". Returns ok=false when no usable line exists.
+func nearestLine(content, oldString string) (line int, text string, similarity float64, ok bool) {
+	// Take oldString's first non-empty, trimmed line as the probe.
+	probe := ""
+	for _, l := range strings.Split(oldString, "\n") {
+		if t := strings.TrimSpace(l); t != "" {
+			probe = t
+			break
+		}
+	}
+	if probe == "" {
+		return 0, "", 0, false
+	}
+	// Normalize whitespace for a fair comparison (tabs→spaces, collapse runs).
+	normProbe := normSpace(probe)
+	bestLine, bestText, bestSim := 0, "", 0.0
+	for i, l := range strings.Split(content, "\n") {
+		t := strings.TrimSpace(l)
+		if t == "" {
+			continue
+		}
+		s := jaccardNorm(normSpace(t), normProbe)
+		if s > bestSim {
+			bestLine, bestText, bestSim = i+1, t, s
+		}
+	}
+	if bestLine == 0 || bestSim < 0.2 {
+		return 0, "", 0, false
+	}
+	return bestLine, bestText, bestSim, true
+}
+
+// normSpace collapses runs of whitespace (incl. tabs) into single spaces.
+func normSpace(s string) string {
+	var b strings.Builder
+	prevSpace := false
+	for _, r := range s {
+		if r == ' ' || r == '\t' {
+			if !prevSpace {
+				b.WriteByte(' ')
+				prevSpace = true
+			}
+			continue
+		}
+		prevSpace = false
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// jaccardNorm returns a 0..1 word-level similarity between two
+// whitespace-normalized strings via the Jaccard index of their word sets. It's
+// cheap and order-insensitive, which suits "which line looks most like the
+// target" ranking better than exact substring matching.
+func jaccardNorm(a, b string) float64 {
+	wa := strings.Fields(a)
+	wb := strings.Fields(b)
+	if len(wa) == 0 || len(wb) == 0 {
+		return 0
+	}
+	set := make(map[string]struct{}, len(wa)+len(wb))
+	intersect := 0
+	for _, w := range wa {
+		set[w] = struct{}{}
+	}
+	for _, w := range wb {
+		if _, ok := set[w]; ok {
+			intersect++
+			continue
+		}
+		set[w] = struct{}{}
+	}
+	union := len(set)
+	if union == 0 {
+		return 0
+	}
+	return float64(intersect) / float64(union)
+}

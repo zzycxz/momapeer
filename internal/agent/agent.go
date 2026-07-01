@@ -220,6 +220,19 @@ type Agent struct {
 	steerQueue    []string
 	steerConsumed bool
 
+	// pauseState drives graceful pause/resume. Pause closes pauseCh (non-nil =>
+	// a pause is requested); the run loop blocks on resumeCh at the top of each
+	// step until Resume closes it. Both are recreated per Run so a stale signal
+	// from a previous turn can't affect the next. Pause is distinct from Cancel:
+	// Cancel aborts the in-flight LLM call and discards partial work; Pause lets
+	// the current step finish, then freezes the agent with full state intact so
+	// a Resume continues from exactly where it stopped. Guarded by pauseMu so
+	// Pause/Resume/IsPaused can be called from any goroutine safely.
+	pauseMu   sync.Mutex
+	pauseCh   chan struct{} // closed = pause requested; recreated per Run
+	resumeCh  chan struct{} // closed = resume signaled; recreated per pause
+	paused    bool          // true while blocked on resumeCh (for IsPaused)
+
 	// evidence is a per-user-turn ledger of host-observed tool receipts. It lets
 	// complete_step validate that cited evidence happened before the claim.
 	evidence *evidence.Ledger
@@ -280,6 +293,12 @@ type Agent struct {
 	// stormSig: a model keeps doing the same successful write, so there is no
 	// error for the failure-only storm breaker to see.
 	repeatSuccessCounts map[string]int
+	// repeatText detects streamed-output repetition (the same passage emitted
+	// over and over) within a single answer. Advisory only: it surfaces a
+	// Notice on detection, it never aborts the turn — distinct from the
+	// tool-level guards above, which key on tool calls, not narrated text.
+	repeatText       repeatTextMonitor
+	repeatTextWarned bool
 }
 
 // SetPlanMode flips the read-only gate. While true, executeOne refuses any
@@ -401,6 +420,100 @@ func (a *Agent) steerQueueLen() int {
 	return len(a.steerQueue)
 }
 
+// Pause requests a graceful pause. The run loop finishes the current step (it
+// does NOT interrupt an in-flight LLM call), then blocks at the top of the next
+// iteration until Resume is called. State — session, todos, history — is fully
+// preserved, so Resume continues from exactly where the agent stopped. Calling
+// Pause when no run is active, or when already paused, is a no-op. Idempotent
+// and safe to call from any goroutine.
+func (a *Agent) Pause() {
+	a.pauseMu.Lock()
+	defer a.pauseMu.Unlock()
+	if a.pauseCh == nil || a.paused {
+		return
+	}
+	select {
+	case <-a.pauseCh:
+		// already requested
+	default:
+		close(a.pauseCh)
+	}
+}
+
+// Resume unblocks a paused run. If the run isn't paused (or none is active),
+// it's a no-op. Safe from any goroutine.
+func (a *Agent) Resume() {
+	a.pauseMu.Lock()
+	defer a.pauseMu.Unlock()
+	if a.resumeCh == nil {
+		return
+	}
+	select {
+	case <-a.resumeCh:
+		// already resumed
+	default:
+		close(a.resumeCh)
+	}
+}
+
+// IsPaused reports whether the agent is currently blocked on a pause (between
+// steps, awaiting Resume). False when running normally or not running at all.
+func (a *Agent) IsPaused() bool {
+	a.pauseMu.Lock()
+	defer a.pauseMu.Unlock()
+	return a.paused
+}
+
+// resetPauseStateLocked recreates the pause/resume channels for a fresh run.
+// Caller MUST hold pauseMu. A stale pauseCh from the previous turn would
+// otherwise immediately re-trigger a pause; recreating both channels means each
+// Run starts unpaused and a Pause must be issued afresh.
+func (a *Agent) resetPauseStateLocked() {
+	a.pauseCh = make(chan struct{})
+	a.resumeCh = make(chan struct{})
+	a.paused = false
+}
+
+// awaitPause blocks at the top of a loop iteration if a pause has been
+// requested. It emits a Paused event before blocking and a Resumed event after
+// unblocking, so a frontend can reflect the frozen state. Returns the context
+// error if the run is cancelled while paused (the only way out besides Resume).
+func (a *Agent) awaitPause(ctx context.Context) error {
+	a.pauseMu.Lock()
+	ch := a.pauseCh
+	a.pauseMu.Unlock()
+	if ch == nil {
+		return nil
+	}
+	select {
+	case <-ch:
+		// pause requested — fall through to block
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil // no pause requested
+	}
+	// We are pausing. Emit, set the flag, block on resume (or cancellation).
+	a.pauseMu.Lock()
+	a.paused = true
+	resume := a.resumeCh
+	a.pauseMu.Unlock()
+	a.sink.Emit(event.Event{Kind: event.Paused, Text: "paused between steps — state preserved"})
+	select {
+	case <-resume:
+		a.pauseMu.Lock()
+		a.paused = false
+		a.pauseMu.Unlock()
+		a.sink.Emit(event.Event{Kind: event.Resumed})
+		return nil
+	case <-ctx.Done():
+		a.pauseMu.Lock()
+		a.paused = false
+		a.pauseMu.Unlock()
+		return ctx.Err()
+	}
+}
+
 // CompactRatio returns the fraction of the window at which auto-compaction
 // fires (e.g. 0.8). The status line uses it to show headroom to the next compact.
 func (a *Agent) CompactRatio() float64 { return a.compactRatio }
@@ -511,10 +624,18 @@ func (a *Agent) Run(ctx context.Context, input any) error {
 	a.steerMu.Lock()
 	a.steerConsumed = false
 	a.steerMu.Unlock()
+	// Fresh pause/resume channels for this turn: a leftover pauseCh from a prior
+	// turn would immediately re-pause. resetPauseStateLocked also clears the
+	// paused flag so IsPaused is accurate before the loop starts.
+	a.pauseMu.Lock()
+	a.resetPauseStateLocked()
+	a.pauseMu.Unlock()
 	if a.evidence != nil {
 		a.evidence.Reset()
 	}
 	a.repeatSuccessCounts = nil
+	a.repeatText.reset()
+	a.repeatTextWarned = false
 	a.sink.Emit(event.Event{Kind: event.TurnStarted})
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
 
@@ -525,6 +646,15 @@ func (a *Agent) Run(ctx context.Context, input any) error {
 	streamRecoveries := 0
 	executorHandoff := a.executorHandoffGuard && strings.Contains(provider.ContentString(input), executorHandoffMarker)
 	for step := 0; a.maxSteps <= 0 || step < a.maxSteps; step++ {
+		// Graceful pause point: if the user requested a pause, finish any prior
+		// step (we got here because the last iteration completed), then block
+		// here until Resume. This sits at the TOP of the loop so the in-flight
+		// LLM call of the previous iteration has already finished and its result
+		// is persisted — pause never interrupts a streaming response, it only
+		// gates entry to the next one. State is fully preserved across the pause.
+		if err := a.awaitPause(ctx); err != nil {
+			return err
+		}
 		// Consume a queued steer and persist it to the session so it
 		// survives tab switches and history replay. The model sees it as
 		// guidance (with a prefix), not a new task. One cache miss per
@@ -993,6 +1123,14 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 		case provider.ChunkText:
 			text.WriteString(chunk.Text)
 			a.sink.Emit(event.Event{Kind: event.Text, Text: chunk.Text})
+			// Advisory text-repetition guard: detect when the model loops on the
+			// same passage. Notice only (once per turn), never aborts — false
+			// positives on legitimate repeated phrasing are worse than a miss.
+			if !a.repeatTextWarned && a.repeatText.append(chunk.Text) {
+				a.repeatTextWarned = true
+				a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
+					Text: "output appears to be repeating the same passage; consider wrapping up the answer"})
+			}
 		case provider.ChunkToolCallStart:
 			partialToolStarted = true
 			// Surface the tool card as soon as the call begins — before its

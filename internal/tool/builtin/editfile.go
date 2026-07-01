@@ -59,7 +59,7 @@ func (e editFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 	old, newStr := matchLineEndings(content, p.OldString, p.NewString)
 	region, found, unique := fuzzyMatch(content, old)
 	if !found {
-		return "", fmt.Errorf("old_string not found in %s", p.Path)
+		return "", oldStringNotFoundError(p.Path, p.OldString, content)
 	}
 	if !unique {
 		return "", fmt.Errorf("old_string is not unique in %s; add more surrounding context", p.Path)
@@ -80,4 +80,18 @@ func (e editFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 		return "", fmt.Errorf("write %s: %w", p.Path, err)
 	}
 	return fmt.Sprintf("edited %s", p.Path), nil
+}
+
+// oldStringNotFoundError returns a "not found" error that, when possible,
+// includes a closest-match hint (the line most similar to old_string) so the
+// model can locate its target instead of guessing. The hint is capped in length
+// so a pathological file never floods the error.
+func oldStringNotFoundError(path, oldString, content string) error {
+	if line, text, sim, ok := nearestLine(content, oldString); ok {
+		if len(text) > 100 {
+			text = text[:97] + "..."
+		}
+		return fmt.Errorf("old_string not found in %s (nearest line %d, %d%% similar: %q)", path, line, int(sim*100), text)
+	}
+	return fmt.Errorf("old_string not found in %s", path)
 }
