@@ -68,7 +68,9 @@ import {
   type SettingsView,
   type TabMeta,
   type ToolApprovalMode,
+  type CapabilitiesView,
 } from "./lib/types";
+import { Box, Server } from "lucide-react";
 import {
   controllerCollaborationMode,
   displayedCollaborationMode,
@@ -600,6 +602,7 @@ export default function App() {
     steer,
     notice,
     cancel,
+    pauseToggle,
     approve,
     answerQuestion,
     setControllerMode,
@@ -651,11 +654,13 @@ export default function App() {
   // clearing the key mid-session is the Settings panel's job, not the gate's.
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
   const [settingsTarget, setSettingsTarget] = useState<SettingsTab | null>(null);
+  const [settingsPayload, setSettingsPayload] = useState<string | null>(null);
   const [startupUpdateChecksEnabled, setStartupUpdateChecksEnabled] = useState<boolean | null>(null);
   const [histView, setHistView] = useState<HistoryViewState | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteSessions, setPaletteSessions] = useState<SessionMeta[]>([]);
+  const [paletteCapabilities, setPaletteCapabilities] = useState<CapabilitiesView | null>(null);
   const { showToast } = useToast();
   const [sidebarImConnections, setSidebarImConnections] = useState<SidebarImConnection[]>([]);
   const [imTopicSources, setImTopicSources] = useState<Record<string, SidebarImTopicSource>>({});
@@ -869,6 +874,18 @@ export default function App() {
     return window.runtime.EventsOn("screenshot:notice", (...data: unknown[]) => {
       const e = (data?.[0] ?? {}) as { message?: string };
       if (e.message) showToast(e.message, "info");
+    });
+  }, [showToast]);
+
+  // Emergency-stop hotkey confirmation — the global Ctrl+Shift+Pause fired and
+  // cancelled the in-flight turn. Surface a prominent (error-level = red) toast
+  // so the user gets immediate visible confirmation the stop landed, even when
+  // MoMAPeer is in the background (the event is emitted from the backend).
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.runtime) return;
+    return window.runtime.EventsOn("estop:fired", (...data: unknown[]) => {
+      const e = (data?.[0] ?? {}) as { message?: string };
+      showToast(e.message ?? "已紧急停止 AI 操作", "error");
     });
   }, [showToast]);
   useEffect(() => {
@@ -2034,6 +2051,7 @@ export default function App() {
     closeTransientOverlays();
     setPaletteOpen(true);
     setPaletteSessions(await listSessions().catch(() => []));
+    setPaletteCapabilities(await app.Capabilities().catch(() => null));
   }, [closeTransientOverlays, listSessions]);
   // Global keyboard shortcuts — all wired through the centralized
   // keyboardShortcuts registry so they're self-documenting (Shift+? cheatsheet)
@@ -2049,6 +2067,11 @@ export default function App() {
   useGlobalShortcut("textSize.increase", () => applyTextSize(nextTextSize(getTextSize(), 1)));
   useGlobalShortcut("textSize.decrease", () => applyTextSize(nextTextSize(getTextSize(), -1)));
   useGlobalShortcut("textSize.reset", () => applyTextSize(DEFAULT_TEXT_SIZE));
+  // Pause/Resume the in-flight turn (graceful — finishes current step, freezes
+  // with state preserved). Only fires while a turn is running; pauseToggle is a
+  // no-op otherwise. Bound after pauseToggle is defined so the latest callback
+  // is used.
+  useGlobalShortcut("turn.pauseToggle", () => pauseToggle(), [pauseToggle]);
   const paletteItems = useMemo<PaletteItem[]>(() => {
     const cmds: PaletteItem[] = [
       { id: "cmd-new", group: t("palette.group.commands"), title: t("palette.cmd.newSession"), icon: <SquarePen size={15} />, compact: true, keywords: ["new", "新建"], run: () => void handleNewTab() },
@@ -2075,8 +2098,35 @@ export default function App() {
       badge: t(s.turns === 1 ? "history.turnOne" : "history.turnOther", { n: s.turns }),
       run: () => void onResumeSession(s),
     }));
-    return [...cmds, ...sessionItems];
-  }, [t, paletteSessions, handleNewTab, openAllHistory, openTrash, onResumeSession]);
+
+    const skillItems: PaletteItem[] = (paletteCapabilities?.skills || []).map((sk) => ({
+      id: `skill-${sk.name}`,
+      group: t("settings.tab.skills"),
+      title: sk.name,
+      hint: sk.description,
+      icon: <Box size={15} />,
+      keywords: [sk.name, sk.runAs, sk.scope],
+      run: () => {
+        setSettingsTarget("skills");
+        setSettingsPayload(sk.name);
+      },
+    }));
+
+    const mcpItems: PaletteItem[] = (paletteCapabilities?.servers || []).map((srv) => ({
+      id: `mcp-${srv.name}`,
+      group: t("settings.tab.mcp"),
+      title: srv.name,
+      hint: srv.command,
+      icon: <Server size={15} />,
+      keywords: [srv.name, srv.transport],
+      run: () => {
+        setSettingsTarget("mcp");
+        setSettingsPayload(srv.name);
+      },
+    }));
+
+    return [...cmds, ...skillItems, ...mcpItems, ...sessionItems];
+  }, [t, paletteSessions, paletteCapabilities, handleNewTab, openAllHistory, openTrash, onResumeSession]);
   // Delete / rename act on disk, then re-fetch so the panel reflects the change.
   const onDeleteSession = useCallback(
     async (path: string) => {
@@ -2224,6 +2274,61 @@ export default function App() {
   const sidebarImConnectedCount = sidebarImConnections.filter((connection) => connection.status === "connected").length;
   const sidebarImOnline = sidebarImConnectedCount > 0;
 
+  // sessionActions is the Copy + Export control block. It is shared by two
+  // render sites: the dev-mode topicbar (App.tsx below) and the CoWork header
+  // (passed to CoWorkLayout as a prop). Both are in this render scope, so all
+  // dependencies (getSessionMarkdown, exportSession, topicExportOpen,
+  // sessionHasContent) close over the same state. Defining it once keeps the
+  // two surfaces in sync and fixes the bug where Copy/Export were unreachable
+  // in CoWork mode (the topicbar lives in .chat-pane, which is display:none
+  // under .app--cowork). The .topicbar__export class is preserved so the
+  // outside-click handler (App.tsx ~1313) keeps closing the dropdown.
+  const sessionActions = (
+    <>
+      <CopyButton
+        getText={getSessionMarkdown}
+        label={t("topicBar.copyAll")}
+        showLabel={false}
+        className="topicbar__action-btn topicbar__action-btn--icon topicbar__action-btn--utility"
+      />
+      <div className={`topicbar__export${topicExportOpen ? " topicbar__export--open" : ""}`}>
+        <Tooltip label={t("topicBar.export")}>
+          <button
+            className="topicbar__action-btn topicbar__action-btn--icon topicbar__action-btn--utility"
+            type="button"
+            disabled={!sessionHasContent}
+            aria-label={t("topicBar.export")}
+            aria-haspopup="menu"
+            aria-expanded={topicExportOpen}
+            onClick={() => setTopicExportOpen((open) => !open)}
+          >
+            <Download size={14} />
+          </button>
+        </Tooltip>
+        {topicExportOpen && (
+          <div className="topicbar__export-menu" role="menu">
+            <button type="button" role="menuitem" onClick={() => void exportSession("markdown")}>
+              <FileText size={13} />
+              <span>{t("topicBar.exportMarkdown")}</span>
+            </button>
+            <button type="button" role="menuitem" onClick={() => void exportSession("json")}>
+              <FileJson size={13} />
+              <span>{t("topicBar.exportJson")}</span>
+            </button>
+            <button type="button" role="menuitem" onClick={() => void exportSession("pdf")}>
+              <FileDown size={13} />
+              <span>{t("topicBar.exportPdf")}</span>
+            </button>
+            <button type="button" role="menuitem" onClick={() => void exportSession("image")}>
+              <FileImage size={13} />
+              <span>{t("topicBar.exportImage")}</span>
+            </button>
+          </div>
+        )}
+      </div>
+    </>
+  );
+
   const mainNode = (
     <main className="main">
       {sidebarImDetailConnection ? (
@@ -2295,6 +2400,7 @@ export default function App() {
       )}
       <Composer
         running={state.running}
+        paused={state.paused}
         collaborationMode={collaborationMode}
         toolApprovalMode={toolApprovalMode}
         goal={goal}
@@ -2304,6 +2410,7 @@ export default function App() {
         effort={state.effort}
         onSend={handleSend}
         onCancel={cancel}
+        onPauseToggle={pauseToggle}
         onCycleMode={cycleMode}
         onSetMode={applyMode}
         onSetCollaborationMode={applyCollaborationMode}
@@ -2322,18 +2429,7 @@ export default function App() {
         retry={state.retry}
         transientDismissSignal={transientOverlayDismissSignal}
       />
-      <StatusBar
-        context={state.context}
-        usage={state.usage}
-        jobs={state.jobs}
-        running={state.running}
-        collaborationMode={collaborationMode}
-        toolApprovalMode={toolApprovalMode}
-        sessionTurns={sessionTurns}
-        sessionTokens={state.sessionTokens}
-        turnTokens={state.turnTotalTokens}
-        modelLabel={state.meta?.label}
-      />
+
     </footer>
   ) : null;
 
@@ -2376,22 +2472,9 @@ export default function App() {
             mainNode={mainNode}
             footerNode={footerNode}
             projectTreeNode={projectTreeNode}
-            sidebarFooter={
-              <SidebarFooter
-                imConnectionCount={sidebarImConnections.length}
-                imOnline={sidebarImOnline}
-                tooltipDisabled={sidebarNavTooltipDisabled}
-                onOpenIm={() => void showSidebarImDetail()}
-                onOpenHistory={() => void openAllHistory()}
-                onOpenTrash={() => void openTrash()}
-                onOpenSettings={() => {
-                  closeTransientOverlays();
-                  setSettingsTarget("general");
-                }}
-              />
-            }
             rightDockOpen={workspacePanelRenderable}
             sidebarCollapsed={sidebarCollapsed}
+            sessionActions={sessionActions}
           />
         )}
         <AppChrome
@@ -2435,19 +2518,6 @@ export default function App() {
           <section className="sidebar__section sidebar__section--projects">
             {projectTreeNode}
           </section>
-
-          <SidebarFooter
-            imConnectionCount={sidebarImConnections.length}
-            imOnline={sidebarImOnline}
-            tooltipDisabled={sidebarNavTooltipDisabled}
-            onOpenIm={() => void showSidebarImDetail()}
-            onOpenHistory={() => void openAllHistory()}
-            onOpenTrash={() => void openTrash()}
-            onOpenSettings={() => {
-              closeTransientOverlays();
-              setSettingsTarget("general");
-            }}
-          />
 
         </aside>
         <button
@@ -2517,51 +2587,7 @@ export default function App() {
             </div>
             <div className="topicbar__spacer" />
             <div className="topicbar__actions">
-              {!sidebarImDetailConnection && (
-              <>
-              <CopyButton
-                getText={getSessionMarkdown}
-                label={t("topicBar.copyAll")}
-                showLabel={false}
-                className="topicbar__action-btn topicbar__action-btn--icon topicbar__action-btn--utility"
-              />
-              <div className={`topicbar__export${topicExportOpen ? " topicbar__export--open" : ""}`}>
-                <Tooltip label={t("topicBar.export")}>
-                  <button
-                    className="topicbar__action-btn topicbar__action-btn--icon topicbar__action-btn--utility"
-                    type="button"
-                    disabled={!sessionHasContent}
-                    aria-label={t("topicBar.export")}
-                    aria-haspopup="menu"
-                    aria-expanded={topicExportOpen}
-                    onClick={() => setTopicExportOpen((open) => !open)}
-                  >
-                    <Download size={14} />
-                  </button>
-                </Tooltip>
-                {topicExportOpen && (
-                  <div className="topicbar__export-menu" role="menu">
-                    <button type="button" role="menuitem" onClick={() => void exportSession("markdown")}>
-                      <FileText size={13} />
-                      <span>{t("topicBar.exportMarkdown")}</span>
-                    </button>
-                    <button type="button" role="menuitem" onClick={() => void exportSession("json")}>
-                      <FileJson size={13} />
-                      <span>{t("topicBar.exportJson")}</span>
-                    </button>
-                    <button type="button" role="menuitem" onClick={() => void exportSession("pdf")}>
-                      <FileDown size={13} />
-                      <span>{t("topicBar.exportPdf")}</span>
-                    </button>
-                    <button type="button" role="menuitem" onClick={() => void exportSession("image")}>
-                      <FileImage size={13} />
-                      <span>{t("topicBar.exportImage")}</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-              </>
-              )}
+              {sessionActions}
               <Tooltip label={t("workspace.changedTab")}>
                 <button
                   className="topicbar__action-btn topicbar__action-btn--label"
@@ -2705,6 +2731,33 @@ export default function App() {
         )}
       </div>
 
+      <div className="global-bottom-bar">
+        <SidebarFooter
+          imConnectionCount={sidebarImConnections.length}
+          imOnline={sidebarImOnline}
+          tooltipDisabled={sidebarNavTooltipDisabled}
+          onOpenIm={() => void showSidebarImDetail()}
+          onOpenHistory={() => void openAllHistory()}
+          onOpenTrash={() => void openTrash()}
+          onOpenSettings={() => {
+            closeTransientOverlays();
+            setSettingsTarget("general");
+          }}
+        />
+        <StatusBar
+          context={state.context}
+          usage={state.usage}
+          jobs={state.jobs}
+          running={state.running}
+          collaborationMode={collaborationMode}
+          toolApprovalMode={toolApprovalMode}
+          sessionTurns={sessionTurns}
+          sessionTokens={state.sessionTokens}
+          turnTokens={state.turnTotalTokens}
+          modelLabel={state.meta?.label}
+        />
+      </div>
+
       {histView !== null && (
         <HistoryPanel
           kind={histView.kind}
@@ -2724,7 +2777,11 @@ export default function App() {
       {settingsTarget !== null && (
         <SettingsPanel
           initialTab={settingsTarget}
-          onClose={() => setSettingsTarget(null)}
+          initialPayload={settingsPayload ?? undefined}
+          onClose={() => {
+            setSettingsTarget(null);
+            setSettingsPayload(null);
+          }}
           onChanged={() => {
             void refreshMeta();
             void reloadSidebarImConnections().catch((e) => console.warn("bot sidebar refresh failed", e));

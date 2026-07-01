@@ -88,6 +88,7 @@
   --z-dock: 100;
   --z-floating-menu: 110;
   --z-topicbar-menu: 210;
+  --z-raised: 250; /* above scrolling content + topicbar, below modals (1200) */
   --z-startup-overlay: 300;
   --z-modal: 1200;
   --z-overlay-backdrop: 1300;
@@ -1578,7 +1579,7 @@ a[href] {
   color: var(--accent-text);
   font-size: 13px;
   font-weight: 600;
-  box-shadow: 0 6px 18px -6px var(--accent), var(--shadow-1);
+  box-shadow: var(--shadow-1);
   /* Logo, CTA icon, and search icon share the same content inset; CTA stays visually stronger. */
   transition:
     color var(--dur-fast),
@@ -2529,6 +2530,7 @@ a[href] {
     width 400ms cubic-bezier(0.34, 1.56, 0.64, 1),
     box-shadow 150ms;
 }
+
 .jump-dot[data-d="0"] {
   background: var(--accent);
 }
@@ -3806,7 +3808,7 @@ a[href] {
   flex: 0 0 auto;
   border-top: 1px solid var(--border-soft);
   background: var(--chat-bg);
-  padding: 12px 32px 10px;
+  padding: 12px 16px 12px;
 }
 .composer-wrap {
   position: relative;
@@ -9722,9 +9724,20 @@ a[href] {
 }
 
 .optional-module__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--font-control-small);
   font-weight: 650;
   color: var(--fg);
+}
+
+.optional-module__configured-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
 }
 
 .optional-module__desc {
@@ -10960,6 +10973,77 @@ a[href] {
 .provider-presets__btn {
   padding: 3px 10px;
   font-size: 12px;
+}
+
+/* ── Mail card (single "邮箱" module, 139 send+read in one) ─────────────
+   The mail module collapses SMTP + IMAP into one card because 139 uses one
+   mailbox for both. The preset is a pill-style chip with a clear selected
+   state; the note is an info callout; each field is a label + input row. */
+.mail-presets {
+  margin-bottom: 10px;
+}
+.mail-preset {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 14px;
+  font: inherit;
+  font-size: var(--font-control-small);
+  font-weight: 600;
+  color: var(--fg-dim);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.mail-preset:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  color: var(--fg);
+}
+.mail-preset--on {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+}
+.mail-preset--on::before {
+  content: "✓";
+  font-size: 11px;
+  font-weight: 700;
+}
+.mail-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 8px 11px;
+  margin: 0 0 12px;
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+  color: var(--fg-dim);
+  background: color-mix(in srgb, var(--bg-elev-2) 55%, transparent);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  border-radius: 7px;
+}
+.mail-note__icon {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+}
+.mail-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+.mail-field:last-child {
+  margin-bottom: 0;
+}
+.mail-field__label {
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  color: var(--fg-dim);
 }
 
 /* "input + Browse button" combo for path fields (sandbox workspace_root, etc.)
@@ -12322,6 +12406,58 @@ a[href] {
 }
 .composer-runstatus__stop:disabled:hover,
 .composer-runstatus__stop:disabled:focus-visible {
+  color: var(--fg-faint);
+  background: var(--button-bg);
+  border-color: var(--border-soft);
+}
+
+/* Pause/Resume button — sits next to Stop in the run-status bar. Uses the
+ * warn (amber) accent for Pause and turns to a success (green) accent when
+ * active (i.e. paused → the button now offers Resume), so the two states are
+ * visually distinct at a glance. Shares Stop's layout so they line up. */
+.composer-runstatus__pause {
+  --wails-draggable: no-drag;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--warn, var(--accent)) 42%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--warn, var(--accent)) 14%, var(--bg-elev-2));
+  color: var(--warn, var(--accent));
+  font: inherit;
+  font-weight: 620;
+}
+.composer-runstatus__pause:hover,
+.composer-runstatus__pause:focus-visible {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--warn, var(--accent)) 38%, var(--bg-elev-2));
+  border-color: color-mix(in srgb, var(--warn, var(--accent)) 70%, var(--border));
+}
+/* Active (paused) state: green resume affordance. */
+.composer-runstatus__pause--active {
+  border-color: color-mix(in srgb, var(--ok, #3fb950) 48%, transparent);
+  background: color-mix(in srgb, var(--ok, #3fb950) 16%, var(--bg-elev-2));
+  color: var(--ok, #3fb950);
+}
+.composer-runstatus__pause--active:hover,
+.composer-runstatus__pause--active:focus-visible {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--ok, #3fb950) 38%, var(--bg-elev-2));
+  border-color: color-mix(in srgb, var(--ok, #3fb950) 72%, var(--border));
+}
+.composer-runstatus__pause:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  color: var(--fg-faint);
+  background: var(--button-bg);
+  border-color: var(--border-soft);
+}
+.composer-runstatus__pause:disabled:hover,
+.composer-runstatus__pause:disabled:focus-visible {
   color: var(--fg-faint);
   background: var(--button-bg);
   border-color: var(--border-soft);
@@ -16103,7 +16239,7 @@ a[href] {
   color: var(--accent-text);
   background: var(--grad);
   border: 0;
-  box-shadow: 0 6px 18px -6px var(--accent), var(--shadow-1);
+  box-shadow: var(--shadow-1);
 }
 
 .sidebar__new:hover {
@@ -16351,7 +16487,7 @@ a[href] {
 }
 
 .footer {
-  padding: 12px 32px 6px;
+  padding: 12px 16px 12px;
   background: color-mix(in srgb, var(--chat-bg) 96%, var(--bg-elev));
 }
 
@@ -17062,7 +17198,7 @@ a[href] {
   border-radius: 12px;
   color: var(--accent-text);
   background: var(--grad);
-  box-shadow: 0 6px 18px -6px var(--accent), var(--shadow-1);
+  box-shadow: var(--shadow-1);
 }
 
 :root[data-theme-style] .sidebar__navitem:hover,
@@ -17672,7 +17808,7 @@ a[href] {
 }
 
 :root[data-theme-style] .footer {
-  padding: 12px 16px 38px;
+  padding: 12px 16px 12px;
   background: color-mix(in srgb, var(--chat-bg) 96%, var(--bg-elev));
   border-top: 1px solid var(--border-soft);
 }
@@ -18884,6 +19020,7 @@ a[href] {
 .app--cowork .sidebar,
 .app--cowork .sidebar-resizer,
 .app--cowork .chat-pane,
+.app--cowork .workspace-panel-resizer,
 .app--cowork .workbench-dock {
   display: none;
 }
@@ -18914,13 +19051,14 @@ a[href] {
 }
 
 :root[data-theme-style] .cowork-sidebar {
+  --sidebar-entry-content-inset: 12px;
   background: var(--sidebar-bg);
   border-right: 1px solid var(--border-soft);
   min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  padding: 12px 10px 0;
+  padding: 14px 12px 0;
 }
 
 :root[data-theme-style] .cowork-sidebar__scroll {
@@ -18940,7 +19078,13 @@ a[href] {
 :root[data-theme-style] .cowork-main {
   background: var(--chat-bg);
   min-height: 0;
-  overflow-y: auto;
+  /* Hidden, not auto: this is a layout shell (header + transcript + composer)
+     whose height is already pinned by the .cowork-layout grid. Letting it
+     scroll stole wheel events from the inner .cowork-main__transcript (the real
+     scroll surface), so the transcript's scrollbar ignored the mouse wheel. The
+     inner region keeps overflow-y:auto + flex:1 + min-height:0 and owns the
+     scroll. */
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -18988,6 +19132,15 @@ a[href] {
   letter-spacing: 0;
 }
 
+/* Right-aligned action group in the cowork header: screenshot + copy/export.
+   Mirrors the topicbar actions so Copy/Export are reachable in CoWork mode
+   (where .chat-pane, which holds the topicbar, is display:none). */
+:root[data-theme-style] .cowork-main__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 :root[data-theme-style] .cowork-empty {
   color: var(--fg-faint);
   font-size: 13px;
@@ -18998,18 +19151,20 @@ a[href] {
   position: relative;
   width: 100%;
   min-width: 0;
-  height: 28px;
+  height: 36px;
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 0 10px;
+  padding: 0 12px;
   border: none;
   border-radius: 8px;
   background: transparent;
   color: var(--fg-dim);
   font: inherit;
   font-size: 13px;
-  cursor: default;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
 :root[data-theme-style] .cowork-sidebar__item:hover {
@@ -19017,21 +19172,19 @@ a[href] {
   color: var(--fg);
 }
 
+:root[data-theme-style] .cowork-sidebar__item:active {
+  transform: scale(0.97);
+}
+
 :root[data-theme-style] .cowork-sidebar__item--active {
-  background: var(--bg-elev-2);
-  color: var(--fg);
-  box-shadow: inset 0 0 0 1px var(--border), 0 8px 18px rgba(0, 0, 0, 0.14);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: none;
 }
 
 :root[data-theme-style] .cowork-sidebar__item--active::before {
-  content: "";
-  position: absolute;
-  top: 6px;
-  bottom: 6px;
-  left: 0;
-  width: 3px;
-  border-radius: 999px;
-  background: var(--accent);
+  display: none;
 }
 
 :root[data-theme-style] .cowork-empty-panel {
@@ -19064,8 +19217,13 @@ a[href] {
 :root[data-theme-style] .cowork-main__transcript {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding: 0 20px;
+  display: flex;
+  flex-direction: column;
+}
+:root[data-theme-style] .cowork-main__transcript > * {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
 }
 
 /* === coWork automation panel (定时任务) ======================================
@@ -20343,4 +20501,541 @@ a[href] {
   vertical-align: middle;
   color: var(--accent, #d97757);
   background: var(--accent-soft, rgba(217, 119, 87, 0.14));
+}
+
+/* --- Global Bottom Bar --- */
+/* The bottom bar holds the sidebar footer (history/trash/IM/settings) + status.
+ * It must sit ABOVE the chat transcript (which scrolls under it) but BELOW any
+ * modal overlay (history panel, settings, etc.) — otherwise it renders on top
+ * of an open modal and blocks/covers it. Using --z-onboarding (9999) was a bug:
+ * it placed the bar above every modal, so opening History/Trash from the bot
+ * detail view left the bar covering the modal and the user "couldn't reach" it.
+ * --z-raised sits above normal content but well under --z-modal (1200). The
+ * pointer-events:auto is kept so the transcript's scroll container never
+ * intercepts bar clicks. */
+.global-bottom-bar {
+  position: relative;
+  width: 100%;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg-elev, #fff);
+  z-index: var(--z-raised);
+  flex-shrink: 0;
+  pointer-events: auto !important;
+}
+
+.global-bottom-bar .footer__nav {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-left: 16px;
+}
+
+/* Ensure tooltip triggers perfectly wrap the buttons to catch hover events */
+.global-bottom-bar .footer__nav .tooltip-trigger {
+  display: inline-flex;
+  pointer-events: auto !important;
+}
+
+.global-bottom-bar .footer__navitem {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--fg-dim);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.global-bottom-bar .footer__navitem:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+}
+
+.global-bottom-bar .footer__navitem svg {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+.global-bottom-bar .sidebar-im-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+  border: 1px solid var(--bg-elev, #fff);
+}
+
+.global-bottom-bar .statusbar {
+  position: static !important;
+  left: auto !important;
+  margin: 0 16px 0 auto !important;
+  flex: 0 0 auto !important;
+  justify-content: flex-end !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  max-width: none !important;
+  width: auto !important;
+  font-size: 12px !important;
+}
+
+/* Enhance accordion magic with springy bounce micro-animations */
+.global-bottom-bar .statusbar .statusbar__group:not(:first-child) {
+  max-width: 0 !important;
+  opacity: 0 !important;
+  transform: translateX(20px) scale(0.9) !important;
+  overflow: hidden !important;
+  margin-left: 0 !important;
+  padding-left: 0 !important;
+  transition: all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) !important; /* Apple-style spring physics */
+  white-space: nowrap !important;
+  visibility: hidden; /* Prevent focus when collapsed */
+}
+
+.global-bottom-bar .statusbar:hover .statusbar__group:not(:first-child) {
+  max-width: 250px !important; /* Plenty of room for metrics */
+  opacity: 1 !important;
+  transform: translateX(0) scale(1) !important;
+  margin-left: 14px !important; /* Restoring original group gap */
+  visibility: visible;
+}
+
+.global-bottom-bar .statusbar span,
+.global-bottom-bar .statusbar b,
+.global-bottom-bar .statusbar .stat__label {
+  font-size: 12px !important;
+  pointer-events: auto !important;
+}
+
+/* Force tooltip to absolute top layer to ensure hover expansion is visible */
+.tooltip {
+  z-index: var(--z-crash-overlay);
+}
+
+/* Ensure layout leaves space for the flow bottom bar */
+.layout {
+  height: calc(100% - 36px) !important;
+}
+
+/* =========================================================
+   Cowork Automation Templates Redesign (Modern Card Grid)
+   ========================================================= */
+
+.cowork-automation__tpl-section {
+  margin-bottom: 32px;
+}
+
+.cowork-automation__tpl-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 16px;
+}
+
+.cowork-automation__tpl-title svg {
+  color: var(--accent);
+}
+
+.cowork-automation__tpl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.cowork-automation__tpl-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  background: var(--bg-elev, #ffffff);
+  border: 1px solid color-mix(in srgb, var(--border, #e5e5e5) 70%, transparent);
+  border-radius: 12px;
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+  font-family: inherit;
+  outline: none;
+}
+
+.cowork-automation__tpl-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 1%, var(--bg-elev, #ffffff));
+}
+
+.cowork-automation__tpl-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  width: 100%;
+}
+
+.cowork-automation__tpl-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+}
+
+.cowork-automation__tpl-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.cowork-automation__tpl-desc {
+  font-size: 13px;
+  color: var(--fg-dim);
+  line-height: 1.5;
+  margin-bottom: 16px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  height: 39px; /* Ensure fixed height for 2 lines to align cards */
+}
+
+.cowork-automation__tpl-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: auto;
+  width: 100%;
+}
+
+.cowork-automation__tpl-tag {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg-dim);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  padding: 4px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.cowork-automation__tpl-card:hover .cowork-automation__tpl-tag {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--accent);
+}
+
+/* =========================================================
+   Cowork Expert Panel Redesign (Premium Card Grid)
+   ========================================================= */
+
+.cowork-expert__body {
+  padding-bottom: 32px;
+}
+
+.cowork-expert__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.cowork-expert__card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev, #ffffff);
+  border: 1px solid color-mix(in srgb, var(--border, #e5e5e5) 70%, transparent);
+  border-radius: 12px;
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+  min-height: 120px;
+}
+
+.cowork-expert__card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.cowork-expert__card--selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 1%, var(--bg-elev, #ffffff));
+  box-shadow: inset 0 0 0 1px var(--accent), 0 2px 8px rgba(0, 0, 0, 0.02);
+}
+
+.cowork-expert__card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.cowork-expert__card-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--bg-elev-high);
+  color: var(--fg-dim);
+  transition: all 0.3s ease;
+}
+
+.cowork-expert__card--selected .cowork-expert__card-avatar,
+.cowork-expert__card-avatar--on {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.cowork-expert__card-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg);
+  flex: 1;
+}
+
+/* 隐藏式操作区 */
+.cowork-expert__card-actions {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transform: translateX(10px);
+  transition: all 0.25s ease;
+  pointer-events: none;
+}
+
+.cowork-expert__card:hover .cowork-expert__card-actions {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.cowork-task-card__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: none;
+  background: var(--bg-elev-high);
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cowork-task-card__btn:hover {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--fg);
+}
+
+.cowork-task-card__btn--danger:hover {
+  background: rgba(220, 38, 38, 0.1);
+  color: rgb(220, 38, 38);
+}
+
+.cowork-expert__card-roster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.cowork-expert__expert-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg-dim);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  padding: 4px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.cowork-expert__card-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-soft);
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.cowork-expert__card-mode {
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+
+.cowork-expert__card--selected .cowork-expert__card-mode {
+  color: var(--accent);
+}
+
+/* 新建团队占位卡片 */
+.cowork-expert__card--new {
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--border-soft);
+  background: transparent;
+  color: var(--fg-dim);
+  font-weight: 500;
+  gap: 8px;
+  box-shadow: none;
+}
+
+.cowork-expert__card--new:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 3%, transparent);
+}
+
+/* =========================================================
+   Composer (Expert Task Input Area)
+   ========================================================= */
+
+.cowork-expert__composer {
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: none;
+}
+
+.cowork-expert__composer-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.cowork-expert__composer-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+
+.cowork-expert__composer-team {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.cowork-expert__composer-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.cowork-expert__composer-roster {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.cowork-expert__composer-tag {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.cowork-expert__composer-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 12px;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--fg);
+  resize: vertical;
+  min-height: 80px;
+  outline: none;
+  transition: border-color 0.2s;
+  margin-bottom: 16px;
+}
+
+.cowork-expert__composer-input:focus {
+  border-color: var(--accent);
+}
+
+.cowork-expert__composer-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cowork-expert__composer-opts {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cowork-expert__composer-select {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+}
+
+.cowork-expert__composer-rounds {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+
+.cowork-expert__composer-rounds input {
+  width: 48px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg);
+  color: var(--fg);
+  text-align: center;
+  outline: none;
 }

@@ -64,3 +64,17 @@ benchmarks/context-maintenance-e2e/run/
 # Local test / migration artifacts
 /tests/
 /updateFile/
+cua-vlm-trace/
+
+# Scratch / experiment code (one-off debug scripts, never part of the build)
+/scratch/
+
+# Generated tool output and CUA replay traces (rebuilt at runtime, not source)
+/output/
+/cua-replay-trace/
+
+# Stray root-level test/debug artifacts (CUA notepad probes, demo outputs)
+/cua-test.txt
+/output.pptx
+/read-notepad.ps1
+/verify_notepad.py
