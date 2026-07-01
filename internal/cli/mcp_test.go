@@ -328,11 +328,97 @@ func TestMCPEditConfigLaunchUsesVisualBeforeEditor(t *testing.T) {
 	if launch.editor != "vim" {
 		t.Fatalf("editor = %q, want vim", launch.editor)
 	}
-	if len(launch.cmd.Args) != 3 || launch.cmd.Args[0] != "sh" || launch.cmd.Args[1] != "-lc" {
-		t.Fatalf("VISUAL should run through shell, args=%v", launch.cmd.Args)
+	// VISUAL must run the editor binary directly (not via sh -lc) so that
+	// shell metacharacters in the env value cannot be executed. argv is
+	// [editorBinary, path]; the space in the path is preserved as a single
+	// argument because it is passed directly, not re-tokenized.
+	if len(launch.cmd.Args) != 2 || launch.cmd.Args[0] != "vim" || launch.cmd.Args[1] != path {
+		t.Fatalf("VISUAL should invoke editor binary directly, args=%v", launch.cmd.Args)
 	}
-	if want := "vim " + shellQuote(path); launch.cmd.Args[2] != want {
-		t.Fatalf("shell command = %q, want %q", launch.cmd.Args[2], want)
+}
+
+// TestMCPEditConfigLaunchEditorWithArgs confirms that an EDITOR/VISUAL value
+// carrying arguments (e.g. "code --wait") is split into argv correctly and
+// the path is appended as the final argument, without going through a shell.
+func TestMCPEditConfigLaunchEditorWithArgs(t *testing.T) {
+	t.Setenv("VISUAL", "code --wait")
+	t.Setenv("EDITOR", "")
+
+	path := "/tmp/momapeer.toml"
+	launch, err := mcpEditConfigLaunchCommand(path, func(string) (string, error) {
+		t.Fatal("lookPath should not be called when VISUAL is set")
+		return "", errors.New("unexpected lookup")
+	})
+	if err != nil {
+		t.Fatalf("edit command: %v", err)
+	}
+	if launch.editor != "code" {
+		t.Fatalf("editor display name = %q, want code", launch.editor)
+	}
+	want := []string{"code", "--wait", path}
+	if len(launch.cmd.Args) != len(want) {
+		t.Fatalf("args length = %d, want %d, args=%v", len(launch.cmd.Args), len(want), launch.cmd.Args)
+	}
+	for i, w := range want {
+		if launch.cmd.Args[i] != w {
+			t.Fatalf("args[%d] = %q, want %q, full args=%v", i, launch.cmd.Args[i], w, launch.cmd.Args)
+		}
+	}
+}
+
+// TestMCPEditConfigLaunchEditorRejectsShellMetachars confirms that shell
+// metacharacters in EDITOR/VISUAL are treated as literal argv tokens and
+// never executed as a shell command — the previous sh -lc construction would
+// have run "rm" here.
+func TestMCPEditConfigLaunchEditorRejectsShellMetachars(t *testing.T) {
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", "vim; rm -rf /tmp/should-not-exist")
+
+	path := "/tmp/momapeer.toml"
+	launch, err := mcpEditConfigLaunchCommand(path, func(string) (string, error) {
+		t.Fatal("lookPath should not be called when EDITOR is set")
+		return "", errors.New("unexpected lookup")
+	})
+	if err != nil {
+		t.Fatalf("edit command: %v", err)
+	}
+	// The entire EDITOR value is split on whitespace, so "vim;", "rm", "-rf",
+	// and the path become separate argv tokens — none of them are interpreted
+	// by a shell. The first token "vim;" is the (literal) program name; the
+	// shell injection payload "rm" is just an argument to it.
+	if launch.cmd.Args[0] != "vim;" {
+		t.Fatalf("first arg = %q, want \"vim;\" (shell metachars must not be executed)", launch.cmd.Args[0])
+	}
+	if launch.cmd.Args[len(launch.cmd.Args)-1] != path {
+		t.Fatalf("last arg should be path, args=%v", launch.cmd.Args)
+	}
+}
+
+// TestMCPEditConfigLaunchEditorExpandsEnvVar confirms that $VAR references
+// in EDITOR/VISUAL are expanded without going through a shell, preserving
+// the behavior of the prior sh -lc path for users who set values such as
+// EDITOR="$HOME/bin/myeditor" verbatim.
+func TestMCPEditConfigLaunchEditorExpandsEnvVar(t *testing.T) {
+	t.Setenv("MOMAPEER_TEST_EDITOR_BIN", "/opt/custom/bin/myed")
+	t.Setenv("VISUAL", "$MOMAPEER_TEST_EDITOR_BIN --flag")
+	t.Setenv("EDITOR", "")
+
+	path := "/tmp/momapeer.toml"
+	launch, err := mcpEditConfigLaunchCommand(path, func(string) (string, error) {
+		t.Fatal("lookPath should not be called when VISUAL is set")
+		return "", errors.New("unexpected lookup")
+	})
+	if err != nil {
+		t.Fatalf("edit command: %v", err)
+	}
+	want := []string{"/opt/custom/bin/myed", "--flag", path}
+	if len(launch.cmd.Args) != len(want) {
+		t.Fatalf("args length = %d, want %d, args=%v", len(launch.cmd.Args), len(want), launch.cmd.Args)
+	}
+	for i, w := range want {
+		if launch.cmd.Args[i] != w {
+			t.Fatalf("args[%d] = %q, want %q, full args=%v", i, launch.cmd.Args[i], w, launch.cmd.Args)
+		}
 	}
 }
 

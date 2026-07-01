@@ -395,14 +395,22 @@ func mcpEditConfigLaunchCommand(path string, lookPath func(string) (string, erro
 		return mcpEditConfigLaunch{}, fmt.Errorf("no config path available")
 	}
 	if editor := strings.TrimSpace(os.Getenv("VISUAL")); editor != "" {
+		cmd, err := editorLaunchCmd(editor, path)
+		if err != nil {
+			return mcpEditConfigLaunch{}, err
+		}
 		return mcpEditConfigLaunch{
-			cmd:    exec.Command("sh", "-lc", editor+" "+shellQuote(path)),
+			cmd:    cmd,
 			editor: mcpEditorDisplayName(editor),
 		}, nil
 	}
 	if editor := strings.TrimSpace(os.Getenv("EDITOR")); editor != "" {
+		cmd, err := editorLaunchCmd(editor, path)
+		if err != nil {
+			return mcpEditConfigLaunch{}, err
+		}
 		return mcpEditConfigLaunch{
-			cmd:    exec.Command("sh", "-lc", editor+" "+shellQuote(path)),
+			cmd:    cmd,
 			editor: mcpEditorDisplayName(editor),
 		}, nil
 	}
@@ -425,7 +433,7 @@ func mcpEditConfigLaunchCommand(path string, lookPath func(string) (string, erro
 }
 
 func mcpEditorDisplayName(editor string) string {
-	fields := strings.Fields(editor)
+	fields := strings.Fields(os.ExpandEnv(editor))
 	if len(fields) == 0 {
 		return ""
 	}
@@ -488,8 +496,56 @@ func mcpConnected(ctrl *control.Controller, name string) bool {
 	return false
 }
 
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+// editorLaunchCmd builds an exec.Cmd for an editor invocation read from the
+// VISUAL/EDITOR environment variable. The editor string may carry arguments
+// (e.g. "code --wait", "nvim -p") and shell variable / tilde references
+// (e.g. "$HOME/bin/myeditor", "~/bin/myeditor"); these are expanded without
+// invoking a shell, and the editor binary is resolved by the OS directly.
+// Shell metacharacters in the value cannot be executed — the entire value
+// is split into argv via strings.Fields after expansion, so a value like
+// "vim; rm -rf ~" becomes the literal argv ["vim;", "rm", "-rf", "<home>"]
+// and "vim;" is looked up as the program name (failing harmlessly) rather
+// than being interpreted by a shell.
+//
+// This avoids the previous sh -lc construction, which concatenated the raw
+// editor value into a shell command string — both a command-injection risk
+// and a portability problem on Windows, where sh is usually absent. It
+// matches the safe pattern already used by the terminal-editor fallback
+// (exec.Command(bin, path)) in the same function.
+//
+// strings.Fields does not honor shell quoting, so an editor path containing
+// literal whitespace is unsupported — but that was already broken under the
+// prior sh -lc construction for any value not wrapped in single quotes, and
+// no common EDITOR/VISUAL value requires it. Tilde expansion only covers
+// the leading-token forms "~" and "~/..."; "~user" is not supported (and
+// was not reliably supported by the prior sh -lc path either, since $HOME
+// for another user is not available without getpwuid).
+func editorLaunchCmd(editor, path string) (*exec.Cmd, error) {
+	expanded := os.ExpandEnv(editor)
+	args := strings.Fields(expanded)
+	if len(args) == 0 {
+		return nil, fmt.Errorf("invalid EDITOR/VISUAL value: %q", editor)
+	}
+	args[0] = expandLeadingTilde(args[0])
+	return exec.Command(args[0], append(args[1:], path)...), nil
+}
+
+// expandLeadingTilde replaces a leading "~" or "~/" prefix with the current
+// user's home directory. Other forms (e.g. "~user") are returned unchanged.
+// If the home directory cannot be determined the value is returned as-is so
+// the caller surfaces the exec failure rather than panicking.
+func expandLeadingTilde(p string) string {
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
+	if p == "~" {
+		return home
+	}
+	return home + p[1:]
 }
 
 func mcpBoolPtr(v bool) *bool { return &v }

@@ -161,7 +161,11 @@ func TestACPSubagentProviderResolverHonorsProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve sub profile: %v", err)
 	}
-	got := prov.(*acpTestProvider).cfg
+	// boot.NewProviderWithProxy may wrap the provider with a RateLimitedProvider
+	// when a global RPM budget is set (another test's boot.Build leaves one in
+	// the process-global budget). Peel decorators before asserting the concrete
+	// type so this test is order-independent.
+	got := provider.UnwrapProvider(prov).(*acpTestProvider).cfg
 	if got.Model != "sub-model" || got.Extra["effort"] != "high" || ctxWin != 222 {
 		t.Fatalf("resolved profile = model:%q effort:%v ctx:%d, want sub-model/high/222", got.Model, got.Extra["effort"], ctxWin)
 	}
@@ -170,7 +174,7 @@ func TestACPSubagentProviderResolverHonorsProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve effort-only profile: %v", err)
 	}
-	got = prov.(*acpTestProvider).cfg
+	got = provider.UnwrapProvider(prov).(*acpTestProvider).cfg
 	if got.Model != "parent-model" || got.Extra["effort"] != "low" || ctxWin != 111 {
 		t.Fatalf("effort-only profile = model:%q effort:%v ctx:%d, want parent-model/low/111", got.Model, got.Extra["effort"], ctxWin)
 	}

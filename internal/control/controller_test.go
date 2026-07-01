@@ -526,6 +526,49 @@ func TestRunGuardedPanicEmitsTurnDone(t *testing.T) {
 	}
 }
 
+// TestRunGuardedCancelEmitsNilErr is the regression for the "clicking Stop
+// shows an error" bug: a user-initiated cancel must end the turn with a clean
+// TurnDone{Err:nil}, not surface the body's context.Canceled as a turn error
+// (which every frontend rendered as a red/yellow notice).
+func TestRunGuardedCancelEmitsNilErr(t *testing.T) {
+	sess := agent.NewSession("sys")
+	events := make(chan event.Event, 4)
+	c := New(Options{
+		Runner: appendingRunner{session: sess},
+		Sink:   event.FuncSink(func(e event.Event) { events <- e }),
+	})
+
+	go func() {
+		c.runGuarded(func(ctx context.Context) error {
+			<-ctx.Done()
+			return ctx.Err() // context.Canceled — the normal cancel return value
+		})
+	}()
+
+	// Give the body time to start blocking on ctx.Done(), then cancel.
+	time.Sleep(50 * time.Millisecond)
+	c.Cancel()
+
+	select {
+	case e := <-events:
+		if e.Kind != event.TurnDone {
+			t.Fatalf("expected TurnDone after cancel, got %v", e.Kind)
+		}
+		if e.Err != nil {
+			t.Fatalf("TurnDone.Err should be nil for a user cancel, got %v", e.Err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for TurnDone after cancel")
+	}
+
+	c.mu.Lock()
+	running := c.running
+	c.mu.Unlock()
+	if running {
+		t.Fatal("c.running should be false after cancel")
+	}
+}
+
 func TestRunGuardedPanicDoesNotDoubleEmitTurnDone(t *testing.T) {
 	sess := agent.NewSession("sys")
 	var count int32

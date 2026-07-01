@@ -34,11 +34,38 @@ func NewRateLimitedProvider(inner Provider, budget *RequestBudget, key string, p
 
 func (p *RateLimitedProvider) Name() string { return p.inner.Name() }
 
+// Unwrap returns the inner Provider this decorator wraps, so callers (and tests)
+// can reach the concrete provider underneath any number of decorators. Pairs
+// with UnwrapProvider, the standard Go unwrap idiom: NewProviderWithProxy may
+// wrap a provider with this rate limiter depending on the global budget, so a
+// direct type assertion on its return value is unsafe — unwrap first.
+func (p *RateLimitedProvider) Unwrap() Provider { return p.inner }
+
 func (p *RateLimitedProvider) Stream(ctx context.Context, req Request) (<-chan Chunk, error) {
 	if err := p.budget.Acquire(ctx, p.key, p.priority); err != nil {
 		return nil, err
 	}
 	return p.inner.Stream(ctx, req)
+}
+
+// UnwrapProvider peels decorator layers (anything implementing Unwrap() Provider)
+// off p until it reaches a provider that has no inner, returning that base.
+// Use this before a type assertion on a provider that may have been wrapped by
+// boot.NewProviderWithProxy (which adds RateLimitedProvider when a global RPM
+// budget is configured). nil-safe: a nil p returns nil.
+func UnwrapProvider(p Provider) Provider {
+	for p != nil {
+		u, ok := p.(interface{ Unwrap() Provider })
+		if !ok {
+			return p
+		}
+		inner := u.Unwrap()
+		if inner == nil || inner == p {
+			return p
+		}
+		p = inner
+	}
+	return p
 }
 
 // BudgetKeyForConfig returns the budget bucket key for a provider Config —

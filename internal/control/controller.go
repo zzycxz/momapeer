@@ -440,6 +440,14 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 		c.running = false
 		c.cancel = nil
 		c.mu.Unlock()
+		// A user-initiated cancel (ctx.Err != nil) is a normal end of the turn,
+		// not a failure: the running LLM/tool returns context.Canceled (or a
+		// wrapper). Emit TurnDone with a nil Err so every frontend (CLI/desktop/
+		// bot) treats Stop as a clean end instead of surfacing a red "error"
+		// notice. Real failures (provider 4xx, panics above) keep their Err.
+		if ctx.Err() != nil {
+			err = nil
+		}
 		c.sink.Emit(event.Event{Kind: event.TurnDone, Err: explainError(err)})
 	}()
 }
@@ -504,7 +512,14 @@ func (c *Controller) RunTurn(ctx context.Context, input string) error {
 		c.mu.Unlock()
 		cancel()
 	}()
-	return c.runTurn(ctx, input)
+	err := c.runTurn(ctx, input)
+	// A user-initiated cancel is a normal end of the turn, not a failure:
+	// surface a nil error so callers (bot gateway, ACP) don't treat the
+	// context.Canceled as a turn error to display/log.
+	if ctx.Err() != nil {
+		return nil
+	}
+	return err
 }
 
 func (c *Controller) runTurnWithRaw(ctx context.Context, input, raw string) error {
@@ -1229,6 +1244,48 @@ func (c *Controller) Running() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.running
+}
+
+// Pause requests a graceful pause of the in-flight turn. Unlike Cancel (which
+// aborts and discards partial work), Pause lets the current step finish, then
+// freezes the agent with full state preserved so ResumeTurn continues from the
+// break point. No-op when no turn is running or when already paused. Safe from
+// any goroutine; the run loop checks the pause request at the top of each step.
+func (c *Controller) Pause() {
+	c.mu.Lock()
+	exec := c.executor
+	running := c.running
+	c.mu.Unlock()
+	if exec == nil || !running {
+		return
+	}
+	exec.Pause()
+}
+
+// ResumeTurn unblocks a paused turn. Named ResumeTurn (not Resume) to avoid a
+// clash with the session-lifecycle Resume(session, path). No-op when not
+// paused. Safe from any goroutine.
+func (c *Controller) ResumeTurn() {
+	c.mu.Lock()
+	exec := c.executor
+	c.mu.Unlock()
+	if exec == nil {
+		return
+	}
+	exec.Resume()
+}
+
+// Paused reports whether the in-flight turn is currently frozen on a pause
+// (between steps, awaiting ResumeTurn). False when running normally, not
+// running, or no executor is bound.
+func (c *Controller) Paused() bool {
+	c.mu.Lock()
+	exec := c.executor
+	c.mu.Unlock()
+	if exec == nil {
+		return false
+	}
+	return exec.IsPaused()
 }
 
 // Turn returns the current turn number (0 before the first submit).
