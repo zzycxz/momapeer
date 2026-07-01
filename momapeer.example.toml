@@ -39,6 +39,11 @@ compact_force_ratio = 0.9   # force compacting at this high-water mark
 # subagent_models = { review = "moma/openai/gpt-oss-120b", security_review = "moma/openai/gpt-oss-120b" }   # per-skill overrides
 # output_style = "explanatory"   # persona/tone folded into the prompt: explanatory | learning | concise,
 #                                  or a custom .momapeer/output-styles/<name>.md ; empty = default
+# verify = "on"                 # optional (dev profile only): after the executor finishes, run
+#                                # go vet/build/test and retry on failure. off = original single-pass.
+# verify_max_retries = 1        # debug retries after a failed verify (default 1, 0 = no retry).
+# review = "on"                 # optional (dev profile only): after verify, the executor re-reads its
+#                                # git diff and fixes critical issues it finds. Runs after verify. off = skip.
 
 # A provider is a vendor endpoint (one base_url + key) that offers one or more
 # models. Use `models = [...]` to expose several under a single entry — switching
@@ -211,6 +216,48 @@ bash_timeout_seconds = 120   # foreground safety cap; set 0 for no tool-local ca
 # port         = 993
 # username     = "agent@example.com"
 # password_env = "COWORK_IMAP_PASSWORD"
+#
+# # Multiple mailboxes (recommended over the single pair above).
+# # [[cowork.email_accounts]] is an array of named accounts so MoMAPeer can talk
+# # to several mailboxes at once — e.g. a personal 139 box + a work CMCC box.
+# # Tools pick one by `account` (empty = the default). Passwords are NEVER written
+# # here, only the env-var name; the value lives encrypted in the secrets store
+# # and the coWork settings panel writes it for you.
+# #
+# # 139 个人: imap.139.com:993 / smtp.139.com:465(tls), 账号=手机号@139.com,
+# #   密码=授权码 (help.mail.10086.cn → 账号与安全 → 邮箱协议 → 开启 IMAP/SMTP →
+# #   获取授权码; 有效期约 90 天，到期需重新生成).
+# # 139 政企: imap.mail.139.com:993 / smtp.mail.139.com:465(tls).
+# [[cowork.email_accounts]]
+# name    = "personal-139"
+# default = true
+# [cowork.email_accounts.smtp]
+# host            = "smtp.139.com"
+# port            = 465
+# from            = "13800138000@139.com"
+# username        = "13800138000@139.com"
+# password_env    = "MAIL_PWD_PERSONAL"
+# encryption_mode = "tls"
+# [cowork.email_accounts.imap]
+# host         = "imap.139.com"
+# port         = 993
+# username     = "13800138000@139.com"
+# password_env = "MAIL_PWD_PERSONAL"
+#
+# [[cowork.email_accounts]]
+# name    = "work-cmcc"
+# [cowork.email_accounts.smtp]
+# host            = "smtp.mail.139.com"
+# port            = 465
+# from            = "you@your-company.com"
+# username        = "you@your-company.com"
+# password_env    = "MAIL_PWD_WORK"
+# encryption_mode = "tls"
+# [cowork.email_accounts.imap]
+# host         = "imap.mail.139.com"
+# port         = 993
+# username     = "you@your-company.com"
+# password_env = "MAIL_PWD_WORK"
 #
 # # RAG semantic reranking (optional). When set, rag_search blends FTS5 BM25 with
 # # embedding cosine similarity for better recall. Empty = FTS5-only (offline).
