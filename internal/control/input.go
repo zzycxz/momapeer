@@ -52,6 +52,32 @@ func StripComposePrefixes(content string) string {
 	return s
 }
 
+// referencedContextPrefix is the controller-injected header that precedes the
+// user's own text when @-references resolve to a context block (see
+// controller.go: "Referenced context:\n\n" + block + "\n\n" + input). It is not
+// part of what the user typed, so exports strip it for a clean transcript.
+const referencedContextPrefix = "Referenced context:\n\n"
+
+// StripReferencedContextPrefix removes a leading "Referenced context:\n\n<block>\n\n"
+// wrapper that the controller prepends when resolving @-references, leaving only
+// the user's actual message. The wrapper has no terminator, so this matches the
+// prefix, skips the block up to the user-text separator, and keeps the rest.
+// Used by exporters (e.g. /export) that want to reconstruct the original prompt.
+func StripReferencedContextPrefix(content string) string {
+	s := content
+	if !strings.HasPrefix(s, referencedContextPrefix) {
+		return s
+	}
+	s = strings.TrimPrefix(s, referencedContextPrefix)
+	// The block ends with "\n\n" immediately before the user's real text. Drop
+	// everything up to and including the LAST occurrence of that separator so
+	// the block (which may itself contain blank lines) is removed wholesale.
+	if idx := strings.LastIndex(s, "\n\n"); idx >= 0 {
+		return strings.TrimSpace(s[idx+len("\n\n"):])
+	}
+	return strings.TrimSpace(s)
+}
+
 // IsSyntheticUserMessage returns true if the content matches one of the known
 // synthetic user messages injected by the controller or agent loop (plan
 // approval, stream recovery, readiness retry, etc.). These should not be shown

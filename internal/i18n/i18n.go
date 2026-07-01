@@ -143,54 +143,61 @@ type Messages struct {
 
 	// slash command + sub-command descriptions shown in the menu (CLI and desktop
 	// share these via i18n.M, so both frontends localize identically).
-	CmdNew          string // /new
-	CmdClear        string // /clear
-	CmdCompact      string // /compact
-	CmdRewind       string // /rewind
-	CmdTree         string // /tree
-	CmdBranch       string // /branch
-	CmdSwitchBranch string // /switch
-	CmdResume       string // /resume
-	CmdModel        string // /model
-	CmdMemory       string // /memory
-	CmdGoal         string // /goal
-	CmdRemember     string // /remember
-	CmdForget       string // /forget
-	CmdMcp          string // /mcp
-	CmdHooks        string // /hooks
-	CmdPasteImage   string // /paste-image
-	CmdOutputStyle  string // /output-style
-	CmdTheme        string // /theme
-	CmdLanguage     string // /language
-	CmdSkill        string // /skills
-	CmdVerbose      string // /verbose
-	CmdSandbox      string // /sandbox
-	CmdEffort       string // /effort
-	CmdAutoPlan     string // /auto-plan
-	CmdHelp         string // /help
-	CmdTodo         string // /todo
-	CmdQuit         string // /quit (also accepts /exit as hidden alias)
-	ArgSkillList    string // /skills list
-	ArgSkillShow    string // /skills show
-	ArgSkillNew     string // /skills new
-	ArgSkillPaths   string // /skills paths
-	ArgMcpAdd       string // /mcp add
-	ArgMcpRemove    string // /mcp remove
-	ArgMcpList      string // /mcp list
-	ArgMcpConnected string // /mcp remove <server> tag
-	ArgHooksList    string // /hooks list
-	ArgHooksTrust   string // /hooks trust
-	ArgModelCurrent string // /model <ref> active tag
-	ArgEffortAuto   string // /effort auto
-	ArgEffortLow    string // /effort low
-	ArgEffortMedium string // /effort medium
-	ArgEffortHigh   string // /effort high
-	ArgEffortXHigh  string // /effort xhigh
-	ArgEffortMax    string // /effort max
-	ArgThemeCurrent string // /theme <style> active tag
-	ArgLanguageAuto string // /language auto
-	ArgLanguageEn   string // /language en
-	ArgLanguageZh   string // /language zh
+	CmdNew              string // /new
+	CmdClear            string // /clear
+	CmdCompact          string // /compact
+	CmdRewind           string // /rewind
+	CmdTree             string // /tree
+	CmdBranch           string // /branch
+	CmdSwitchBranch     string // /switch
+	CmdResume           string // /resume
+	CmdModel            string // /model
+	CmdMemory           string // /memory
+	CmdGoal             string // /goal
+	CmdRemember         string // /remember
+	CmdForget           string // /forget
+	CmdMcp              string // /mcp
+	CmdHooks            string // /hooks
+	CmdPasteImage       string // /paste-image
+	CmdOutputStyle      string // /output-style
+	CmdTheme            string // /theme
+	CmdLanguage         string // /language
+	CmdSkill            string // /skills
+	CmdVerbose          string // /verbose
+	CmdSandbox          string // /sandbox
+	CmdEffort           string // /effort
+	CmdAutoPlan         string // /auto-plan
+	CmdHelp             string // /help
+	CmdTodo             string // /todo
+	CmdQuit             string // /quit (also accepts /exit as hidden alias)
+	CmdCopy             string // /copy
+	CmdExport           string // /export
+	SlashCopyDone       string // "/copy" succeeded
+	SlashCopyEmpty      string // no assistant response to copy
+	SlashCopyListHeader string // header shown before the numbered list
+	SlashExportDoneFmt  string // "/export" succeeded, %s = file path
+	SlashExportEmpty    string // no messages to export
+	ArgSkillList        string // /skills list
+	ArgSkillShow        string // /skills show
+	ArgSkillNew         string // /skills new
+	ArgSkillPaths       string // /skills paths
+	ArgMcpAdd           string // /mcp add
+	ArgMcpRemove        string // /mcp remove
+	ArgMcpList          string // /mcp list
+	ArgMcpConnected     string // /mcp remove <server> tag
+	ArgHooksList        string // /hooks list
+	ArgHooksTrust       string // /hooks trust
+	ArgModelCurrent     string // /model <ref> active tag
+	ArgEffortAuto       string // /effort auto
+	ArgEffortLow        string // /effort low
+	ArgEffortMedium     string // /effort medium
+	ArgEffortHigh       string // /effort high
+	ArgEffortXHigh      string // /effort xhigh
+	ArgEffortMax        string // /effort max
+	ArgThemeCurrent     string // /theme <style> active tag
+	ArgLanguageAuto     string // /language auto
+	ArgLanguageEn       string // /language en
+	ArgLanguageZh       string // /language zh
 
 	// management listing notices (the Submit path: desktop / HTTP frontends)
 	ListModelsHeaderFmt string // "models (active: %s)"
@@ -347,12 +354,12 @@ type Messages struct {
 	WriteEnvErr               string // "write .env:" — prefix for env-write failure
 
 	// provider HTTP error explanations — actionable, reason + fix per status code
-	ProviderErrBadRequest          string // 400
-	ProviderErrAuth                string // 401
-	ProviderErrUnprocessable       string // 422
-	ProviderErrRateLimited         string // 429
-	ProviderErrServer              string // 500
-	ProviderErrServerBusy          string // 503
+	ProviderErrBadRequest    string // 400
+	ProviderErrAuth          string // 401
+	ProviderErrUnprocessable string // 422
+	ProviderErrRateLimited   string // 429
+	ProviderErrServer        string // 500
+	ProviderErrServerBusy    string // 503
 
 	// selection menus
 	SelectOneHint      string // "(↑/↓ · Enter · q to cancel)"
