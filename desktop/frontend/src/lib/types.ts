@@ -18,7 +18,9 @@ export type EventKind =
   | "compaction_started"
   | "compaction_done"
   | "retrying"
-  | "steer";
+  | "steer"
+  | "paused"
+  | "resumed";
 
 export interface WireCompaction {
   trigger?: string; // "auto" | "manual"
@@ -518,6 +520,7 @@ export interface TaskView {
   lastResult: string;
   outputMode: string; // "" | "im" | "email" | "notify" | "file"
   outputDest: string;
+  outputDir: string;
   humanSchedule: string;
 }
 
@@ -529,6 +532,7 @@ export interface TaskInput {
   prompt: string;
   outputMode: string;
   outputDest: string;
+  outputDir: string;
 }
 
 // One run-history record (newest first when listed).
@@ -762,7 +766,7 @@ export interface DreamStatusView {
 }
 
 // SettingsTab is the top-level navigation item in the Settings Centre modal.
-export type SettingsTab = "general" | "models" | "providers" | "bots" | "cowork" | "mcp" | "skills" | "memory" | "permissions" | "sandbox" | "network" | "appearance" | "updates";
+export type SettingsTab = "general" | "models" | "providers" | "bots" | "cowork" | "mcp" | "skills" | "memory" | "permissions" | "sandbox" | "network" | "hooks" | "appearance" | "updates";
 
 // Settings panel payloads (desktop/settings_app.go).
 export interface ProviderView {
@@ -899,6 +903,30 @@ export interface BotConnectionView {
   updatedAt: string;
 }
 
+// HookConfigView mirrors the Go HookConfigView (one hook, flat — carries its
+// event). command is required; match is a regex for PreToolUse/PostToolUse only.
+export interface HookConfigView {
+  event: string;
+  match?: string;
+  command: string;
+  description?: string;
+  timeout?: number;
+  cwd?: string;
+}
+
+// HooksSettingsView mirrors the Go HooksSettingsView — the hooks panel payload.
+// scope is "global" | "project"; path is the settings.json being edited;
+// projectRoot/trusted apply to the project scope (project hooks load only when
+// trusted); events is the valid event list (drives the JSON editor validation).
+export interface HooksSettingsView {
+  scope: string;
+  path: string;
+  projectRoot: string;
+  trusted: boolean;
+  hooks: HookConfigView[];
+  events: string[];
+}
+
 export interface BotSettingsView {
   enabled: boolean;
   model: string;
@@ -913,23 +941,41 @@ export interface BotSettingsView {
 
 // CoWorkSettingsView mirrors the Go CoWorkSettingsView. Secrets (SMTP/IMAP
 // passwords) are presented as plain fields here; they're persisted to a
-// momapeer-managed .env (not config.toml). detectedBrowser/wpsPptDepsMissing
-// are read-only diagnostics from CheckCoworkBrowser/CheckWPSPPTDeps.
+// momapeer-managed .env (not config.toml). detectedBrowser is a read-only
+// diagnostic from CheckCoworkBrowser. pptTemplates/pptActiveTemplate drive the
+// PPT-template dropdown; pptTemplateDir is where the user drops JSON templates.
 export interface CoWorkSettingsView {
   browserPath: string;
-  wpsPptServerPath: string;
-  wpsPptPython: string;
   embeddingModel: string;
+  // PPT template selection. pptTemplates lists available templates (id+name)
+  // read from the templates dir; pptActiveTemplate is the selected id ("=" none).
+  pptActiveTemplate: string;
+  pptTemplates: PPTTemplateView[];
+  pptTemplateDir: string;
   smtp: SMTPSettings;
   imap: IMAPSettings;
   smtpPassword: string;
   imapPassword: string;
+  // True when an encrypted secret is stored for the password_env — the panel
+  // shows "已设置" without ever holding the value (the field above is write-only).
+  smtpPasswordSet: boolean;
+  imapPasswordSet: boolean;
   detectedBrowser: string;
-  wpsPptDepsMissing: string[];
   // Screenshot hotkey → VLM feature (off by default; user opts in).
   screenshotEnabled: boolean;
   screenshotHotkey: string;
   screenshotVlmModel: string;
+  // Emergency-stop hotkey for desktop automation (always on by default; set
+  // "off" to disable). Cancels the in-flight turn globally.
+  estopHotkey: string;
+}
+
+// PPTTemplateView is a trimmed PPT template (id + name) for the settings
+// dropdown. The full template (master file + theme + layout coordinates) is
+// loaded by the backend and injected into the ppt-wizard skill context.
+export interface PPTTemplateView {
+  id: string;
+  name: string;
 }
 
 export interface SMTPSettings {

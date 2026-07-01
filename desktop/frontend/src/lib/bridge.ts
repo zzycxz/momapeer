@@ -67,6 +67,8 @@ import type {
   GitCommitView,
   GitCommitDetailView,
   WorkspaceView,
+  HooksSettingsView,
+  HookConfigView,
 } from "./types";
 
 const GLOBAL_PROJECT_ORDER_KEY = "__global__";
@@ -113,6 +115,11 @@ export interface AppBindings {
   SteerForTab(tabID: string, text: string): Promise<void>;
   Cancel(): Promise<void>;
   CancelTab(tabID: string): Promise<void>;
+  Pause(): Promise<void>;
+  PauseTab(tabID: string): Promise<void>;
+  ResumeTurn(): Promise<void>;
+  ResumeTurnTab(tabID: string): Promise<void>;
+  PausedTab(tabID: string): Promise<boolean>;
   Approve(id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
   ApproveTab(tabID: string, id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
   AnswerQuestion(id: string, answers: QuestionAnswer[]): Promise<void>;
@@ -242,12 +249,19 @@ export interface AppBindings {
   SetNetwork(n: NetworkView): Promise<void>;
   SetBotSettings(b: BotSettingsView): Promise<void>;
   // coWork profile settings (browser/PPT/email/RAG). Secrets go to a managed
-  // .env via SetCoWorkSettings; CheckCoworkBrowser/CheckWPSPPTDeps/InstallWPSPPTDeps
-  // power the panel's detect/status/install buttons.
+  // .env via SetCoWorkSettings; CheckCoworkBrowser powers the panel's detect
+  // button; OpenPPTTemplateDir opens the templates folder so the user can add
+  // JSON templates.
   SetCoWorkSettings(v: CoWorkSettingsView): Promise<void>;
+  // Hooks settings (settings.json, global + project scopes). HooksSettings
+  // returns the payload for the Hooks tab; Save/Trust write + gate project hooks.
+  HooksSettings(scope: string): Promise<HooksSettingsView>;
+  SaveHooksSettings(scope: string, hooks: HookConfigView[]): Promise<void>;
+  SaveHooksSettingsForRoot(scope: string, projectRoot: string, hooks: HookConfigView[]): Promise<void>;
+  TrustProjectHooks(): Promise<void>;
+  TrustProjectHooksForRoot(projectRoot: string): Promise<void>;
   CheckCoworkBrowser(): Promise<string>;
-  CheckWPSPPTDeps(): Promise<string[]>;
-  InstallWPSPPTDeps(): Promise<string>;
+  OpenPPTTemplateDir(): Promise<void>;
   SetBotSecret(envName: string, value: string): Promise<void>;
   ClearBotSecret(envName: string): Promise<void>;
   StartBotConnectionInstall(provider: string, domain: string): Promise<BotInstallStartResult>;
@@ -338,6 +352,8 @@ export interface AppBindings {
   ExpertBudgetStatus(): Promise<BudgetStatusView>;
   StartScreenshotHotkey(): Promise<void>;
   StopScreenshotHotkey(): Promise<void>;
+  StartEStopHotkey(): Promise<void>;
+  StopEStopHotkey(): Promise<void>;
 }
 
 // Compile-time drift check. Exclude<A, B> extracts keys in A that are missing
@@ -683,6 +699,7 @@ function makeMockApp(): AppBindings {
       lastResult: "日报已生成",
       outputMode: "notify",
       outputDest: "",
+      outputDir: "",
       humanSchedule: "工作日 18:00",
     },
   ];
@@ -852,6 +869,26 @@ function makeMockApp(): AppBindings {
     history: [],
   };
   // Mutable settings so the Settings panel's edits are observable in browser dev.
+  // hookSettings holds the per-scope mock hooks payload (global + project).
+  const hookEvents = ["Startup", "PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "PostLLMCall", "SessionStart", "SessionEnd", "SubagentStop", "Notification", "PreCompact"];
+  const hookSettings: Record<string, HooksSettingsView> = {
+    global: {
+      scope: "global",
+      path: "~/.momapeer/settings.json",
+      projectRoot: "",
+      trusted: true,
+      events: hookEvents,
+      hooks: [],
+    },
+    project: {
+      scope: "project",
+      path: "./.momapeer/settings.json",
+      projectRoot: "/mock/project",
+      trusted: false,
+      events: hookEvents,
+      hooks: [],
+    },
+  };
   const settings: SettingsView = {
     defaultModel: "moma",
     plannerModel: "",
@@ -859,10 +896,10 @@ function makeMockApp(): AppBindings {
     subagentEffort: "",
     autoPlan: "off",
     providers: [
-      { name: "moma", builtIn: true, added: false, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-coder-next", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v32", "z.ai/glm-5.1", "z.ai/glm-5", "minimax/minimax-m2.7", "minimax/minimax-m2.5", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "stepfun/step-3.5-flash", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: true, contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
+      { name: "moma", builtIn: true, added: false, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-coder-next", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v32", "z.ai/glm-5.1", "z.ai/glm-5.2", "minimax/minimax-m2.7", "minimax/minimax-m2.5", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "stepfun/step-3.5-flash", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: true, contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
     ],
     officialProviders: [
-      { name: "moma", builtIn: true, added: false, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-coder-next", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v32", "z.ai/glm-5.1", "z.ai/glm-5", "minimax/minimax-m2.7", "minimax/minimax-m2.5", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "stepfun/step-3.5-flash", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: true, contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
+      { name: "moma", builtIn: true, added: false, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-coder-next", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v32", "z.ai/glm-5.1", "z.ai/glm-5.2", "minimax/minimax-m2.7", "minimax/minimax-m2.5", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "stepfun/step-3.5-flash", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: true, contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
     ],
     permissions: { mode: "ask", allow: ["ls", "read_file"], ask: [], deny: ["Bash(rm:*)"] },
     sandbox: { bash: "enforce", network: true, workspaceRoot: "", allowWrite: [] },
@@ -875,18 +912,21 @@ function makeMockApp(): AppBindings {
     agent: { temperature: 0.2, maxSteps: 0, plannerMaxSteps: 12, systemPrompt: "You are momapeer, a coding agent.", rpm: 0 },
     cowork: {
       browserPath: "",
-      wpsPptServerPath: "",
-      wpsPptPython: "",
       embeddingModel: "",
+      pptActiveTemplate: "",
+      pptTemplates: [],
+      pptTemplateDir: "",
       smtp: { host: "", port: 0, from: "", username: "", passwordEnv: "COWORK_SMTP_PASSWORD", useTLS: false },
       imap: { host: "", port: 0, username: "", passwordEnv: "COWORK_IMAP_PASSWORD" },
       smtpPassword: "",
       imapPassword: "",
+      smtpPasswordSet: false,
+      imapPasswordSet: false,
       detectedBrowser: "",
-      wpsPptDepsMissing: [],
       screenshotEnabled: false,
       screenshotHotkey: "Ctrl+Shift+S",
       screenshotVlmModel: "qwen/qwen3.6-27b",
+      estopHotkey: "Ctrl+Shift+Pause",
     },
     bot: {
       enabled: !freshMock,
@@ -1619,6 +1659,22 @@ function makeMockApp(): AppBindings {
         },
         async CancelTab(_tabID) {
           await withMockTabScope(_tabID, () => this.Cancel());
+        },
+        async Pause() {
+          // Mock: surface a pause notice so the UI flow is testable without a backend.
+          emit({ kind: "notice", level: "info", text: "（预览）已暂停" });
+        },
+        async PauseTab(_tabID) {
+          await withMockTabScope(_tabID, () => this.Pause());
+        },
+        async ResumeTurn() {
+          emit({ kind: "notice", level: "info", text: "（预览）已恢复" });
+        },
+        async ResumeTurnTab(_tabID) {
+          await withMockTabScope(_tabID, () => this.ResumeTurn());
+        },
+        async PausedTab(_tabID) {
+          return false;
         },
         async Approve(_id, allow, session, persist) {
           if (!pendingApprovalPreview) return;
@@ -2440,7 +2496,7 @@ function makeMockApp(): AppBindings {
     },
     async AddOfficialProviderAccess(kind: string, key: string) {
       const templates: Record<string, ProviderView> = {
-        moma: { name: "moma", builtIn: true, added: true, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-coder-next", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v32", "z.ai/glm-5.1", "z.ai/glm-5", "minimax/minimax-m2.7", "minimax/minimax-m2.5", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "stepfun/step-3.5-flash", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: !!key.trim(), contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
+        moma: { name: "moma", builtIn: true, added: true, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-coder-next", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v32", "z.ai/glm-5.1", "z.ai/glm-5.2", "minimax/minimax-m2.7", "minimax/minimax-m2.5", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "stepfun/step-3.5-flash", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: !!key.trim(), contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
       };
       const next = templates[kind] ?? templates.moma;
       const i = settings.providers.findIndex((x) => x.name === next.name);
@@ -2866,6 +2922,7 @@ function makeMockApp(): AppBindings {
         lastResult: "",
         outputMode: input.outputMode,
         outputDest: input.outputDest,
+        outputDir: input.outputDir,
         humanSchedule: input.expression,
       };
       mockSchedulerTasks.unshift(view);
@@ -2881,6 +2938,7 @@ function makeMockApp(): AppBindings {
         prompt: input.prompt,
         outputMode: input.outputMode,
         outputDest: input.outputDest,
+        outputDir: input.outputDir,
         humanSchedule: input.expression,
       };
       return cloneTask(mockSchedulerTasks[idx]);
@@ -3010,10 +3068,31 @@ function makeMockApp(): AppBindings {
     },
     async StartScreenshotHotkey() {},
     async StopScreenshotHotkey() {},
+    async StartEStopHotkey() {},
+    async StopEStopHotkey() {},
     async SetCoWorkSettings(v: any) { settings.cowork = { ...v, detectedBrowser: settings.cowork.detectedBrowser }; },
+    async HooksSettings(scope: string) {
+      const key = scope === "project" ? "project" : "global";
+      return JSON.parse(JSON.stringify(hookSettings[key])) as HooksSettingsView;
+    },
+    async SaveHooksSettings(scope: string, hooks: HookConfigView[]) {
+      const key = scope === "project" ? "project" : "global";
+      hookSettings[key].hooks = JSON.parse(JSON.stringify(hooks)) as HookConfigView[];
+    },
+    async SaveHooksSettingsForRoot(scope: string, _projectRoot: string, hooks: HookConfigView[]) {
+      const key = scope === "project" ? "project" : "global";
+      hookSettings[key].hooks = JSON.parse(JSON.stringify(hooks)) as HookConfigView[];
+    },
+    async TrustProjectHooks() {
+      hookSettings.project.trusted = true;
+    },
+    async TrustProjectHooksForRoot(projectRoot: string) {
+      if (projectRoot && projectRoot === hookSettings.project.projectRoot) {
+        hookSettings.project.trusted = true;
+      }
+    },
     async CheckCoworkBrowser() { return "Chrome"; },
-    async CheckWPSPPTDeps() { return []; },
-    async InstallWPSPPTDeps() { return "installed"; },
+    async OpenPPTTemplateDir() {},
     async ContextPanel(_tabID: string) {
       const now = Date.now();
       return {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Check, CheckCircle2, ChevronDown, Loader2, QrCode, RefreshCw } from "lucide-react";
 import { asArray } from "../lib/array";
@@ -20,7 +20,7 @@ import {
 import { TEXT_SIZES, applyTextSize, getTextSize, type TextSize } from "../lib/textSize";
 import { FONT_FAMILIES, applyFontFamily, getFontFamily, type FontFamily } from "../lib/fontFamily";
 import { getDisplayMode, onDisplayModeChange, setDisplayMode as setLocalDisplayMode } from "../lib/displayMode";
-import type { BotConnectionView, BotInstallStartResult, BotSettingsView, NetworkView, ProviderView, SettingsTab, SettingsView } from "../lib/types";
+import type { BotConnectionView, BotInstallStartResult, BotSettingsView, HookConfigView, HooksSettingsView, NetworkView, ProviderView, SettingsTab, SettingsView } from "../lib/types";
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { Tooltip } from "./Tooltip";
 import { AnchoredPopover } from "./AnchoredPopover";
@@ -28,12 +28,12 @@ import { MCPServersSettingsPage, SkillsSettingsPage } from "./CapabilitiesPanel"
 import { MemorySettingsPage } from "./MemoryPanel";
 import { ModalCloseButton } from "./ModalCloseButton";
 
-const SETTINGS_TABS: SettingsTab[] = ["general", "models", "bots", "cowork", "mcp", "skills", "memory", "permissions", "sandbox", "network", "appearance", "updates"];
+const SETTINGS_TABS: SettingsTab[] = ["general", "models", "bots", "cowork", "mcp", "skills", "memory", "permissions", "sandbox", "network", "hooks", "appearance", "updates"];
 
 // SettingsPanel is the desktop settings centre — a centred modal with left
 // navigation and a right content area. It hosts all settings pages plus MCP,
 // Skills, and Memory management, replacing the old per-feature drawers.
-export function SettingsPanel({ onClose, onChanged, initialTab }: { onClose: () => void; onChanged: () => void; initialTab?: SettingsTab }) {
+export function SettingsPanel({ onClose, onChanged, initialTab, initialPayload }: { onClose: () => void; onChanged: () => void; initialTab?: SettingsTab; initialPayload?: string }) {
   const t = useT();
   const [s, setS] = useState<SettingsView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -129,12 +129,13 @@ export function SettingsPanel({ onClose, onChanged, initialTab }: { onClose: () 
                 {tab === "models" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><ModelsSection s={s} busy={busy} apply={apply} backgroundApply={backgroundApply} /></SettingsPageShell>}
                 {tab === "bots" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><BotsSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
                 {tab === "cowork" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><CoWorkSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
-                {tab === "mcp" && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy ?? false} apply={apply}><MCPServersSettingsPage />{s && <WebSearchSection s={s} busy={busy} apply={apply} />}</SettingsPageShell>}
-                {tab === "skills" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><SkillsSettingsPage /><JiutianSection /></SettingsPageShell>}
+                {tab === "mcp" && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy ?? false} apply={apply}><MCPServersSettingsPage initialHighlight={initialPayload} />{s && <WebSearchSection s={s} busy={busy} apply={apply} />}</SettingsPageShell>}
+                {tab === "skills" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><SkillsSettingsPage initialHighlight={initialPayload} /><JiutianSection /></SettingsPageShell>}
                 {tab === "memory" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><MemorySettingsPage /></SettingsPageShell>}
                 {tab === "permissions" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><PermissionsSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
                 {tab === "sandbox" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><SandboxSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
                 {tab === "network" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><NetworkSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
+                {tab === "hooks" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><HooksSection onChanged={() => onChanged()} /></SettingsPageShell>}
                 {tab === "appearance" && s && (
                   <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}>
                     <AppearanceSection
@@ -250,7 +251,7 @@ function SettingsField({
   stacked?: boolean;
 }) {
   return (
-    <div className={`settings-field${stacked ? " settings-field--stacked" : ""}${className ? ` ${className}` : ""}`}>
+    <div className={`settings-field${stacked || hint ? " settings-field--stacked" : ""}${className ? ` ${className}` : ""}`}>
       <div className="settings-field__copy">
         <div className="settings-field__label">{label}</div>
         {hint && (
@@ -313,6 +314,8 @@ function settingsTabLabel(id: SettingsTab, t: ReturnType<typeof useT>): string {
       return t("settings.tab.memory");
     case "network":
       return t("settings.tab.network");
+    case "hooks":
+      return t("settings.tab.hooks");
     case "permissions":
       return t("settings.tab.permissions");
     case "sandbox":
@@ -344,6 +347,8 @@ function settingsTabMeta(id: SettingsTab, s: SettingsView, t: ReturnType<typeof 
       return t("settings.tabSub.memory");
     case "network":
       return proxyModeLabel(normalizeProxyMode(s.network.proxyMode), t);
+    case "hooks":
+      return t("settings.tabSub.hooks");
     case "permissions":
       return permissionModeLabel(s.permissions.mode, t);
     case "sandbox":
@@ -418,15 +423,18 @@ const COMMON_PROVIDER_PRESETS: { label: string; baseUrl: string; context: number
   { label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", context: 200000 },
 ];
 
-// COMMON_MAIL_PRESETS are one-click SMTP host/port/encryption shortcuts for
-// popular Chinese and international mail providers. The user only needs to
-// fill in username + password after picking one. useTLS=true means implicit
-// TLS (port 465); false means STARTTLS (port 587).
-const COMMON_MAIL_PRESETS: { label: string; host: string; port: number; useTLS: boolean }[] = [
-  { label: "QQ", host: "smtp.qq.com", port: 465, useTLS: true },
-  { label: "163", host: "smtp.163.com", port: 465, useTLS: true },
-  { label: "Gmail", host: "smtp.gmail.com", port: 587, useTLS: false },
-  { label: "Outlook", host: "smtp.office365.com", port: 587, useTLS: false },
+// COMMON_MAIL_PRESETS are one-click mail-provider shortcuts: picking one fills
+// SMTP + IMAP host/port/encryption so the user only has to type account + auth
+// code. useTLS=true means implicit TLS (port 465); false means STARTTLS (587).
+type MailPreset = {
+  label: string;
+  host: string; port: number; useTLS: boolean;        // SMTP
+  imapHost?: string; imapPort?: number;                // IMAP for the same provider
+  note?: string;                                        // one-line help shown when selected
+};
+const COMMON_MAIL_PRESETS: MailPreset[] = [
+  { label: "139邮箱", host: "smtp.139.com",       port: 465, useTLS: true,  imapHost: "imap.139.com",       imapPort: 993,
+    note: "服务器已按 139 默认配置（smtp.139.com:465 / imap.139.com:993）。授权码请登录 mail.10086.cn → 设置 → 邮箱协议设置 → 开启 IMAP/SMTP 服务 获取（非登录密码）" },
 ];
 const PROXY_TYPES = ["http", "https", "socks5", "socks5h"] as const;
 const LANGUAGE_PREFS: LangPref[] = ["", "zh", "en"];
@@ -974,6 +982,319 @@ function NetworkSection({ s, busy, apply }: SectionProps) {
 }
 
 type BotInstallTarget = "qq" | "feishu" | "lark" | "weixin";
+type HookScope = "global" | "project";
+
+// HooksSection edits the hooks store (settings.json) for either scope (global or
+// project), with a JSON editor (copy/paste/format) and the project-trust gate.
+// Ported from DeepSeek-Reasonix, adapted to momapeer's onChanged signature.
+function HooksSection({ onChanged }: { onChanged: () => void }) {
+  const t = useT();
+  const [scope, setScope] = useState<HookScope>("global");
+  const [view, setView] = useState<HooksSettingsView | null>(null);
+  const [jsonText, setJsonText] = useState("");
+  const [jsonMessage, setJsonMessage] = useState<string | null>(null);
+  const [jsonError, setJsonError] = useState<string | null>(null);
+  const [pathMessage, setPathMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = useCallback(async (nextScope: HookScope) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const next = normalizeHooksSettingsView(await app.HooksSettings(nextScope), nextScope);
+      setView(next);
+      setJsonText(formatHooksJSON(next.hooks, next.events));
+      setJsonMessage(null);
+      setJsonError(null);
+      setPathMessage(null);
+    } catch (e) {
+      setErr(String((e as Error)?.message ?? e));
+      setView(null);
+      setJsonText("");
+      setJsonMessage(null);
+      setJsonError(null);
+      setPathMessage(null);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load(scope);
+  }, [load, scope]);
+
+  const parseHooksEditorJSON = (raw = jsonText): { hooks: HookConfigView[]; text: string } | null => {
+    try {
+      const hooks = parseHooksJSON(raw, view?.events ?? []);
+      const text = formatHooksJSON(hooks, view?.events ?? []);
+      setJsonText(text);
+      setJsonError(null);
+      return { hooks, text };
+    } catch (e) {
+      setJsonError(t("settings.hooksJsonInvalid", { error: String((e as Error)?.message ?? e) }));
+      setJsonMessage(null);
+      return null;
+    }
+  };
+  const copyHooksJSON = async () => {
+    const parsed = parseHooksEditorJSON();
+    if (!parsed) return;
+    try {
+      await navigator.clipboard?.writeText(parsed.text);
+      setJsonMessage(t("settings.hooksJsonCopied"));
+    } catch {
+      setJsonMessage(t("settings.hooksJsonClipboardUnavailable"));
+    }
+  };
+  const formatHooksEditorJSON = (raw = jsonText) => {
+    const parsed = parseHooksEditorJSON(raw);
+    if (parsed) setJsonMessage(t("settings.hooksJsonFormatted"));
+  };
+  const pasteHooksJSON = async () => {
+    try {
+      const raw = await navigator.clipboard?.readText();
+      if (!raw) throw new Error(t("settings.hooksJsonClipboardEmpty"));
+      setJsonText(raw);
+      formatHooksEditorJSON(raw);
+    } catch (e) {
+      setJsonError(t("settings.hooksJsonPasteFailed", { error: String((e as Error)?.message ?? e) }));
+      setJsonMessage(null);
+    }
+  };
+  const copyHooksPath = async () => {
+    const path = view?.path?.trim();
+    if (!path) {
+      setPathMessage(t("settings.hooksPathUnavailable"));
+      return;
+    }
+    try {
+      await navigator.clipboard?.writeText(path);
+      setPathMessage(t("settings.hooksPathCopied"));
+    } catch {
+      setPathMessage(t("settings.hooksJsonClipboardUnavailable"));
+    }
+  };
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const parsed = parseHooksEditorJSON();
+      if (!parsed) return;
+      await app.SaveHooksSettingsForRoot(scope, view?.projectRoot?.trim() ?? "", parsed.hooks);
+      await load(scope);
+      onChanged();
+    } catch (e) {
+      setErr(String((e as Error)?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const trustProject = async () => {
+    const projectRoot = view?.projectRoot?.trim() ?? "";
+    if (!projectRoot) {
+      setErr(t("settings.hooksProjectRootUnavailable"));
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await app.TrustProjectHooksForRoot(projectRoot);
+      await load("project");
+      onChanged();
+    } catch (e) {
+      setErr(String((e as Error)?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      {err && <div className="banner banner--error">{err}</div>}
+      <SettingsSection title={t("settings.hooksScopeSection")} description={t("settings.hooksScopeHint")}>
+        <SettingsField label={t("settings.hooksScopeField")}>
+          <select className="mem-select set-grow" value={scope} disabled={busy} onChange={(e) => setScope(e.target.value === "project" ? "project" : "global")}>
+            <option value="global">{t("settings.hooksGlobal")}</option>
+            <option value="project">{t("settings.hooksProject")}</option>
+          </select>
+        </SettingsField>
+        <SettingsField label={t("settings.hooksPath")} hint={scope === "project" ? t("settings.hooksPathProjectHint") : t("settings.hooksPathGlobalHint")}>
+          <div className="hooks-path-stack">
+            <div className={`hooks-path-display${view?.path ? "" : " hooks-path-display--empty"}`}>
+              <code className="hooks-path-display__value" title={view?.path || t("settings.hooksPathUnavailable")}>
+                {view?.path || t("settings.hooksPathUnavailable")}
+              </code>
+              <button className="btn btn--small" disabled={busy || !view?.path} onClick={() => void copyHooksPath()}>{t("settings.hooksPathCopy")}</button>
+            </div>
+            {pathMessage && <div className="hooks-path-display__message">{pathMessage}</div>}
+          </div>
+        </SettingsField>
+        {scope === "project" && (
+          <SettingsField label={t("settings.hooksTrust")} hint={t("settings.hooksTrustHint")}>
+            <div className="hooks-trust-stack">
+              <div className="hooks-trust-row">
+                <span className={`set-rule${view?.trusted ? "" : " set-rule--warn"}`}>{view?.trusted ? t("settings.hooksTrusted") : t("settings.hooksUntrusted")}</span>
+                <button className="btn btn--small" disabled={busy || view?.trusted || !view?.projectRoot} onClick={() => void trustProject()}>{t("settings.hooksTrustProject")}</button>
+              </div>
+              <code className={`hooks-trust-root${view?.projectRoot ? "" : " hooks-trust-root--empty"}`} title={view?.projectRoot || t("settings.hooksProjectRootUnavailable")}>
+                {view?.projectRoot || t("settings.hooksProjectRootUnavailable")}
+              </code>
+            </div>
+          </SettingsField>
+        )}
+      </SettingsSection>
+
+      <SettingsSection
+        title={t("settings.hooks")}
+        description={scope === "project" ? t("settings.hooksProjectHint") : t("settings.hooksGlobalHint")}
+        actions={(
+          <button className="btn btn--small btn--primary" disabled={busy} onClick={() => void save()}>{t("common.save")}</button>
+        )}
+      >
+        {view && (
+          <div className="hooks-json-panel">
+            <div className="hooks-json-panel__head">
+              <div>
+                <div className="set-rules__label">{t("settings.hooksJsonTitle")}</div>
+                <div className="set-rules__hint">{t("settings.hooksJsonHint")}</div>
+              </div>
+              <div className="hooks-json-panel__actions">
+                <button className="btn btn--small" disabled={busy} onClick={() => void copyHooksJSON()}>{t("settings.hooksJsonCopy")}</button>
+                <button className="btn btn--small" disabled={busy} onClick={() => void pasteHooksJSON()}>{t("settings.hooksJsonPaste")}</button>
+                <button className="btn btn--small" disabled={busy || !jsonText.trim()} onClick={() => formatHooksEditorJSON()}>{t("settings.hooksJsonApply")}</button>
+              </div>
+            </div>
+            <textarea
+              className="mem-textarea hooks-json-panel__textarea"
+              value={jsonText}
+              disabled={busy}
+              spellCheck={false}
+              onChange={(e) => {
+                setJsonText(e.target.value);
+                setJsonMessage(null);
+                setJsonError(null);
+              }}
+            />
+            {jsonError && <div className="hooks-json-panel__message hooks-json-panel__message--error">{jsonError}</div>}
+            {jsonMessage && <div className="hooks-json-panel__message">{jsonMessage}</div>}
+          </div>
+        )}
+        {!view && <div className="empty">{t("settings.loading")}</div>}
+      </SettingsSection>
+    </>
+  );
+}
+
+function normalizeHooksSettingsView(view: HooksSettingsView, scope: HookScope): HooksSettingsView {
+  const events = asArray(view?.events).filter(Boolean);
+  return {
+    scope: view?.scope === "project" ? "project" : scope,
+    path: view?.path ?? "",
+    projectRoot: view?.projectRoot ?? "",
+    trusted: !!view?.trusted,
+    events,
+    hooks: asArray(view?.hooks).map(normalizeHookConfig).filter((h) => h.event),
+  };
+}
+
+function formatHooksJSON(hooks: HookConfigView[], eventOrder: string[]): string {
+  const grouped: Record<string, Array<Record<string, string | number>>> = {};
+  const events = new Set(eventOrder);
+  for (const hook of hooks.map(normalizeHookConfig).filter((h) => h.event)) {
+    events.add(hook.event);
+    const entry: Record<string, string | number> = { command: hook.command };
+    if (hook.match) entry.match = hook.match;
+    if (hook.description) entry.description = hook.description;
+    if ((hook.timeout ?? 0) > 0) entry.timeout = hook.timeout ?? 0;
+    if (hook.cwd) entry.cwd = hook.cwd;
+    (grouped[hook.event] ||= []).push(entry);
+  }
+  const ordered: typeof grouped = {};
+  for (const event of [...eventOrder, ...Array.from(events).sort()]) {
+    if (grouped[event]?.length && !ordered[event]) ordered[event] = grouped[event];
+  }
+  return JSON.stringify({ hooks: ordered }, null, 2);
+}
+
+function parseHooksJSON(raw: string, validEvents: string[]): HookConfigView[] {
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (e) {
+    throw new Error(String((e as Error)?.message ?? e));
+  }
+  if (Array.isArray(parsed)) {
+    return parsed.map((item) => normalizeHookConfig(parseHookArrayItem(item, validEvents))).filter((h) => h.event);
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("expected an object or array");
+  }
+  const obj = parsed as Record<string, unknown>;
+  const hooksValue = obj.hooks && typeof obj.hooks === "object" && !Array.isArray(obj.hooks) ? obj.hooks : obj;
+  return flattenHooksMap(hooksValue as Record<string, unknown>, validEvents);
+}
+
+function parseHookArrayItem(item: unknown, validEvents: string[]): HookConfigView {
+  if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("hook item must be an object");
+  const obj = item as Record<string, unknown>;
+  const event = stringField(obj, "event") || "PreToolUse";
+  if (validEvents.length > 0 && !validEvents.includes(event)) throw new Error(`unknown hook event ${event}`);
+  return {
+    event,
+    match: stringField(obj, "match"),
+    command: stringField(obj, "command"),
+    description: stringField(obj, "description"),
+    timeout: numberField(obj, "timeout"),
+    cwd: stringField(obj, "cwd"),
+  };
+}
+
+function flattenHooksMap(hooks: Record<string, unknown>, validEvents: string[]): HookConfigView[] {
+  const valid = new Set(validEvents);
+  const out: HookConfigView[] = [];
+  for (const [event, value] of Object.entries(hooks)) {
+    if (valid.size > 0 && !valid.has(event)) throw new Error(`unknown hook event ${event}`);
+    const items = Array.isArray(value) ? value : [value];
+    for (const item of items) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error(`hook ${event} item must be an object`);
+      const obj = item as Record<string, unknown>;
+      out.push(normalizeHookConfig({
+        event,
+        match: stringField(obj, "match"),
+        command: stringField(obj, "command"),
+        description: stringField(obj, "description"),
+        timeout: numberField(obj, "timeout"),
+        cwd: stringField(obj, "cwd"),
+      }));
+    }
+  }
+  return out.filter((h) => h.event);
+}
+
+function stringField(obj: Record<string, unknown>, key: string): string {
+  const value = obj[key];
+  return typeof value === "string" ? value : "";
+}
+
+function numberField(obj: Record<string, unknown>, key: string): number {
+  const value = obj[key];
+  return typeof value === "number" && Number.isFinite(value) ? Math.floor(value) : 0;
+}
+
+function normalizeHookConfig(h: HookConfigView): HookConfigView {
+  return {
+    event: h.event || "PreToolUse",
+    match: h.match ?? "",
+    command: h.command ?? "",
+    description: h.description ?? "",
+    timeout: h.timeout && h.timeout > 0 ? Math.floor(h.timeout) : 0,
+    cwd: h.cwd ?? "",
+  };
+}
+
 type BotOfficialInstallTarget = Exclude<BotInstallTarget, "qq">;
 type BotInstallState = {
   target: BotInstallTarget | "";
@@ -3808,39 +4129,86 @@ function OptionalModule({
   onToggle: (v: boolean) => void;
   children: ReactNode;
 }) {
-  const t = useT();
+  // The switch toggles the config panel open/closed. `enabled` (derived from
+  // whether the module has been configured) only drives the switch's checked
+  // visual + a "configured" highlight — it no longer gates the panel body,
+  // which is what previously made "turn on" a no-op (the toggle* helpers had
+  // no `on=true` branch, so the body never showed and the checkbox could never
+  // light up). `expanded` defaults to the configured state so already-set-up
+  // modules open on first paint; the user can collapse/expand at will, and
+  // collapsing runs the parent's clear-fields cleanup via onToggle(false).
+  const [expanded, setExpanded] = useState(enabled);
   return (
-    <div className={`optional-module${enabled ? " optional-module--enabled" : ""}`}>
+    <div className="optional-module">
       <div className="optional-module__head">
         <div className="optional-module__copy">
-          <div className="optional-module__title">{title}</div>
+          <div className="optional-module__title">
+            {title}
+            {enabled && <span className="optional-module__configured-dot" title="" />}
+          </div>
           <div className="optional-module__desc">{description}</div>
         </div>
-        <label className="settings-toggle">
-          <input type="checkbox" checked={enabled} onChange={e => onToggle(e.target.checked)} />
-          <span>{enabled ? t("settings.toggleOn") : t("settings.toggleOff")}</span>
+        <label className="cap-switch">
+          <input
+            type="checkbox"
+            checked={expanded || enabled}
+            onChange={(e) => {
+              const on = e.target.checked;
+              setExpanded(on);
+              if (!on) onToggle(false); // collapse = clear configured fields
+            }}
+          />
+          <span className="cap-switch__track" />
         </label>
       </div>
-      {enabled && <div className="optional-module__body">{children}</div>}
+      {expanded && <div className="optional-module__body">{children}</div>}
     </div>
   );
 }
 
 
+// browserDisplayName maps a browser executable path to a friendly product
+// name ("chrome.exe" → "Chrome"). Returns "" for an empty path (nothing
+// detected). Used by the coWork browser detect button so the hint line still
+// reads "Chrome detected" rather than a raw .exe path, while browserPath holds
+// the actual path that gets persisted.
+function browserDisplayName(path: string): string {
+  const base = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
+  if (base.includes("chrome")) return "Chrome";
+  if (base.includes("msedge") || base.includes("edge")) return "Edge";
+  if (base.includes("brave")) return "Brave";
+  return base ? base.replace(/\.exe$/, "") : "";
+}
+
 function CoWorkSection({ s, busy, apply }: SectionProps) {
   const t = useT();
-  const [draft, setDraft] = useState(s.cowork ?? {
-    browserPath: "", wpsPptServerPath: "", wpsPptPython: "", embeddingModel: "",
-    smtp: { host:"", port:0, from:"", username:"", passwordEnv:"COWORK_SMTP_PASSWORD", useTLS:false },
-    imap: { host:"", port:0, username:"", passwordEnv:"COWORK_IMAP_PASSWORD" },
-    smtpPassword: "", imapPassword: "", detectedBrowser: "", wpsPptDepsMissing: [],
-    screenshotEnabled: false, screenshotHotkey: "Ctrl+Shift+S", screenshotVlmModel: "qwen/qwen3.6-27b",
+  const [draft, setDraft] = useState(() => {
+    const base = s.cowork ?? {
+      browserPath: "", embeddingModel: "",
+      pptActiveTemplate: "", pptTemplates: [], pptTemplateDir: "",
+      smtpPassword: "", imapPassword: "", smtpPasswordSet: false, imapPasswordSet: false, detectedBrowser: "",
+      screenshotEnabled: false, screenshotHotkey: "Ctrl+Shift+S", screenshotVlmModel: "qwen/qwen3.6-27b",
+      estopHotkey: "Ctrl+Shift+Pause",
+    };
+    // Default mail provider = 139 (China Mobile). Only when the user hasn't
+    // configured mail yet (no saved SMTP host); a saved config — including one
+    // the user deliberately cleared — is always respected. The useState
+    // initializer runs once on mount, so later toggles/presets aren't affected.
+    const mailConfigured = !!(base.smtp?.host);
+    return {
+      ...base,
+      smtp: mailConfigured && base.smtp
+        ? base.smtp
+        : { host: "smtp.139.com", port: 465, from: "", username: "", passwordEnv: "COWORK_SMTP_PASSWORD", useTLS: true, encryptionMode: "tls" },
+      imap: mailConfigured && base.imap
+        ? base.imap
+        : { host: "imap.139.com", port: 993, username: "", passwordEnv: "COWORK_IMAP_PASSWORD" },
+    };
   });
   
   const [browserDetecting, setBrowserDetecting] = useState(false);
-  const [depsChecking, setDepsChecking] = useState(false);
-  const [depsInstalling, setDepsInstalling] = useState(false);
   const [recordingHotkey, setRecordingHotkey] = useState(false);
+  const [recordingEStopHotkey, setRecordingEStopHotkey] = useState(false);
 
   const isDirty = JSON.stringify(draft) !== JSON.stringify(s.cowork ?? {});
 
@@ -3851,38 +4219,36 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
   const checkBrowser = async () => {
     setBrowserDetecting(true);
     try {
-      const browser = await app.CheckCoworkBrowser();
-      setDraft(d => ({ ...d, detectedBrowser: browser }));
+      // CheckCoworkBrowser returns the detected executable PATH. Autofill it
+      // into browserPath so the config actually persists — previously detection
+      // only set the read-only detectedBrowser, which was never saved, so the
+      // picked browser vanished on reopen. The user can still override by
+      // editing the path field directly.
+      const path = await app.CheckCoworkBrowser();
+      setDraft(d => ({
+        ...d,
+        detectedBrowser: browserDisplayName(path),
+        browserPath: path,
+      }));
     } finally {
       setBrowserDetecting(false);
     }
   };
 
-  const checkDeps = async () => {
-    setDepsChecking(true);
-    try {
-      const missing = await app.CheckWPSPPTDeps();
-      setDraft(d => ({ ...d, wpsPptDepsMissing: missing }));
-    } finally {
-      setDepsChecking(false);
-    }
-  };
-
-  const installDeps = async () => {
-    setDepsInstalling(true);
-    try {
-      await app.InstallWPSPPTDeps();
-      await checkDeps();
-    } finally {
-      setDepsInstalling(false);
-    }
+  const openTemplateDir = async () => {
+    // Best-effort: opening the folder failing isn't fatal; the wails call surfaces
+    // a clear error in the backend log. We don't have a per-section error sink
+    // here, so we just swallow it.
+    try { await app.OpenPPTTemplateDir(); } catch { /* see backend log */ }
   };
 
   // Derive enabled state from draft values — empty = disabled.
   const browserOn = !!(draft.detectedBrowser || draft.browserPath);
-  const pptOn = !!draft.wpsPptServerPath;
-  const smtpOn = !!(draft.smtp?.host);
-  const imapOn = !!(draft.imap?.host);
+  const pptOn = !!draft.pptActiveTemplate;
+  // Mail is a single card covering both SMTP (send) and IMAP (read) — for 139
+  // they're one mailbox with one account + one auth code, so a single switch
+  // controls both. Either side configured = mail on.
+  const mailOn = !!(draft.smtp?.host) || !!(draft.imap?.host);
   const ragOn = !!draft.embeddingModel;
 
   // Toggle helpers: disabling clears related fields so the backend treats them
@@ -3891,31 +4257,34 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
     if (!on) setDraft(d => ({ ...d, browserPath: "", detectedBrowser: "" }));
   };
   const togglePpt = (on: boolean) => {
-    if (!on) setDraft(d => ({ ...d, wpsPptServerPath: "", wpsPptPython: "", wpsPptDepsMissing: [] }));
+    if (!on) setDraft(d => ({ ...d, pptActiveTemplate: "" }));
   };
-  const toggleSmtp = (on: boolean) => {
-    if (!on) setDraft(d => ({ ...d, smtp: { ...d.smtp, host: "", port: 0, from: "", username: "" }, smtpPassword: "" }));
-  };
-  const toggleImap = (on: boolean) => {
-    if (!on) setDraft(d => ({ ...d, imap: { ...d.imap, host: "", port: 0, username: "" }, imapPassword: "" }));
+  // Disabling mail clears BOTH sides (SMTP + IMAP) since they're one mailbox.
+  const toggleMail = (on: boolean) => {
+    if (!on) setDraft(d => ({
+      ...d,
+      smtp: { ...d.smtp, host: "", port: 0, from: "", username: "" },
+      imap: { ...d.imap, host: "", port: 0, username: "" },
+      smtpPassword: "", imapPassword: "",
+    }));
   };
   const toggleRag = (on: boolean) => {
     if (!on) setDraft(d => ({ ...d, embeddingModel: "" }));
   };
 
   return (
-    <div className="settings-section">
+    <>
       <SettingsSection title={t("settings.tab.cowork")}>
 
         {/* ── 浏览器自动化 ── */}
         <OptionalModule title={t("cowork.browser")} description={t("cowork.browserModDesc")} enabled={browserOn} onToggle={toggleBrowser}>
-          <SettingsField label={t("cowork.browser")} hint={t("cowork.browserHint")} stacked>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" }}>
+          <div className="optional-module__controls">
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
               <button className="btn btn--small" disabled={busy || browserDetecting} onClick={checkBrowser}>
                 {browserDetecting ? <Loader2 className="spinner" size={14} /> : t("cowork.browserDetect")}
               </button>
-              <span className="mem-hint">
-                {draft.detectedBrowser ? t("cowork.browserDetected", { name: draft.detectedBrowser }) : ""}
+              <span className="mem-hint" style={{ margin: 0 }}>
+                {draft.detectedBrowser ? t("cowork.browserDetected", { name: draft.detectedBrowser }) : t("cowork.browserHint")}
               </span>
             </div>
             <input
@@ -3924,167 +4293,103 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
               value={draft.browserPath}
               onChange={e => setDraft({ ...draft, browserPath: e.target.value })}
             />
-          </SettingsField>
+          </div>
         </OptionalModule>
 
-        {/* ── PPT（WPS COM）── */}
-        <OptionalModule title={t("cowork.ppt")} description={t("cowork.pptModDesc")} enabled={pptOn} onToggle={togglePpt}>
-          <SettingsField label={t("cowork.ppt")} stacked>
-            <input
-              className="mem-input set-grow"
-              style={{ marginBottom: "8px" }}
-              placeholder={t("cowork.pptServerPath")}
-              value={draft.wpsPptServerPath}
-              onChange={e => setDraft({ ...draft, wpsPptServerPath: e.target.value })}
-            />
-            <input
-              className="mem-input set-grow"
-              style={{ marginBottom: "8px" }}
-              placeholder={t("cowork.pptPython")}
-              value={draft.wpsPptPython}
-              onChange={e => setDraft({ ...draft, wpsPptPython: e.target.value })}
-            />
+        {/* ── PPT 模板（驱动可视化 CUA 生成）── */}
+        <OptionalModule title={t("cowork.ppt")} description="选择一个 PPT 模板，生成时基于它（母版+配色+版式坐标），多数步骤无需 VLM 感知，更快更准" enabled={pptOn} onToggle={togglePpt}>
+          <div className="optional-module__controls">
             <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-              <button className="btn btn--small" disabled={busy || depsChecking} onClick={checkDeps}>
-                {depsChecking ? <Loader2 className="spinner" size={14} /> : t("cowork.pptCheckDeps")}
+              <select
+                className="mem-input set-grow"
+                value={draft.pptActiveTemplate}
+                onChange={e => setDraft({ ...draft, pptActiveTemplate: e.target.value })}
+              >
+                <option value="">— 选择模板 —</option>
+                {(draft.pptTemplates ?? []).map(tpl => (
+                  <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
+                ))}
+              </select>
+              <button className="btn btn--small" disabled={busy} onClick={() => void openTemplateDir()}>
+                打开模板目录
               </button>
-              {draft.wpsPptDepsMissing?.length > 0 && (
-                <button className="btn btn--small" disabled={busy || depsInstalling} onClick={installDeps}>
-                  {depsInstalling ? <Loader2 className="spinner" size={14} /> : t("cowork.pptInstallDeps")}
-                </button>
-              )}
-              <span className="mem-hint">
-                {draft.wpsPptDepsMissing !== undefined && draft.wpsPptDepsMissing !== null ? (
-                  draft.wpsPptDepsMissing.length > 0
-                    ? t("cowork.pptDepsMissing", { deps: draft.wpsPptDepsMissing.join(", ") })
-                    : t("cowork.pptDepsOk")
-                ) : ""}
-              </span>
             </div>
-          </SettingsField>
+            <span className="mem-hint">
+              {(draft.pptTemplates ?? []).length > 0
+                ? `共 ${(draft.pptTemplates ?? []).length} 个模板`
+                : "模板目录为空，点开目录添加 JSON 模板"}
+            </span>
+          </div>
+          {draft.pptTemplateDir && (
+            <div className="mem-hint" style={{ marginTop: 4, wordBreak: "break-all" }}>
+              模板目录：{draft.pptTemplateDir}
+            </div>
+          )}
         </OptionalModule>
 
-        {/* ── 邮件发送（SMTP）── */}
-        <OptionalModule title={t("cowork.smtp")} description={t("cowork.smtpModDesc")} enabled={smtpOn} onToggle={toggleSmtp}>
-          <SettingsField label={t("cowork.smtp")} stacked>
-            <div className="provider-presets" style={{ marginBottom: "6px" }}>
+        {/* ── 邮箱（139 收发一体）── */}
+        <OptionalModule title={t("cowork.mail")} description={t("cowork.mailModDesc")} enabled={mailOn} onToggle={toggleMail}>
+          <div className="optional-module__controls">
+            <div className="provider-presets mail-presets">
               {COMMON_MAIL_PRESETS.map((preset) => (
                 <button
                   key={preset.label}
                   type="button"
-                  className={"set-seg__btn provider-presets__btn" + (draft.smtp?.host === preset.host ? " set-seg__btn--on" : "")}
-                  onClick={() => setDraft({ ...draft, smtp: { ...draft.smtp!, host: preset.host, port: preset.port, useTLS: preset.useTLS, encryptionMode: preset.useTLS ? "tls" : "starttls" } })}
+                  className={"mail-preset" + (draft.smtp?.host === preset.host ? " mail-preset--on" : "")}
+                  onClick={() => setDraft({
+                    ...draft,
+                    smtp: { ...draft.smtp!, host: preset.host, port: preset.port, useTLS: preset.useTLS, encryptionMode: preset.useTLS ? "tls" : "starttls" },
+                    imap: { ...draft.imap!, host: preset.imapHost ?? draft.imap?.host ?? "", port: preset.imapPort ?? draft.imap?.port ?? 0 },
+                  })}
                 >
                   {preset.label}
                 </button>
               ))}
             </div>
-            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+            {(() => {
+              const sel = COMMON_MAIL_PRESETS.find(p => p.host === draft.smtp?.host);
+              return sel?.note ? (
+                <div className="mail-note"><span className="mail-note__icon" aria-hidden>ⓘ</span><span>{sel.note}</span></div>
+              ) : null;
+            })()}
+            {/* The account (邮箱地址) + auth code (授权码) are the only two
+                things a user fills in. Both write to SMTP and IMAP at once,
+                since 139 uses one mailbox for send + read. Host/port/
+                encryption stay in draft (so they save) but are fixed by the
+                preset and not exposed. */}
+            <label className="mail-field">
+              <span className="mail-field__label">{t("cowork.mailAccount")}</span>
               <input
                 className="mem-input set-grow"
-                placeholder={t("cowork.smtpHost")}
-                value={draft.smtp?.host || ""}
-                onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, host: e.target.value } })}
+                placeholder={t("cowork.mailAccount")}
+                value={draft.smtp?.username || ""}
+                onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, username: e.target.value, from: e.target.value }, imap: { ...draft.imap!, username: e.target.value } })}
               />
-              <input
-                className="mem-input"
-                style={{ width: "80px" }}
-                placeholder={t("settings.portPlaceholder")}
-                type="number"
-                value={draft.smtp?.port || ""}
-                onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, port: parseInt(e.target.value, 10) || 0 } })}
-              />
-            </div>
-            <input
-              className="mem-input set-grow"
-              style={{ marginBottom: "8px" }}
-              placeholder={t("cowork.smtpFrom")}
-              value={draft.smtp?.from || ""}
-              onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, from: e.target.value } })}
-            />
-            <input
-              className="mem-input set-grow"
-              style={{ marginBottom: "8px" }}
-              placeholder={t("cowork.smtpUser")}
-              value={draft.smtp?.username || ""}
-              onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, username: e.target.value } })}
-            />
-            <input
-              className="mem-input set-grow"
-              style={{ marginBottom: "8px" }}
-              type="password"
-              placeholder={t("cowork.smtpPass")}
-              value={draft.smtpPassword || ""}
-              onChange={e => setDraft({ ...draft, smtpPassword: e.target.value })}
-            />
-            <div className="set-seg">
-              {(() => {
-                const mode = draft.smtp?.encryptionMode || (draft.smtp?.useTLS ? "tls" : "starttls");
-                const setMode = (m: string) => setDraft({ ...draft, smtp: { ...draft.smtp!, encryptionMode: m, useTLS: m === "tls" } });
-                return (
-                  <>
-                    <button className={`set-seg__btn${mode === "tls" ? " set-seg__btn--on" : ""}`} onClick={() => setMode("tls")}>
-                      {t("settings.encryptionTls")}
-                    </button>
-                    <button className={`set-seg__btn${mode === "starttls" ? " set-seg__btn--on" : ""}`} onClick={() => setMode("starttls")}>
-                      {t("settings.encryptionStarttls")}
-                    </button>
-                    <button className={`set-seg__btn${mode === "none" ? " set-seg__btn--on" : ""}`} onClick={() => setMode("none")}>
-                      {t("settings.encryptionNone")}
-                    </button>
-                  </>
-                );
-              })()}
-            </div>
-          </SettingsField>
-        </OptionalModule>
-
-        {/* ── 邮件接收（IMAP）── */}
-        <OptionalModule title={t("cowork.imap")} description={t("cowork.imapModDesc")} enabled={imapOn} onToggle={toggleImap}>
-          <SettingsField label={t("cowork.imap")} stacked>
-            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+            </label>
+            <label className="mail-field">
+              <span className="mail-field__label">{t("cowork.mailAuthCode")}</span>
               <input
                 className="mem-input set-grow"
-                placeholder={t("cowork.imapHost")}
-                value={draft.imap?.host || ""}
-                onChange={e => setDraft({ ...draft, imap: { ...draft.imap!, host: e.target.value } })}
+                type="password"
+                placeholder={draft.smtpPasswordSet ? t("cowork.secretSet") : t("cowork.mailAuthCode")}
+                value={draft.smtpPassword || ""}
+                onChange={e => setDraft({ ...draft, smtpPassword: e.target.value, imapPassword: e.target.value })}
               />
-              <input
-                className="mem-input"
-                style={{ width: "80px" }}
-                placeholder={t("settings.portPlaceholder")}
-                type="number"
-                value={draft.imap?.port || ""}
-                onChange={e => setDraft({ ...draft, imap: { ...draft.imap!, port: parseInt(e.target.value, 10) || 0 } })}
-              />
-            </div>
-            <input
-              className="mem-input set-grow"
-              style={{ marginBottom: "8px" }}
-              placeholder={t("cowork.imapUser")}
-              value={draft.imap?.username || ""}
-              onChange={e => setDraft({ ...draft, imap: { ...draft.imap!, username: e.target.value } })}
-            />
-            <input
-              className="mem-input set-grow"
-              type="password"
-              placeholder={t("cowork.imapPass")}
-              value={draft.imapPassword || ""}
-              onChange={e => setDraft({ ...draft, imapPassword: e.target.value })}
-            />
-          </SettingsField>
+            </label>
+          </div>
         </OptionalModule>
 
         {/* ── RAG 语义检索 ── */}
         <OptionalModule title={t("cowork.rag")} description={t("cowork.ragModDesc")} enabled={ragOn} onToggle={toggleRag}>
-          <SettingsField label={t("cowork.rag")} hint={t("cowork.ragHint")} stacked>
+          <div className="optional-module__controls">
+            <span className="mem-hint">{t("cowork.ragHint")}</span>
             <input
               className="mem-input set-grow"
               placeholder={t("cowork.ragModel")}
               value={draft.embeddingModel}
               onChange={e => setDraft({ ...draft, embeddingModel: e.target.value })}
             />
-          </SettingsField>
+          </div>
         </OptionalModule>
 
       </SettingsSection>
@@ -4092,13 +4397,13 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
       {/* --- 快捷截屏（全局热键 → VLM 识别 → IM 回复） --- */}
       <SettingsSection title={t("settings.screenshotTitle")}>
         <SettingsField label={t("settings.screenshotEnableLabel")} hint={t("settings.screenshotEnableHint")}>
-          <label className="settings-toggle">
+          <label className="cap-switch">
             <input
               type="checkbox"
               checked={draft.screenshotEnabled ?? false}
               onChange={e => setDraft({ ...draft, screenshotEnabled: e.target.checked })}
             />
-            <span>{(draft.screenshotEnabled ?? false) ? t("settings.toggleOn") : t("settings.toggleOff")}</span>
+            <span className="cap-switch__track" />
           </label>
         </SettingsField>
         <SettingsField label={t("settings.screenshotHotkeyLabel")} hint={t("settings.screenshotHotkeyHint")}>
@@ -4145,6 +4450,44 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
             <option value="qwen/qwen3.5-397b-a17b">qwen/qwen3.5-397b-a17b — {t("settings.screenshotVlmStrong")}</option>
           </select>
         </SettingsField>
+      </SettingsSection>
+
+      {/* --- 紧急停止（全局热键 → 中断 AI 桌面自动化） --- */}
+      <SettingsSection title={t("settings.estopTitle")}>
+        <SettingsField label={t("settings.estopHotkeyLabel")} hint={t("settings.estopHotkeyHint")}>
+          <div className="set-input-browse">
+            <input
+              className="mem-input"
+              value={recordingEStopHotkey ? t("settings.hotkeyRecord") : (draft.estopHotkey ?? "Ctrl+Shift+Pause")}
+              readOnly={recordingEStopHotkey}
+              placeholder="Ctrl+Shift+Pause"
+              onKeyDown={(e) => {
+                if (!recordingEStopHotkey) return;
+                const modKeys = ["Control", "Alt", "Shift", "Meta"];
+                if (modKeys.includes(e.key)) return;
+                e.preventDefault();
+                const parts: string[] = [];
+                if (e.ctrlKey) parts.push("Ctrl");
+                if (e.altKey) parts.push("Alt");
+                if (e.shiftKey) parts.push("Shift");
+                if (e.metaKey) parts.push(e.metaKey ? "Win" : "");
+                const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+                parts.push(key);
+                setDraft({ ...draft, estopHotkey: parts.filter(Boolean).join("+") });
+                setRecordingEStopHotkey(false);
+              }}
+              onBlur={() => recordingEStopHotkey && setRecordingEStopHotkey(false)}
+              onChange={e => !recordingEStopHotkey && setDraft({ ...draft, estopHotkey: e.target.value })}
+            />
+            <button
+              type="button"
+              className={"btn btn--small set-input-browse__btn" + (recordingEStopHotkey ? " btn--primary" : "")}
+              onClick={() => setRecordingEStopHotkey(!recordingEStopHotkey)}
+            >
+              {recordingEStopHotkey ? "Esc" : t("settings.hotkeyRecordBtn")}
+            </button>
+          </div>
+        </SettingsField>
 
         <div style={{ marginTop: "16px" }}>
           <button
@@ -4157,7 +4500,7 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
           </button>
         </div>
       </SettingsSection>
-    </div>
+    </>
   );
 }
 
