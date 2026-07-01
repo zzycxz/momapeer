@@ -47,11 +47,16 @@ const (
 	// fires when a `task` sub-agent finishes. Notification fires when the agent
 	// needs the user's attention (e.g. a pending approval). PreCompact fires just
 	// before a compaction pass; its stdout is injected as extra summary guidance.
+	// Startup fires once when the process boots — before any session is active —
+	// for one-time cold-start setup (logging, workspace prep, notifications). It
+	// is not lazy like SessionStart (which waits for the first turn): it runs as
+	// soon as hooks are loaded at boot.
 	SessionStart Event = "SessionStart"
 	SessionEnd   Event = "SessionEnd"
 	SubagentStop Event = "SubagentStop"
 	Notification Event = "Notification"
 	PreCompact   Event = "PreCompact"
+	Startup      Event = "Startup"
 )
 
 // Events is every event, in a stable order — drives loading and `/hooks`.
@@ -59,6 +64,7 @@ var Events = []Event{
 	PreToolUse, PostToolUse, PermissionRequest, UserPromptSubmit, Stop,
 	PostLLMCall,
 	SessionStart, SessionEnd, SubagentStop, Notification, PreCompact,
+	Startup,
 }
 
 // IsBlocking reports whether a non-zero/exit-2 (or timed-out) hook on this event

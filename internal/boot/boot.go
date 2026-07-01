@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,7 +31,9 @@ import (
 	"github.com/zzycxz/momapeer/internal/installsource"
 	"github.com/zzycxz/momapeer/internal/instruction"
 	"github.com/zzycxz/momapeer/internal/jobs"
+	"github.com/zzycxz/momapeer/internal/jiutian"
 	"github.com/zzycxz/momapeer/internal/lsp"
+	"github.com/zzycxz/momapeer/internal/ppttemplate"
 	"github.com/zzycxz/momapeer/internal/memory"
 	"github.com/zzycxz/momapeer/internal/netclient"
 	"github.com/zzycxz/momapeer/internal/outputstyle"
@@ -38,6 +41,7 @@ import (
 	"github.com/zzycxz/momapeer/internal/plugin"
 	"github.com/zzycxz/momapeer/internal/provider"
 	"github.com/zzycxz/momapeer/internal/sandbox"
+	"github.com/zzycxz/momapeer/internal/secret"
 	"github.com/zzycxz/momapeer/internal/skill"
 	"github.com/zzycxz/momapeer/internal/tool"
 	"github.com/zzycxz/momapeer/internal/tool/builtin"
@@ -191,6 +195,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if err := netclient.Validate(proxySpec); err != nil {
 		return nil, err
 	}
+	// Publish the proxy spec so the VLM runner (which the cowork branch installs
+	// below via SetProviderChatRunner) can build a proxy-aware provider. Read in
+	// runProviderVLMChat; assigned here so every Build re-publishes the current
+	// spec (a profile switch re-runs Build, re-resolving the proxy).
+	proxySpecForVLM = proxySpec
 
 	// Initialize the global LLM request budget from [llm] config. RPM=0 (the
 	// default) disables limiting; NewProviderWithProxy then passes providers
@@ -200,6 +209,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Inject the proxy-aware client into the shared Jiutian helper. Without this,
+	// jiutian.APICall (used by image_understand, video_understand, file upload,
+	// and the VLM backend) bypasses the proxy and fails with EOF in environments
+	// that require one. Done unconditionally so all callers share the same client.
+	jiutian.SetClient(httpClient)
 
 	// The executor's provider is the main-agent provider — mark it
 	// high-priority so it's always granted RPM slots (reserve_main protects it
@@ -318,16 +332,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	for _, t := range builtin.JiutianTools(&cfg.Jiutian) {
 		reg.Add(t)
 	}
-	// coWork-only browser automation tools. These spawn a Chromium subprocess on
-	// first browser_open and are intentionally absent from the dev tool list — a
-	// coding session has no use for them and should never pay the process cost.
-	// Phase 1: the full browser_* set. Later cowork capabilities (screen/doc/rag)
-	// register here the same way.
-	// Browser automation is a general capability (on par with web_search),
-	// available in both dev and cowork — a developer needs it to check docs,
-	// debug frontends, and inspect API responses. browser path is read from
-	// [cowork] browser_path for backward compat (existing configs keep working);
-	// empty = auto-detect Chrome/Edge/Brave.
+	// Browser automation tools. These spawn a Chromium subprocess on first
+	// browser_open. Browser automation is a general capability (on par with
+	// web_search), available in both dev and cowork — a developer needs it to
+	// check docs, debug frontends, and inspect API responses. The browser path
+	// is read from [cowork] browser_path for backward compat (existing configs
+	// keep working); empty = auto-detect Chrome/Edge/Brave.
 	builtin.SetConfiguredBrowserPath(cfg.Cowork.BrowserPath)
 	for _, t := range builtin.BrowserTools() {
 		reg.Add(t)
@@ -344,6 +354,50 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		for _, t := range builtin.ScreenTools() {
 			reg.Add(t)
 		}
+		// Window-management tools (focus/maximize/restore/move/close). The agent
+		// uses these to set up the workspace before perceiving/acting: bring the
+		// target app to the foreground (so clicks/keys land in it, not whatever's
+		// on top), maximize/position it (so the whole UI is visible and unoccluded).
+		// Without these, the agent can't reliably control WHERE input goes — the
+		// root cause of "I clicked but nothing happened / text went to the wrong
+		// window". Windows-only; returns nil elsewhere.
+		for _, t := range builtin.WindowTools() {
+			reg.Add(t)
+		}
+		// Native visible-COM PPT automation (ppt_render). Renders a complete deck
+		// from JSON via an embedded Python bridge driving WPS 演示 with the window
+		// VISIBLE — the user watches each slide build. Windows-only; nil elsewhere.
+		for _, t := range builtin.PPTTools() {
+			reg.Add(t)
+		}
+		// Resolve the active PPT template (if any) and inject its master_file as
+		// the default for ppt_render. This is what "默认使用某个模板" means in
+		// practice: the agent calls ppt_render without a template_path, and the
+		// master the user picked in settings is applied automatically. If the
+		// template has no master_file (pure JSON theme), renders stay blank-deck.
+		if id := strings.TrimSpace(cfg.Cowork.PPTActiveTemplate); id != "" {
+			if tpl, err := ppttemplate.LoadActive(ppttemplate.DefaultDir(), id); err == nil && tpl != nil {
+				// Convert PageRoles (typed) to the loose map the builtin inject
+				// expects (so builtin doesn't import ppttemplate's types). Each
+				// role → {index, fill_region} passes straight through to Python.
+				roles := make(map[string]map[string]any, len(tpl.PageRoles))
+				for role, pr := range tpl.PageRoles {
+					m := map[string]any{"index": pr.Index}
+					if pr.FillRegion != nil {
+						m["fill_region"] = map[string]any{
+							"title_x": pr.FillRegion.TitleX, "title_y": pr.FillRegion.TitleY,
+							"title_w": pr.FillRegion.TitleW, "title_h": pr.FillRegion.TitleH,
+							"body_x": pr.FillRegion.BodyX, "body_y": pr.FillRegion.BodyY,
+							"body_w": pr.FillRegion.BodyW, "body_h": pr.FillRegion.BodyH,
+						}
+					}
+					roles[role] = m
+				}
+				builtin.SetDefaultPPTTemplate(tpl.MasterFile, roles)
+			} else if err != nil {
+				fmt.Fprintf(stderr, "warning: cowork ppt_active_template %q not loaded: %v\n", id, err)
+			}
+		}
 		// Scheduled-task tools. The scheduler instance is injected by the
 		// desktop app (see app.go) via builtin.SetScheduler; boot just
 		// registers the tool surface here. When no scheduler is bound (CLI/TUI
@@ -354,8 +408,16 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		// Email tools (SMTP send + IMAP read/search). Config injected from
 		// [cowork.smtp] and [cowork.imap]; when a side is unset, that side's
 		// tool returns a config error (the other still works).
-		builtin.SetEmailConfig(&cfg.Cowork.SMTP)
-		builtin.SetIMAPConfig(&cfg.Cowork.IMAP)
+		//
+		// Load encrypted secrets (cowork mail passwords) into the process env
+		// before the tools can fire. The tools read passwords via
+		// os.Getenv(passwordEnv); this is the bridge that makes the encrypted
+		// store (secret.Default) usable from the CLI/TUI too, which doesn't run
+		// the desktop startup migration. Explicit user/system env still wins.
+		if _, err := secret.Default().LoadIntoEnv(); err != nil {
+			fmt.Fprintf(stderr, "warning: secret store load failed: %v\n", err)
+		}
+		builtin.SetEmailAccounts(cfg.Cowork.EmailAccounts)
 		for _, t := range builtin.EmailTools() {
 			reg.Add(t)
 		}
@@ -364,12 +426,53 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		for _, t := range builtin.RAGTools() {
 			reg.Add(t)
 		}
-		// VLM backend for screen_perceive (desktop automation). Default 九天,
-		// switchable to provider multimodal (minimax/kimi) via [cowork] vlm_*.
+		// VLM backend for screen_perceive (desktop automation).
+		//
+		// DEFAULT is now the provider multimodal channel (qwen/qwen3.6-27b), NOT
+		// the 九天 LLMImage2Text /image/text endpoint. The dedicated endpoint
+		// intermittently returns HTTP 500 ("系统异常,请稍后重试") under load, which
+		// blinds the CUA mid-task and sends it into a spiral of improvised
+		// PowerShell/Python workarounds. The provider multimodal path is reached
+		// via the standard /chat/completions endpoint with image_url parts — the
+		// same stable path the screenshot hotkey uses — and was verified by the
+		// tests/cua_vlm_test.go probe to localize labeled targets reliably.
+		//
+		// Explicit config wins: if the user sets [cowork] vlm_backend, honor it
+		// verbatim (so "jiutian" still works, and "provider" + a custom vlm_model
+		// works). When vlm_backend is empty (the common, unconfigured case) we
+		// default to "provider" and pick the ScreenshotVLMModel (qwen3.6-27b) as
+		// the vision model — reusing the one model the user already has configured
+		// for screenshot recognition, so there's a single vision model in play.
+		vlmBackend := strings.TrimSpace(cfg.Cowork.VLMBackend)
+		vlmModel := strings.TrimSpace(cfg.Cowork.VLMModel)
+		if vlmBackend == "" {
+			vlmBackend = "provider"
+		}
+		if vlmModel == "" {
+			// Fall back to the screenshot-recognition model (defaults to
+			// qwen/qwen3.6-27b via normalizeCoworkDefaults) so the two vision uses
+			// share one configured model.
+			vlmModel = cfg.Cowork.ScreenshotVLMModel
+		}
 		builtin.SetVLMConfig(builtin.VLMConfig{
-			Backend: cfg.Cowork.VLMBackend,
-			Model:   cfg.Cowork.VLMModel,
+			Backend: vlmBackend,
+			Model:   vlmModel,
 		})
+		// Wire the provider-backed VLM runner so VLMBackend="provider" actually
+		// works. Without this, callProviderVLM returns "provider VLM bridge not
+		// initialized". The runner resolves the model ref to a provider entry,
+		// builds a one-shot client (with the network proxy), and streams the
+		// multimodal chat. cfg is captured by closure so a profile switch (which
+		// rebuilds via a fresh Build) re-resolves models.
+		builtin.SetProviderChatRunner(func(ctx context.Context, modelRef string, msgs []provider.Message) ([]provider.Message, error) {
+			return runProviderVLMChat(ctx, cfg, modelRef, msgs)
+		})
+		// Browser launch options: visible browser + persistent profile + proxy, so
+		// the driven browser behaves like a human user and reaches sites the same
+		// way momapeer's other HTTP traffic does. The proxy URL is resolved from
+		// the network spec; auto/env modes fall back to a probe via ProxyURLFor
+		// (chromedp needs one concrete --proxy-server URL, not a per-request func).
+		builtin.SetBrowserLaunchOptions(cfg.Cowork.BrowserHeadless, cfg.Cowork.BrowserUserDataDir, resolveBrowserProxyURL(proxySpec))
 		// Hybrid RAG: when an embedding model is configured, inject an embedder so
 		// rag_search reranks FTS5 hits with semantic similarity. Empty model =
 		// FTS5-only (the default, works offline).
@@ -407,27 +510,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		cfg.BuiltInMCP.EnabledNames(),
 		pluginSpecNames(opts.ExtraPlugins)...,
 	)
-	// coWork PPT capability: when the user configured the wps-ppt-mcp-server
-	// path, register it as a session MCP server so ppt_create/from_template/etc.
-	// are reachable. The server is a separate Python project (FastMCP + pywin32);
-	// deps are checked separately (agent surfaces an install hint if missing).
-	if opts.Profile != nil && strings.EqualFold(opts.Profile.Name, config.ProfileCowork) && strings.TrimSpace(cfg.Cowork.WPSPPTServerPath) != "" {
-		if entry, err := builtinmcp.WPSPPTEntry(cfg.Cowork.WPSPPTServerPath, cfg.Cowork.WPSPPTPython); err == nil {
-			// Avoid duplicate if the user also declared it in [[plugins]].
-			already := false
-			for _, e := range autoStartEntries {
-				if e.Name == builtinmcp.WPSPPTName {
-					already = true
-					break
-				}
-			}
-			if !already {
-				autoStartEntries = append(autoStartEntries, entry)
-			}
-		} else {
-			fmt.Fprintf(stderr, "warning: cowork wps-ppt server not registered: %v\n", err)
-		}
-	}
+	// PPT and other office-app operations are done the SAME way a human does
+	// them: via the screen_* CUA tools (open the app, perceive the UI, click,
+	// type) — NOT via COM automation. There are no ppt_* tools; the agent
+	// drives WPS演示 like any other desktop window.
 	// A profile plugin whitelist hides MCP servers not named in it. Empty list =
 	// all plugins (dev default). We filter after AppendEnabled so built-in MCPs
 	// (time, …) and session ExtraPlugins are also subject to the whitelist — a
@@ -671,6 +757,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 			Text: "this project defines hooks but they are not trusted — run /hooks trust to enable them"})
 	}
+
+	// Cold-start: fire the one-shot Startup hook now that hooks are loaded.
+	// Unlike SessionStart (which is lazy — it waits for the first user turn),
+	// Startup runs before any session is active, for one-time boot setup
+	// (logging, workspace prep, notifications). boot.Build runs once per
+	// process, so this fires exactly once.
+	hookRunner.Startup(ctx)
 
 	// The `task` tool spawns sub-agents that reuse the parent's provider and
 	// tool registry. Wired here after the built-ins / plugins are loaded so
@@ -1348,6 +1441,79 @@ func subagentEffectiveIdentity(cfg *config.Config, baseModelRef string, base *co
 		modelID = ref
 	}
 	return modelID, strings.TrimSpace(config.EffectiveEffort(&entry))
+}
+
+// runProviderVLMChat runs a one-shot multimodal chat through the provider layer,
+// used as the VLM backend when [cowork] vlm_backend = "provider". It resolves the
+// model ref to a configured provider entry, builds a proxy-aware provider client,
+// streams the request, and returns a single assistant message with the aggregated
+// text. The model must be vision-capable (provider.Vision); non-vision models
+// will error at the provider when given image content, surfacing a clear message.
+func runProviderVLMChat(ctx context.Context, cfg *config.Config, modelRef string, msgs []provider.Message) ([]provider.Message, error) {
+	ref := strings.TrimSpace(modelRef)
+	if ref == "" {
+		return nil, fmt.Errorf("vlm_model is empty — set [cowork] vlm_model to a vision-capable model")
+	}
+	entry, ok := cfg.ResolveModel(ref)
+	if !ok {
+		return nil, fmt.Errorf("vlm_model %q is not a configured provider", ref)
+	}
+	prov, err := NewProviderWithProxy(entry, proxySpecForVLM)
+	if err != nil {
+		return nil, fmt.Errorf("build VLM provider %q: %w", ref, err)
+	}
+	ch, err := prov.Stream(ctx, provider.Request{Messages: msgs, MaxTokens: 1024})
+	if err != nil {
+		return nil, err
+	}
+	var sb strings.Builder
+	for chunk := range ch {
+		if chunk.Err != nil {
+			return nil, chunk.Err
+		}
+		if chunk.Type == provider.ChunkText {
+			sb.WriteString(chunk.Text)
+		}
+	}
+	return []provider.Message{{Role: provider.RoleAssistant, Content: sb.String()}}, nil
+}
+
+// proxySpecForVLM is set during Build so the VLM runner (defined above, which
+// can't easily take params) shares the same proxy as the main provider. It is
+// only read inside runProviderVLMChat, always after Build assigns it.
+var proxySpecForVLM netclient.ProxySpec
+
+// resolveBrowserProxyURL returns a single concrete proxy URL (e.g.
+// "http://127.0.0.1:7890") for chromedp's --proxy-server flag, derived from the
+// network spec. chromedp needs ONE URL applied to all requests (it can't take a
+// per-request resolver), so we resolve the proxy that would be used for a
+// generic HTTPS request. Returns "" (no proxy / direct) when the spec is "off"
+// or no proxy applies — chromedp then uses the system default, matching the
+// previous behaviour.
+func resolveBrowserProxyURL(spec netclient.ProxySpec) string {
+	mode := netclient.NormalizeMode(spec.Mode)
+	if mode == netclient.ModeOff {
+		return ""
+	}
+	pf, err := netclient.ProxyFunc(spec)
+	if err != nil || pf == nil {
+		return ""
+	}
+	// Probe with a generic https request — covers the common case (proxied HTTPS).
+	// DirectHosts bypass is part of pf, so a direct host correctly resolves to "".
+	req, err := http.NewRequest(http.MethodGet, "https://browser-proxy-probe.invalid/", nil)
+	if err != nil {
+		return ""
+	}
+	u, err := pf(req)
+	if err != nil || u == nil {
+		return ""
+	}
+	// Strip auth for the flag: chromedp/Chrome handles proxy auth via the URL's
+	// userinfo, but embedding credentials in --proxy-server is fragile (some
+	// builds reject it). Authed proxies are uncommon for local dev proxies; we
+	// surface the scheme://host:port and let Chrome prompt or use a profile.
+	return u.Scheme + "://" + u.Host
 }
 
 // NewProvider builds a provider.Provider from a configured entry. Exported so

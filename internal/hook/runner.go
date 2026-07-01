@@ -111,6 +111,17 @@ func (r *Runner) SessionEnd(ctx context.Context) {
 	r.handle(Run(ctx, Payload{Event: SessionEnd, Cwd: r.cwd}, r.hooks, r.spawner))
 }
 
+// Startup fires once when the process boots, before any session becomes active.
+// It can't block; its purpose is one-time cold-start setup side effects (logging,
+// prepping the workspace, desktop notifications). Unlike SessionStart (which is
+// lazy — it waits for the first turn), Startup runs as soon as hooks are loaded.
+func (r *Runner) Startup(ctx context.Context) {
+	if !r.Enabled() {
+		return
+	}
+	r.handle(Run(ctx, Payload{Event: Startup, Cwd: r.cwd}, r.hooks, r.spawner))
+}
+
 // SubagentStop fires when a `task` sub-agent finishes. It can't block; last is
 // the sub-agent's final answer.
 func (r *Runner) SubagentStop(ctx context.Context, last string) {
