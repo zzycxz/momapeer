@@ -110,3 +110,43 @@ func (e *errorVerifier) Verify(ctx context.Context, workspaceRoot string) (Verif
 type skipErr struct{}
 
 func (e *skipErr) Error() string { return "no toolchain" }
+
+// TestReviewAndFixDisabled verifies the review stage is a no-op when disabled.
+func TestReviewAndFixDisabled(t *testing.T) {
+	c := &Coordinator{sink: event.Discard}
+	if err := c.reviewAndFix(context.Background(), reviewOptions{Enabled: false}, "/tmp"); err != nil {
+		t.Fatalf("disabled review should be a no-op, got err=%v", err)
+	}
+}
+
+// TestReviewAndFixNoExecutor verifies the stage skips when there is no executor
+// to drive a review turn.
+func TestReviewAndFixNoExecutor(t *testing.T) {
+	c := &Coordinator{sink: event.Discard}
+	if err := c.reviewAndFix(context.Background(), reviewOptions{Enabled: true}, "/tmp"); err != nil {
+		t.Fatalf("review with no executor should be a no-op, got err=%v", err)
+	}
+}
+
+// TestGitDiffNonRepo verifies gitDiff reports ran=true but empty diff (skip) on
+// a non-git directory, rather than erroring.
+func TestGitDiffNonRepo(t *testing.T) {
+	// A fresh temp dir is not a git repo, so git diff returns empty/exit-128.
+	diff, ran, err := gitDiff(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatalf("gitDiff on non-repo should not error, got %v", err)
+	}
+	// ran depends on git being installed; if git is absent, ran=false is fine.
+	// Either way diff should be empty (nothing to review).
+	if diff != "" {
+		t.Fatalf("non-repo should yield empty diff, got %q", diff[:min(50, len(diff))])
+	}
+	_ = ran
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

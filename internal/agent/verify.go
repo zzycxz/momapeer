@@ -149,6 +149,70 @@ func truncateForNotice(s string, max int) string {
 	return string(r[:max]) + "…"
 }
 
+// reviewOptions configures the optional post-execution code review stage.
+type reviewOptions struct {
+	// Enabled turns the stage on. When false, reviewAndFix is a no-op.
+	Enabled bool
+}
+
+// reviewAndFix runs an optional self-review: it captures the workspace diff
+// (git diff of unstaged changes since the turn began) and hands it to the
+// executor as a follow-up asking it to review its own changes for correctness
+// and fix any critical issues it finds. Unlike verify (machine pass/fail),
+// review is an LLM judgement — the executor re-reads its diff and self-corrects.
+//
+// The stage is advisory: it never fails the turn. A non-git workspace skips it.
+// This mirrors MiMo-Code compose's "Review" + bounded fix loop, adapted to
+// momapeer's single-executor Coordinator (the executor reviews its own work,
+// rather than spawning a separate reviewer, to avoid a second model/session).
+func (c *Coordinator) reviewAndFix(ctx context.Context, opts reviewOptions, workspaceRoot string) error {
+	if !opts.Enabled || c.executor == nil {
+		return nil
+	}
+	// Capture the current workspace diff. git diff (unstaged) shows what the
+	// executor just changed; --no-color keeps it plain text for the model.
+	diff, ran, err := gitDiff(ctx, workspaceRoot)
+	if err != nil || !ran || strings.TrimSpace(diff) == "" {
+		// Not a git repo, git unavailable, or no changes — nothing to review.
+		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
+			Text: "review skipped: no git diff available"})
+		return nil
+	}
+
+	c.sink.Emit(event.Event{Kind: event.Phase, Text: "review · self-review of changes"})
+	// Cap the diff so a massive changeset doesn't blow the follow-up prompt.
+	diff = truncateForNotice(diff, 6000)
+	msg := "Review the changes you just made (shown as a git diff below) for correctness. " +
+		"Fix any critical issues (bugs, broken error handling, missing tests, dead code) directly with your tools, " +
+		"then finish. If the changes look correct, just say so and finish.\n\n" +
+		"```diff\n" + diff + "\n```"
+	if err := c.executor.Run(ctx, msg); err != nil {
+		// A review-turn error is advisory — the executor's original work stands.
+		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
+			Text: "review turn ended early: " + err.Error()})
+		return nil
+	}
+	c.sink.Emit(event.Event{Kind: event.Phase, Text: "review · done"})
+	return nil
+}
+
+// gitDiff returns the unstaged workspace diff (what the executor changed this
+// turn). ran=false means git is unavailable or the dir isn't a repo; the caller
+// treats that as "skip review", not a failure.
+func gitDiff(ctx context.Context, workspaceRoot string) (diff string, ran bool, err error) {
+	if _, lookErr := exec.LookPath("git"); lookErr != nil {
+		return "", false, nil
+	}
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(cctx, "git", "-C", workspaceRoot, "diff", "--no-color").CombinedOutput()
+	if err != nil {
+		// git diff fails when not a repo (exit 128); treat as "no diff to review".
+		return "", true, nil
+	}
+	return string(out), true, nil
+}
+
 // DevVerifier runs a coding workspace's verification commands: go vet, go build,
 // then go test. It reports the first failure's output (so the executor can fix
 // the root cause), and passes only when all three succeed (test is skipped when

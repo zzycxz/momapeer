@@ -1111,6 +1111,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				}
 				coord.SetVerify(agent.DevVerifier{}, retries, root)
 			}
+			// Optional self-review stage (executor re-reads its git diff and
+			// fixes critical issues). Same dev-only gate as verify: a desktop
+			// task has no diff to review. Off by default.
+			if coord, ok := runner.(*agent.Coordinator); ok && strings.EqualFold(strings.TrimSpace(cfg.Agent.Review), "on") && (opts.Profile == nil || opts.Profile.Name != config.ProfileCowork) {
+				coord.SetReview(true, root)
+			}
 			label = entry.Model + " + planner " + pe.Model
 		}
 	}

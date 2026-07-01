@@ -84,8 +84,12 @@ type Coordinator struct {
 	// test/build for a coding workspace) and retries on failure. nil keeps the
 	// original plan->exec behaviour unchanged.
 	verify verifyOptions
-	// workspaceRoot is the directory verify runs in (the project root). Empty
-	// disables verify regardless of the verify field.
+	// review, when enabled, runs an optional self-review of the executor's
+	// changes (git diff + LLM judgement + fix). Disabled keeps the original
+	// plan->exec behaviour unchanged.
+	review reviewOptions
+	// workspaceRoot is the directory verify/review run in (the project root).
+	// Empty disables verify regardless of the verify field.
 	workspaceRoot string
 }
 
@@ -128,6 +132,17 @@ func (c *Coordinator) SetVerify(verifier Verifier, maxRetries int, workspaceRoot
 	c.workspaceRoot = workspaceRoot
 }
 
+// SetReview enables an optional post-execution self-review stage: the executor
+// re-reads its own git diff and fixes any critical issues it finds. workspaceRoot
+// is where the diff is captured. Independant of SetVerify (either or both can
+// run; review runs after verify).
+func (c *Coordinator) SetReview(enabled bool, workspaceRoot string) {
+	c.review = reviewOptions{Enabled: enabled}
+	if workspaceRoot != "" {
+		c.workspaceRoot = workspaceRoot
+	}
+}
+
 // Run plans with the planner model, then hands the plan to the executor. When a
 // verifier is configured (SetVerify), the executor's changes are checked after
 // it finishes and, on failure, retried for a bounded number of debug rounds.
@@ -147,14 +162,18 @@ func (c *Coordinator) Run(ctx context.Context, input any) error {
 	return c.executeThenVerify(ctx, formatHandoff(textInput, plan))
 }
 
-// executeThenVerify runs the executor and, when a verifier is wired, follows it
-// with the verify + retry stage. With no verifier it is just executor.Run, so
-// the original single-pass behaviour is preserved byte-for-byte.
+// executeThenVerify runs the executor and, when a verifier/review is wired,
+// follows it with the verify + retry stage and then the self-review stage. With
+// neither wired it is just executor.Run, so the original single-pass behaviour
+// is preserved byte-for-byte.
 func (c *Coordinator) executeThenVerify(ctx context.Context, input any) error {
 	if err := c.executor.Run(ctx, input); err != nil {
 		return err
 	}
-	return c.verifyAndRetry(ctx, c.verify, c.workspaceRoot)
+	if err := c.verifyAndRetry(ctx, c.verify, c.workspaceRoot); err != nil {
+		return err
+	}
+	return c.reviewAndFix(ctx, c.review, c.workspaceRoot)
 }
 
 // plan streams a plan from the planner and appends it to the planner session, so

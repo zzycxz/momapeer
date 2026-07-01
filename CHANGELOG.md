@@ -18,6 +18,16 @@
 - **boot 接线**：dev profile（非 cowork）+ `verify="on"` 时注入 DevVerifier；`config.go` 加 `verify`/`verify_max_retries` 开关（**默认 off**，向后兼容，原 plan→exec 行为字节不变）。
 - 测试：`verify_test.go`（5 用例：no-verifier 跳过、pass 首检、skip-on-error、非 Go 工作区、notice 截断）。
 
+### Added — 执行后自审阶段（review，verify 之后）
+
+借鉴 MiMo-Code compose 的 Review + fix loop，给 Coordinator 补上 verify 之后的代码自审。与 verify（机器判定测试 pass/fail）互补，review 是 LLM 判定（executor 重读自己的 git diff，修 critical 问题）。
+
+- **`verify.go` 扩展**：`reviewAndFix`——跑 `git diff` 拿本次改动，喂回 executor 做 follow-up 自审（"review your changes, fix critical issues"）；非 git 工作区/无 diff 则 skip；review turn 错误 advisory 不影响主 turn。
+- **`coordinator.go`**：加 `review` 字段 + `SetReview`；`executeThenVerify` 改为 exec→**verify→review**（review 在 verify 之后）。
+- **config/boot**：加 `review` 开关（默认 off），dev profile（非 cowork）+ `review="on"` 注入。
+- **经核实不做**：worktree 隔离（momapeer 无并行执行阶段，价值有限）、CoworkVerifier（桌面任务无机器可判定的 pass/fail 基准，MiMo 也没做）。
+- 测试：3 用例（disabled 跳过、no-executor 跳过、gitDiff 非 repo 返回空）。
+
 ### Added — 输出循环检测（n-gram 保守告警）
 
 借鉴 MiMo-Code 的 `TextNgramMonitor`，补上 momapeer 缺失的"文字维度"循环检测。

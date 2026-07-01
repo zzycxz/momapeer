@@ -989,6 +989,10 @@ type AgentConfig struct {
 	// VerifyMaxRetries bounds the debug loop after a failed verify (default 1).
 	// 0 = verify once with no retry. Only meaningful when Verify = "on".
 	VerifyMaxRetries int `toml:"verify_max_retries"`
+	// Review enables an optional post-execution self-review stage: the executor
+	// re-reads its git diff and fixes any critical issues. "off" (the default)
+	// keeps the original behaviour; "on" enables it. Runs after verify.
+	Review string `toml:"review"`
 	// Compaction window fractions: soft = notice only, compact = trigger, force = hard ceiling.
 	SoftCompactRatio  float64 `toml:"soft_compact_ratio"`
 	CompactRatio      float64 `toml:"compact_ratio"`
