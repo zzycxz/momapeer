@@ -55,13 +55,31 @@ edit 找不到 old_string 时原本只报 "not found"，现附加最接近行的
 | ~~token 压缩~~ | momapeer 已有 compact（上下文压缩）+ prune + truncateToolOutput + prefix cache + FTS5 memory 完整体系 |
 | ~~agent 时间维度 stuck 检测~~ | momapeer 已有 stormBreak（连续失败 3 次）+ compactStuck + repeatSuccessBlock（次数维度） |
 | ~~budgeted-read（按 token 预算读文件）~~ | momapeer read_file 已有 offset/limit（按行），够用；token 预算是优化非缺口，暂缓 |
+| ~~worktree 隔离~~ | momapeer 无并行执行阶段（parallel_tasks 已串行化避 race），worktree 价值有限且增生命周期/合并复杂度 |
+| ~~CoworkVerifier（截图验证）~~ | 桌面任务无机器可判定的 pass/fail 基准（dev 的基准是"测试通过"，明确）；MiMo compose 的 verify 也是编码专用；现有 planner 的截图验证步骤已覆盖桌面场景；VLM 自动判定不可靠 |
+
+### 配置 — verify / review 怎么开启（默认 off）
+
+`verify` 和 `review` 默认关闭（向后兼容，原 plan→exec 行为不变）。在 `momapeer.toml` 的 `[agent]` 段开启（仅 dev/编码 profile 生效，coWork 桌面 profile 不触发）：
+
+```toml
+[agent]
+verify = "on"              # 执行后跑 go vet/build/test 验证，失败重试
+verify_max_retries = 1     # 失败重试次数（默认 1，0=只验证不重试）
+review = "on"              # verify 之后让 executor 自审 git diff 并修 critical
+```
+
+两者独立，可单开 verify、单开 review、或都开（review 在 verify 之后跑）。非 Go 工作区（无 go.mod）自动跳过 verify；非 git 工作区自动跳过 review。
 
 ### 验证
 
 | 项 | 结果 |
 |---|---|
 | `go build ./cmd/... ./internal/...` | ✅ |
-| agent / tool.builtin / hook 测试 | ✅ 全过 |
+| verify 测试（5 用例：no-verifier/pass 首检/skip-on-error/非 Go/notice 截断） | ✅ |
+| review 测试（3 用例：disabled 跳过/no-executor 跳过/gitDiff 非 repo） | ✅ |
+| repeat_text 测试（6 用例：正常/verbatim/reset/短文本/CJK/n-gram 边界） | ✅ |
+| tool.builtin / hook 测试 | ✅ 全过 |
 | 我引入的 gofmt 对齐（repeatText 字段） | ✅ 已修 |
 
 ---
