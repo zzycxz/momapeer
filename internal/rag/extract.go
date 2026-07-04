@@ -335,6 +335,15 @@ func (p *Pipeline) processTask(workerID int, t chunkTask) {
 	for attempt := 0; attempt < p.cfg.MaxRetries; attempt++ {
 		res, err := p.extractor.Extract(ctx, t.Text)
 		if err == nil {
+			// Drop relations whose endpoints aren't in this chunk's entity set
+			// (LLM hallucinations) before upsert — mirrors HE's
+			// _prune_dangling_edges. Scoped to this chunk's entities; cross-
+			// chunk entity reuse still happens via name normalization at upsert.
+			before := len(res.Relations)
+			res.Relations = pruneDanglingRelations(res)
+			if dropped := before - len(res.Relations); dropped > 0 {
+				p.logf("rag: pruned %d dangling relations in %s chunk %d", dropped, t.Path, t.ChunkIdx)
+			}
 			src := Source{Path: t.Path, Chunk: t.ChunkIdx}
 			for _, e := range res.Entities {
 				if e := p.upsertEntity(t.Collection, e, src); e != nil {
@@ -516,7 +525,7 @@ func walkDocs(root string) ([]string, error) {
 func isSupportedExt(path string) bool {
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
 	switch ext {
-	case "", "txt", "md", "markdown", "csv", "json", "html", "htm", "py", "go", "js", "ts", "tsx", "java", "c", "cpp", "h", "rs", "yaml", "yml":
+	case "", "txt", "md", "markdown", "csv", "tsv", "json", "html", "htm", "py", "go", "js", "ts", "tsx", "java", "c", "cpp", "h", "rs", "yaml", "yml":
 		return true
 	}
 	return false
@@ -541,6 +550,32 @@ type noopExtractor struct{}
 
 func (noopExtractor) Extract(ctx context.Context, chunk string) (ExtractResult, error) {
 	return ExtractResult{}, nil
+}
+
+// pruneDanglingRelations drops relations whose source or target isn't among
+// this chunk's extracted entities. LLMs sometimes emit a relation pointing at an
+// entity they never actually extracted (a hallucinated endpoint); keeping those
+// pollutes the graph with edges to non-existent nodes. Both sides are compared
+// by normalized name so casing/whitespace differences don't cause false drops.
+// This is a Go port of HE's _prune_dangling_edges (graph.py:624), simplified to
+// check only the in-chunk entity set rather than the whole store — cross-chunk
+// legitimate reuse still happens because upsert merges by normalized name.
+func pruneDanglingRelations(res ExtractResult) []Relation {
+	if len(res.Entities) == 0 {
+		// No entities at all → all relations are dangling by definition.
+		return nil
+	}
+	known := make(map[string]bool, len(res.Entities))
+	for _, e := range res.Entities {
+		known[normalizeName(e.NameRaw)] = true
+	}
+	kept := res.Relations[:0]
+	for _, r := range res.Relations {
+		if known[normalizeName(r.Source)] && known[normalizeName(r.Target)] {
+			kept = append(kept, r)
+		}
+	}
+	return kept
 }
 
 // ParseExtractJSON unmarshals an LLM JSON response into ExtractResult. The LLM
@@ -586,18 +621,58 @@ func ParseExtractJSON(b []byte) (ExtractResult, error) {
 // ExtractionPrompt is the system+user prompt sent to the LLM for each chunk.
 // Adapted from Hyper-Extract's AutoGraph default (types/graph.py:41). Kept as
 // a constant so the jiutian impl and any future provider impl share it.
-const ExtractionPrompt = `你是知识抽取助手。从下面这段文本中抽取所有实体（人/组织/项目/产品/概念/地点/事件）和它们之间的关系。
+const ExtractionPrompt = `你是知识抽取助手。从下面这段文本中抽取所有实体（人/组织/项目/产品/概念/地点/事件/主题）和它们之间的关系。
 
 要求：
-1. 实体 name 用规范化的简称（如"中国移动"而非"中国移动通信集团有限公司"）
+1. 实体 name 用规范化的简称（如"中国移动"而非"中国移动通信集团有限公司"），全文保持一致
 2. 关系只连接已抽取的实体，不要凭空造实体
 3. 描述简洁，控制在 50 字内
 4. 只抽取文本明确提到的事实，不要推理或脑补
+5. 不要抽取纯代词或泛指（如"他/该产品/相关人员"），必须有独立指代意义
+6. 关系 type 用简短谓词，如 is_a/part_of/负责/属于/包含/相关/位于
 
 只返回 JSON，格式如下：
 {"entities":[{"name":"张三","type":"person","description":"..."}],"relations":[{"source":"张三","target":"MoMAPeer","type":"负责","description":"..."}]}
 
-type 可选值：person, organization, project, product, concept, location, event, other
+type 可选值：person, organization, project, product, concept, location, event, topic, other
+
+### 文本：
+%s`
+
+// NodeExtractionPrompt is stage 1 of the two-stage extraction (borrowed from
+// HE graph.py:510): extract ONLY entities first. The returned entity list then
+// seeds stage 2's {known_nodes} so relations are forced to reference real
+// entities, dramatically cutting hallucinated edges. %s = the chunk text.
+const NodeExtractionPrompt = `你是知识抽取助手。从下面这段文本中抽取所有实体（人/组织/项目/产品/概念/地点/事件/主题）。
+
+要求：
+1. 实体 name 用规范化的简称（如"中国移动"而非"中国移动通信集团有限公司"），全文保持一致
+2. 只抽取文本明确提到的实体，不要推理或脑补
+3. 不要抽取纯代词或泛指（如"他/该产品/相关人员"），必须有独立指代意义
+4. 描述简洁，控制在 50 字内
+
+只返回 JSON：{"entities":[{"name":"张三","type":"person","description":"..."}]}
+type 可选值：person, organization, project, product, concept, location, event, topic, other
+
+### 文本：
+%s`
+
+// EdgeExtractionPrompt is stage 2: given the entities already extracted from
+// THIS chunk (injected as {known_nodes}), extract relations constrained to
+// those endpoints — mirroring HE's graph.py:611 pattern. %s = the known-nodes
+// list, %s = the chunk text.
+const EdgeExtractionPrompt = `你是关系抽取助手。下面已给出本段文本中抽取出的实体列表。请只在这些已知实体之间抽取关系。
+
+关键约束：
+1. 关系的 source 和 target 必须出现在下面的"已知实体"列表中，严禁引用列表外的实体
+2. 只抽取文本明确提到的事实，不要推理或脑补
+3. 关系 type 用简短谓词，如 is_a/part_of/负责/属于/包含/相关/位于
+4. 描述简洁，控制在 50 字内
+
+已知实体：
+%s
+
+只返回 JSON：{"relations":[{"source":"张三","target":"MoMAPeer","type":"负责","description":"..."}]}
 
 ### 文本：
 %s`

@@ -11,6 +11,8 @@ package rag
 
 import (
 	"database/sql"
+	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -108,7 +110,19 @@ func Open(dbPath string) (*Store, error) {
 		UNIQUE(collection, source, target, type)
 	);
 	CREATE INDEX IF NOT EXISTS idx_rel_src ON rag_relations(collection, source);
-	CREATE INDEX IF NOT EXISTS idx_rel_tgt ON rag_relations(collection, target);`
+	CREATE INDEX IF NOT EXISTS idx_rel_tgt ON rag_relations(collection, target);
+
+	-- Cached embeddings for rerank. Keyed by a content hash so a re-imported
+	-- chunk (changed body) gets a fresh embedding automatically, and the same
+	-- chunk queried repeatedly reuses the vector without re-calling the API.
+	-- One row per (chunk content, model) pair; model is included so switching
+	-- embedders doesn't poison the cache with mismatched vectors.
+	CREATE TABLE IF NOT EXISTS rag_embeddings (
+		chunk_hash TEXT NOT NULL,
+		model      TEXT NOT NULL,
+		vec        BLOB NOT NULL,
+		PRIMARY KEY (chunk_hash, model)
+	);`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create rag schema: %w", err)
@@ -125,8 +139,15 @@ func (s *Store) Close() error {
 
 // Import adds a document to a collection, splitting it into chunks first. Re-
 // importing the same path replaces its chunks (delete-then-insert). Returns the
-// number of chunks stored. Tags are informational metadata (not yet indexed).
+// number of chunks stored.
+//
+// The tags parameter is currently ignored (deprecated): it was reserved for a
+// metadata feature that was never wired through to storage or search. It is
+// kept in the signature for source compatibility; pass nil. If per-document
+// tags become wanted later, add a rag_doc_meta side table rather than reusing
+// this param.
 func (s *Store) Import(collection, path string, tags []string) (int, error) {
+	_ = tags // reserved/unused — see doc comment.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -222,16 +243,118 @@ func (s *Store) Search(query, collection string, limit int) ([]Result, error) {
 }
 
 // Delete removes all chunks for a path in a collection (or the whole collection
-// when path is empty).
+// when path is empty). It cascades across every RAG table so no structured
+// knowledge is orphaned: rag_fts (text), rag_jobs + rag_chunks (extraction
+// state), and rag_entities + rag_relations (the knowledge graph). For a
+// single-path delete the entity/relation rows are pruned precisely by their
+// sources JSON — rows whose only source was this path are dropped; rows that
+// also came from other files keep those sources and survive.
 func (s *Store) Delete(collection, path string) error {
 	collection = normalizeCollection(collection)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if path == "" {
-		_, err := s.db.Exec("DELETE FROM rag_fts WHERE collection = ?", collection)
+		// Whole collection: pure SQL across every table (the high-frequency
+		// reset path). Order: chunks → jobs (chunks FK-cascade, but explicit is
+		// harmless) → entities/relations → FTS5.
+		for _, stmt := range []string{
+			`DELETE FROM rag_chunks WHERE job_id IN (SELECT id FROM rag_jobs WHERE collection = ?)`,
+			`DELETE FROM rag_jobs WHERE collection = ?`,
+			`DELETE FROM rag_entities WHERE collection = ?`,
+			`DELETE FROM rag_relations WHERE collection = ?`,
+			`DELETE FROM rag_fts WHERE collection = ?`,
+			`DELETE FROM rag_embeddings`, // no collection column — clear all; chunks are gone
+		} {
+			if _, err := s.db.Exec(stmt, collection); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	// Single path: FTS5 + job/chunk state by exact collection+path, then a
+	// precise sources-based prune of the knowledge graph.
+	for _, stmt := range []string{
+		`DELETE FROM rag_fts WHERE collection = ? AND path = ?`,
+		`DELETE FROM rag_chunks WHERE job_id IN (SELECT id FROM rag_jobs WHERE collection = ? AND path = ?)`,
+		`DELETE FROM rag_jobs WHERE collection = ? AND path = ?`,
+	} {
+		if _, err := s.db.Exec(stmt, collection, path); err != nil {
+			return err
+		}
+	}
+	if err := pruneSourcesByPath(s.db, "rag_entities", "id", collection, path); err != nil {
 		return err
 	}
-	_, err := s.db.Exec("DELETE FROM rag_fts WHERE collection = ? AND path = ?", collection, path)
+	return pruneSourcesByPath(s.db, "rag_relations", "id", collection, path)
+}
+
+// pruneSourcesByPath trims a knowledge-graph table's rows by their `sources`
+// JSON: remove Source entries pointing at `path`, drop rows left with no
+// sources, and keep (with updated sources) rows that still have other origins.
+// This makes a single-file delete leave the graph consistent instead of
+// orphaning entities/relations whose provenance was only that file. Scoped to
+// `collection` so cross-collection name collisions can't be touched.
+func pruneSourcesByPath(db *sql.DB, table, idCol, collection, path string) error {
+	rows, err := db.Query(
+		`SELECT `+idCol+`, COALESCE(sources,'') FROM `+table+
+			` WHERE collection = ? AND sources LIKE ?`,
+		collection, "%"+path+"%")
+	if err != nil {
+		return err
+	}
+	type edit struct {
+		id     string
+		keep   []Source
+		dropMe bool
+	}
+	var edits []edit
+	for rows.Next() {
+		var id, sj string
+		if err := rows.Scan(&id, &sj); err != nil {
+			rows.Close()
+			return err
+		}
+		var srcs []Source
+		if sj != "" {
+			_ = json.Unmarshal([]byte(sj), &srcs)
+		}
+		kept := srcs[:0]
+		for _, s := range srcs {
+			if s.Path != path {
+				kept = append(kept, s)
+			}
+		}
+		edits = append(edits, edit{id: id, keep: kept, dropMe: len(kept) == 0})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, e := range edits {
+		if e.dropMe {
+			if _, err := db.Exec(`DELETE FROM `+table+` WHERE `+idCol+` = ?`, e.id); err != nil {
+				return err
+			}
+			continue
+		}
+		sj, _ := json.Marshal(e.keep)
+		if _, err := db.Exec(`UPDATE `+table+` SET sources = ? WHERE `+idCol+` = ?`, string(sj), e.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Vacuum reclaims free space left by deletions. SQLite marks deleted rows as
+// free internally but never shrinks the file without VACUUM, so a knowledge
+// base that's been heavily imported-then-deleted can balloon. Safe but
+// moderately expensive (rewrites the whole DB) — call after a collection clear
+// or a large prune, not on every delete.
+func (s *Store) Vacuum() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`VACUUM`)
 	return err
 }
 
@@ -307,11 +430,26 @@ func readDoc(path string) (string, string, error) {
 // chunkDoc splits a document into indexable chunks. Strategy: split on double
 // newlines (paragraphs); merge short paragraphs; cap chunk size so snippets stay
 // focused. Code files (no blank-line structure) fall back to fixed-size windows.
+// Tabular formats (csv/tsv) use a row-aware chunker with per-chunk header
+// retention so the vertical (column) semantics survive splitting.
 func chunkDoc(body, ext string) []string {
 	const maxChunk = 1200 // chars; keeps snippets readable + token-cheap.
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return nil
+	}
+	// Tabular formats: row-aware chunking with per-chunk header retention so the
+	// vertical (column) semantics survive splitting. Rendered as Markdown pipe
+	// tables, which carry column names into every chunk.
+	if ext == "csv" || ext == "tsv" {
+		comma := ','
+		if ext == "tsv" {
+			comma = '\t'
+		}
+		if c := chunkTabular(body, comma); len(c) > 0 {
+			return c
+		}
+		// Malformed input where csv.Parse failed → fall through to generic window.
 	}
 	// Paragraph split (markdown, text). Short paragraphs merge up to maxChunk;
 	// a single huge paragraph (no blank-line breaks) still needs windowing.
@@ -349,21 +487,134 @@ func chunkDoc(body, ext string) []string {
 	return windowChunk(body, maxChunk)
 }
 
-// windowChunk splits s into <=max-byte windows. A single short string yields one
+// windowChunk splits s into <=max-rune windows. A single short string yields one
 // chunk; a long string yields multiple. Used for code files and oversized blobs.
+// Slices by rune (not byte) so multi-byte characters — CJK in particular — are
+// never split mid-character, which would produce invalid UTF-8. The byte-based
+// slice this replaced corrupted mixed ASCII+CJK text whenever a leading ASCII
+// byte misaligned the window boundary onto the middle of a 3-byte rune.
 func windowChunk(s string, max int) []string {
+	if max <= 0 {
+		return []string{s}
+	}
 	if len(s) <= max {
 		return []string{s}
 	}
+	r := []rune(s)
 	var chunks []string
-	for i := 0; i < len(s); i += max {
+	for i := 0; i < len(r); i += max {
 		end := i + max
-		if end > len(s) {
-			end = len(s)
+		if end > len(r) {
+			end = len(r)
 		}
-		chunks = append(chunks, s[i:end])
+		chunks = append(chunks, string(r[i:end]))
 	}
 	return chunks
+}
+
+// chunkTabular parses a CSV/TSV document and chunks it into Markdown pipe
+// tables, retaining the header row in EVERY chunk. This preserves the vertical
+// (column) semantics across splits so a downstream search/extract reading any
+// chunk still knows which column each value belongs to.
+//
+// Returns nil on parse failure or a header-only file, so the caller can fall
+// back to generic windowing without losing the data. Reads row-by-row with
+// FieldsPerRecord=-1 (a wrong field count on one row never aborts the whole
+// file) and LazyQuotes (an unterminated quote degrades to a literal instead of
+// a fatal error): the good rows survive and bad rows are skipped. A leading
+// UTF-8 BOM (common from Excel/Notepad saves) is stripped so it doesn't pollute
+// the first column name. Rows whose column count differs from the header are
+// padded/truncated to the header width so every emitted table stays
+// well-formed. Cells containing `|` or newlines are escaped so they cannot
+// break the Markdown table structure.
+func chunkTabular(body string, comma rune) []string {
+	body = strings.TrimPrefix(body, "\uFEFF") // strip UTF-8 BOM (Excel/Notepad)
+	r := csv.NewReader(strings.NewReader(body))
+	r.Comma = comma
+	r.FieldsPerRecord = -1 // tolerate ragged rows: don't abort on a field-count mismatch
+	r.LazyQuotes = true    // tolerate stray quotes: degrade to literal, don't fail
+
+	header, err := r.Read()
+	if err != nil || len(header) == 0 {
+		return nil // unreadable or empty → let the caller fall back
+	}
+	const maxChunk = 1200
+	cols := len(header)
+	mdHeader := renderTableRow(header) + renderTableSeparator(cols)
+
+	var chunks []string
+	var cur strings.Builder
+	cur.WriteString(mdHeader)
+	dataRows := 0
+	flush := func() {
+		// Only emit a chunk that actually carries data rows; a header-only
+		// tail means every row fit in the previous chunk.
+		if dataRows > 0 {
+			chunks = append(chunks, cur.String())
+		}
+		cur.Reset()
+		cur.WriteString(mdHeader)
+		dataRows = 0
+	}
+	for {
+		row, err := r.Read()
+		if err != nil {
+			break // EOF, or a malformed tail row we skip (good rows already kept)
+		}
+		mdRow := renderTableRow(padRow(row, cols))
+		// If adding this row would overflow AND we already have data, start a
+		// new chunk (which re-prepends the header). A single oversized row is
+		// still emitted as its own chunk rather than dropped.
+		if cur.Len()+len(mdRow) > maxChunk && dataRows > 0 {
+			flush()
+		}
+		cur.WriteString(mdRow)
+		dataRows++
+	}
+	flush()
+	if len(chunks) == 0 {
+		return nil
+	}
+	return chunks
+}
+
+// renderTableRow renders a record as a Markdown table row: "| a | b |".
+func renderTableRow(row []string) string {
+	for i, c := range row {
+		row[i] = escapeCell(c)
+	}
+	return "| " + strings.Join(row, " | ") + " |\n"
+}
+
+// renderTableSeparator emits the Markdown table delimiter: "| --- | --- |".
+func renderTableSeparator(cols int) string {
+	dashes := make([]string, cols)
+	for i := range dashes {
+		dashes[i] = "---"
+	}
+	return "| " + strings.Join(dashes, " | ") + " |\n"
+}
+
+// escapeCell makes a cell safe for a Markdown pipe table: `|` would start a new
+// column and newlines would break the row, so replace them with look-alikes.
+func escapeCell(s string) string {
+	s = strings.ReplaceAll(s, "|", "\\|")
+	s = strings.ReplaceAll(s, "\n", " ")
+	return s
+}
+
+// padRow forces row to width cols: short rows get empty trailing cells, long
+// rows are truncated. Keeps every emitted table row well-formed.
+func padRow(row []string, cols int) []string {
+	if len(row) == cols {
+		return row
+	}
+	if len(row) > cols {
+		return row[:cols]
+	}
+	out := make([]string, cols)
+	copy(out, row)
+	return out
 }
 
 // stripHTML is a minimal tag stripper for .html imports (the agent can also use

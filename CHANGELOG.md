@@ -1,8 +1,352 @@
 # Changelog
 
+## [0.3.10] — 2026-07-04
+
+**RAG 知识库夯实：让图谱可溯源、抽取更干净、检索更经济、删除不留垃圾。** 经 Hyper-Extract 两轮源码核查，确认 momapeer 在溯源数据上本就比 HE 全（db 存了 path+chunk，HE 节点无来源），只差输出；抽取是单阶段的，缺 HE 最强的降幻觉手段。本版把已花成本变现、补最大质量短板、省重复开销，全部纯 Go 实现，无 Python/faiss/langchain 依赖。
+
+---
+
+### Added — 结果可溯源（图谱层引用来源）
+
+`rag_search` 的结构化层（实体/关系）此前打印实体名却**不带来源**，虽然 db 里存了完整的 `Sources`（path+chunk）。现在每个实体/关系都标注来源（如 `· 来源：spec.md#3`），并在末尾汇总「溯源文件」列表。这让模型经图谱答的事实能说清来自哪个文件——**可引用 = 可信，直接提升模型调用 rag_search 的意愿**。借鉴 HE 的 `additional_kwargs` 溯源思想（但 momapeer 的溯源数据本就比 HE 全）。
+
+- `internal/tool/builtin/rag.go`：结构化层输出 `sourceLabel`（每个来源 basename#chunk，去重、封顶 4 条）；末尾「溯源文件」汇总；`rag_search` 描述更新强调溯源能力。
+- 测试：`rag_provenance_test.go`（验证输出含来源 + 溯源文件）。
+
+### Added — 主题级关联展开（cog_rag 式"由点及面"，零 schema 改）
+
+借鉴 HE cog_rag 的「主题作超边聚合多实体」思想，但用**现有二元关系 schema 模拟**——topic/event 实体作枢纽，成员用 `member_of`/`part_of` 连接。`rag_search` 命中 topic 类实体时，展开一层成员输出（`成员：张三、李四`），一次命中揭示整个群组。`RelationsOf(topic, includeInverse=true)` 已能一次查出全部成员，只差接线。**不改表结构、不加 n 元超图**。
+
+- `internal/tool/builtin/rag.go`：`isTopicType`（topic/event/theme/group/team）+ 成员展开 + `dedupStrings`。
+- 抽取 prompt（见下）新增 `topic` 类型识别。
+- 测试：`rag_provenance_test.go`（主题命中展开成员）。
+
+### Added — per-chunk 两阶段抽取（借鉴 HE graph.py:510，最大降幻觉手段）
+
+HE 最强的质量特征是**两阶段抽取**：每个 chunk 先抽实体，再把该 chunk 的实体列表作 `{known_nodes}` 喂回抽关系，强制关系端点必须是已知实体。momapeer 原本是单阶段（`ExtractionPrompt` 一次吐实体+关系），关系可指向根本不存在的实体（幻觉）。本版拆为两阶段，默认 on（可经 config 关回单阶段省 token）。
+
+- `internal/rag/extract.go`：新增 `NodeExtractionPrompt`（只抽实体）+ `EdgeExtractionPrompt`（注入已知实体抽关系）；`ExtractionPrompt` 保留作单阶段回退，并强化（禁代词/泛指、关系类型枚举 is_a/part_of/负责/属于/相关、topic 类型）。
+- `internal/rag/jiutian_extractor.go`：`Extract` 改两阶段（stage1 抽实体 → stage2 喂回抽关系），拆出 `chatJSON`；新增 `parseNodesJSON`/`parseRelationsJSON`/`formatKnownNodes`；`TwoStage` config 字段。
+- `desktop/app.go`：`TwoStage: true` 接线。
+- 测试：`extract_prune_test.go`（prune/解析/known_nodes 共 6 用例）。
+
+### Added — `_prune_dangling_edges`（HE graph.py:624 的 Go 移植）
+
+抽取后、upsert 前过滤掉端点不在本 chunk 实体集里的关系，消除幻觉边。简化版：只校验「本次 Extract 返回的实体集合」（HE 还查全库 `_node_memory.keys`，但 momapeer 逐 chunk upsert，跨 chunk 合法复用靠 name 归一化自然完成，不必查 DB）。
+
+- `internal/rag/extract.go`：`pruneDanglingRelations`（按 normalizeName 比较，大小写差异不误删）+ `processTask` 调用点。
+- 测试：`extract_prune_test.go`（正常 prune / 大小写不误删 / 无实体全清）。
+
+### Added — embedding 持久缓存（省 API 费 + 降延迟）
+
+`ragembed_jiutian.go` 此前每次搜索都全量重算 query + 所有候选块的 embedding（embedding.go:99 自标 TODO），反复搜索同一语料纯浪费。本版加 `rag_embeddings` 缓存表：query 实时算（每次不同），候选块按内容哈希命中复用。哈希含 body，重导入（改了内容）自动失效；删集合联动清缓存。
+
+- `internal/rag/store.go`：新增 `rag_embeddings(chunk_hash, model, vec)` 表。
+- `internal/rag/embedding.go`：`Rerank` 改为缓存优先（只 embed 未命中的）；`chunkHash`（sha256 of collection|path|chunk|body）、`getEmbedding`/`putEmbedding`（nil-db 防御，降级全量 embed）、`encodeVec`/`decodeVec`（float32↔bytes）、`ClearEmbeddings`。
+- 测试：`embedding_cache_test.go`（重复搜索第二次只 embed query=1 + hash 随 body 变）。
+
+### Fixed — 删除级联（正确性：此前留孤儿实体/关系）
+
+`Store.Delete` 此前只删 `rag_fts`，**全库零条 `DELETE FROM rag_entities/relations`**——删了文件，图谱里还残留它的实体，数据不一致。本版 Delete 连实体/关系/jobs/chunks 一起清：整集合走纯 SQL（高频主路径）；单文件按 `sources` JSON 精确裁剪（移除该 path 的 Source 条目，空则删行，否则保留其它来源）。新增 `Vacuum()` 回收空间（SQLite 删除不缩文件）+ `RagClear` 重置入口。
+
+- `internal/rag/store.go`：`Delete` 重写（级联）+ `pruneSourcesByPath`（JSON 过滤清理）+ `Vacuum`。
+- `desktop/rag_app.go`：`RagClear(collection)`（Delete + Vacuum）。
+- 测试：`store_test.go`（单文件精确清理 + 整集合清空）。
+
+### Fixed — tags 参数静默丢弃（API 诚信）
+
+`Import(collection, path, tags)` 收了 tags 参数但函数体从不使用——API 承诺了功能却静默扔掉。标记 deprecated（保留签名兼容，文档说明），未来若要 tags 应加 `rag_doc_meta` 侧表而非复用此参数。
+
+- `internal/rag/store.go` + `internal/tool/builtin/rag.go`：tags 标 deprecated/ignored。
+
+### Changed — 技能描述（让模型更愿意调用）
+
+`internal/skill/builtins.go`：rag_search 描述强调「结构化命中带溯源 + 主题展开」，让模型知道用 rag_search 能拿到可引用、有关联的结果。
+
+### 借鉴 HE 的关键点（全部纯 Go 实现）
+
+- 两阶段抽取（graph.py:510）：per-chunk，实体先抽→作 known_nodes 喂回抽关系。
+- `_prune_dangling_edges`（graph.py:624）：简化为只查本 chunk 实体集。
+- 主题双层（cog_rag）：用二元 member_of 模拟，不改 schema。
+- 溯源（additional_kwargs）：输出溯源文件汇总。
+- 反幻觉约束 + 关系类型枚举（base_graph.yaml）：写进 prompt。
+
+### 不做（经核实排除）
+
+前端交互图谱视图（用户明确不加）；Leiden 社区发现（需 Go 实现，主题建模已覆盖）；FAISS/langchain（违背纯 Go）；CustomRuleMerger（成本敏感，远期可选）；模糊别名（HE 自己也不做）；n 元真超图（二元模拟够用）。
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| rag 包全套（41 个，新增 ~13） | ✅ |
+| builtin rag 测试（5 个） | ✅ |
+| desktop 模块构建 | ✅ |
+| gofmt（本次所有文件） | ✅ 干净 |
+| go vet | ✅（唯一警告 screen_windows.go:1052 为预先存在的 Win32 剪贴板代码，非本次改动） |
+| 实施中修复：Rerank 加缓存后 `&Store{}` nil-db panic → 加 nil 防御降级 | ✅ 已修 |
+
+---
+
+## [0.3.9] — 2026-07-04
+
+**协同邮箱成型 + 办公界面收敛 + 旧双模型架构残留彻底清理。** 这一版围绕"办公场景到底能用什么"做了三件事：① 把 139 邮箱从半残的 UI（只显示 SMTP 发送、IMAP 卡片不渲染）收敛成一张干净可用的「邮箱（139.com）」卡，并补上保存后实测 IMAP 登录的绿/红状态灯；② 办公界面的一系列 UX 修补（即时保存、新建会话不再跳编码、删掉鸡肋的分析屏幕按钮、移除无工具能力的专家团入口、卡片样式统一）；③ 趁打包暴露出的编译错误，把上一版架构升级（Coordinator/Planner-Executor 双模型 → workflow worktree + 裸机）遗留的旧符号残留逐行清理干净。
+
+---
+
+### Fixed — 139 邮箱端到端打通
+
+原来办公设置里的邮件配置是断的：选了 139 preset 后 SMTP 卡片只剩"用户名+授权码"两个框，**整个 IMAP 卡片被 `host !== "smtp.139.com"` 条件包掉根本不渲染**，用户只看到"邮件发送"看不到"邮件接收"，语义断成两半。
+
+- **`desktop/frontend/.../SettingsPanel.tsx`**：SMTP + IMAP 两张卡合并为**一张「邮箱」卡**——139 收发本就是同一邮箱同一套账号+授权码，拆成两张只造成"要配两遍"的困惑。合并后单开关、单行输入框（邮箱地址 + 授权码并排），host/port/加密方式固定写死不暴露（preset 预填，draft 仍保存）。
+- **`internal/config/render.go`**：补修 `encryption_mode` 落盘——原来 render 写 `[cowork.smtp]` 时漏写这个字段，导致保存后重启加载时 fallback 成 `starttls`，用 starttls 连 465 端口失败（"配置好好的重启就连不上"的隐藏 bug）。新增 `TestRenderSMTPEncryptionModeRoundTrips` 回归测试。
+- **`internal/tool/builtin/email_imap.go`**：新增导出函数 `ProbeIMAPConfig(cfg)`——接受独立 IMAP 配置实测连接，不依赖全局 `emailAccounts`（那个只在 boot 时刷新，保存后是旧值）。`ProbeAccountIMAP` 内部改为复用它（去重）。
+- **`desktop/cowork_settings.go`**：新增 `ProbeMailAccount() MailProbeResult`——reload 最新配置 + 调 `ProbeIMAPConfig` 实测，返回 ok/error/unconfigured（永远 nil error，避免 wails 弹系统对话框）。
+
+### Added — 邮箱连接状态灯（绿/红/橙）
+
+邮箱卡标题旁的状态点从"假标记（橙点=填了账号）"升级为**真·连接状态灯**：填完邮箱地址/授权码失焦保存后，自动实测一次 IMAP 登录——🟢 绿点=连接正常，🔴 红点=失败（悬停看原因），🟠 橙闪=检测中。不做持续轮询，只在保存后测一次。
+
+- **`SettingsPanel.tsx`**：新增 `mailStatus`/`mailMessage` state + `commitMailThenProbe`（先 await 保存再 probe，保证测的是刚存的配置）+ `probeMail`。`OptionalModule` 加可选 `statusDot` prop 让邮箱卡传入自定义状态点，其他卡片不受影响。
+- **`styles.css`**：`.mail-status-dot--ok/--error/--checking/--idle` 颜色变体（GitHub 绿/红/品牌橙/灰），checking 态带 pulse 动画 + reduced-motion 守护。
+- **`lib/types.ts`/`bridge.ts`**：新增 `MailProbeResult` 类型 + `ProbeMailAccount()` 绑定。
+
+### Added — 邮件总结调度模板
+
+内置两个真正有用的邮件总结模板，替换掉原来会"瞎编"的 `weekly_report_reminder`（旧模板让 agent"生成周报"但它没读邮件，只能编）。
+
+- **`internal/scheduler/templates.go`**：
+  - **「周邮件总结」**（`weekly_email_digest`，每周五 18:00）：prompt 强制先 `email_read` 读 `{week_start}`~`{week_end}` 真实邮件再归纳（"如返回 no messages 则直接回复无邮件并结束""只总结实际读到的邮件，不要编造"——压住幻觉的护栏），按"需跟进/重要通知/其他/优先级建议"固定结构输出。
+  - **「未读邮件速览」**（`daily_unread_email`，每天 09:00）：只读未读，按重要程度列出 + 标注优先处理项。
+- **`AutomationPanel.tsx`**：邮件类模板配 Mail 图标（`email` category）。
+
+### Changed — 办公设置即时保存（去掉底部保存按钮）
+
+办公设置从"改 draft → 点底部保存按钮"改成每个控件各自即时保存，和 GeneralSection/ModelsSection 等已有范式一致。
+
+- **`SettingsPanel.tsx` `CoWorkSection`**：新增 `commitDraft(next)`（带脏标记跳过无效写入）+ `commitCurrent`。开关/下拉切换→立即保存；文本框（邮箱/授权码/路径/embedding）→失焦或回车保存（避免每次按键打后端导致卡顿/光标跳动，沿用 SandboxSection 的成熟做法）；热键录制→录到按键立即保存。删掉底部「保存 coWork 设置」按钮 + `isDirty` + `handleSave`。
+
+### Fixed — 办公点"新建会话"不再跳编码
+
+办公模式下点新建，新 tab 默认是 dev profile（编码），界面瞬间跳回编码布局。
+
+- **`desktop/tabs.go` `EnsureBlankTab`**：创建新 tab 时**继承当前激活 tab 的 profile**（`inheritProfile = a.tabs[a.activeTabID].profile`），并传给 `blankTabMatchesTargetLocked` 做去重匹配（避免 dev/cowork 空白 tab 互相复用）。`startTabControllerBuild` 读 `tab.profile` 决定 boot 哪个 profile，所以创建时设对新 tab 直接就是 cowork。
+- **i18n**：`cowork.newTask` "新建任务"→"新建会话"。
+
+### Changed — 办公界面 UX 修补
+
+- **删掉「分析屏幕」按钮**（`CoWorkLayout.tsx`）：它是半残功能——只把"分析当前屏幕"这句话发给 agent，自己不截屏，结果混在对话里。真正的截屏能力是全局热键 Ctrl+Shift+S（独立链路：截屏→直接调 VLM→toast 弹窗+飞书推送），不依赖 agent。删了减少混淆。
+- **移除「专家团」导航入口**（`CoWorkLayout.tsx`）：专家团是纯文本补全（`desktopExpertRunner` 注释明说 "no tool calls"），在"agent 调工具干活"的办公场景帮不上忙。只移除前端入口，后端 `experts_app.go`/orchestrator 保留以备后用。
+- **卡片样式统一**（`styles.css`）：`optional-module__controls` 加纵向 flex + 10px gap（原本无样式导致控件贴边拥挤）；头部 padding 13px×16px、标题描述间距 4px、圆角 10px；浏览器卡路径框+检测按钮合并一行（`set-input-browse`）；PPT 卡删掉冗余的"共N个模板"+"模板目录路径"两行。
+- **邮箱卡文案**：标题「邮箱（139.com）」便于识别；描述合并授权码获取指引（"…授权码请登录 mail.10086.cn 获取"）；删掉暴露 `smtp.139.com:465` 等技术细节的提示。
+
+### Fixed — 旧双模型架构残留彻底清理
+
+上一版架构升级（Coordinator/Planner-Executor 双模型 → workflow worktree + 裸机）遗留了一批旧符号没人清理——根 module 编译能过（不编 desktop），但 wails 打包暴露了一连串 `undefined` 错误。这次三路 agent 逐行排查 internal/desktop/frontend 三层，清理干净。
+
+**死代码（internal 层）**：
+- `internal/agent/agent.go`：删 `maxExecutorHandoffNudges` 常量、`executorHandoffGuard` 字段、`executorHandoffRetryMessage()` 函数（旧 Coordinator 交接机制，无人调用）。
+- `internal/config/config.go`：删 `AgentConfig.Verify`/`VerifyMaxRetries`/`Review` 三个孤儿字段（旧 Coordinator 的验证/审查阶段，零消费者）。
+- `internal/event/event.go`：删 `Phase` 枚举值（旧 planner→executor 边界标记，无生产发射方）；连带删 `textsink.go`/`chat_tui.go` 的死 `case event.Phase` 分支、`serve/wire.go`+`desktop/wire.go` 的死映射项。
+- `internal/control/auto_plan.go`：删 `TaskWarrantsPlanner`（旧双模型 planner 判定，仅测试调）。
+- `internal/control/input.go`：删 syntheticPrefixes 里的 "You are already in the executor phase" 项 + 注释引用。
+
+**desktop 层适配**：
+- `desktop/tabs.go`：`HandoffTask(msg.Content)` → 直接用原文生成标题（旧函数从交接信封提取任务，裸机模式无此信封）。
+- `desktop/settings_app.go`：删 `AgentView.PlannerMaxSteps` 字段 + 读写；`SetAgentParams` 保留 `plannerMaxSteps` 参数签名（前端 bridge 兼容）但 `_ = plannerMaxSteps` 忽略。
+
+**过时文档/文案**：
+- `config.go`/`render.go`/`edit.go`：把 `PlannerModel`/`planner_model`/`two-model collaboration` 改成 `FastTaskModel`/`fast_task_model`/`background dream/distill`。
+- `momapeer.example.toml`：删 `[agent]` 里 `# verify`/`# verify_max_retries`/`# review` 注释示例。
+- 前端 locale：删 20 条死 key（planner 系列 + plannerMaxSteps 系列，中英各半）；`executorMaxSteps` 文案"执行轮数"→"工具调用轮数"；`pageDesc.models`/`fastTaskNoneHint` 去掉"规划/执行"双模型说法。
+- `SettingsPanel.tsx`：删 plannerMaxSteps 的默认值/规整/setAgentSteps 透传。
+
+**受影响测试**：`event_test.go`（iota 序列去 Phase）、`dispatch_test.go`（删 Phase Emit）、`chat_tui_test.go`（删 phase 渲染用例）、`input_test.go`（删 executor handoff 用例）、`auto_plan_test.go`（整文件删）、`settings_app_test.go`（PlannerMaxSteps 断言）、`render_test.go`（新增 encryption_mode 回归测试）。
+
+### 顺带修复的预先存在编译错误
+
+打包过程中暴露的、非本版引入但必须修才能打包的错误：
+- `internal/agent/agent.go:754` 多余 `}` 导致 `non-declaration statement outside function body`（连带 `handoffNudges`/`usedAnyTool` 死变量）。
+- `desktop/app.go` `memoryFactView` 引用 `memory.Memory` 已删的 9 个字段（Title/Status/Tags…）→ 只映射现有字段。
+- `desktop/app.go` `Store.ListTimeline` → `Store.List()`；`PromoteMemory`/`RejectMemory`（pending 机制已移除）→ 退化 no-op 保留签名。
+- `desktop/settings_app.go` `SettingsView.Metrics` 字段不存在 → 删赋值。
+
+---
+
+## [0.3.8] — 2026-07-01
+
+**记忆模块完全重做：从"注入内容"倒推设计。** 核心病灶是原系统把 50 条散落索引 + 操作指南 + bitemporal/状态机痕迹全塞进每轮 system prompt——记忆管理的复杂度反过来吃掉了记忆本身的价值。重做后每轮注入只剩"画像层"（global + 当前模式，几行精炼 prose），散落事实不再注入；同时补上 dev/cowork 模式隔离（原系统完全缺失——profile 在 boot 里控制了 model/skill/prompt，唯独不进 memory.Load，dev/cowork 共用同一记忆目录）。dream 从"往索引塞第 51 条"改成"维护画像文件"。memory 包 ~7400 行 → 2323 行，工具 6 → 2。
+
+---
+
+### Changed — 注入块瘦身（`memory.go` Block 重写）
+
+每轮注入给 LLM 的记忆块从 ~3KB 降到几百字节。这是整个重做的出发点：用户诊断"重要的是给 LLM 吐出什么内容，吐出太复杂占了主要就不行"。
+
+- **`internal/memory/memory.go` `Block()`**：只输出画像层（`Profile` 字段）+ 文档层（momapeer.md/AGENTS.md）。砍掉：`## Saved memories` 散落索引段（50 条一行摘要）、那段 "treat as background / read_file / remember / forget" 操作指南、`ProfileBlock()` 动态渲染段、日期注入。
+- **`Empty()`**：加 `Profile` 字段判断——否则"只有画像没文档"的用户会被判 Empty，整个块被抑制（v1 规划识别的漏点③）。
+- **`Compose`/`PlannerPromptWithContext`**：自动跟随新 Block，无需单独改。
+
+### Added — 画像层（profile/*.md，dream 专职维护）
+
+新增"画像层"作为**唯一**每轮注入的记忆源。三个固定文件，plain markdown，用户可手改、dream 自动凝练：
+
+- **`<userDir>/profile/global.md`** — 两模式共享（你是谁、红线禁止）。目标 ≤500 字。
+- **`<userDir>/profile/dev.md`** — dev 模式画像（代码偏好）。
+- **`<userDir>/profile/cowork.md`** — cowork 模式画像（办公偏好）。
+- **`memory.go` `discoverProfile(userDir, profile)`**（新）：读 global.md + 当前模式 .md，原样取正文拼接注入（不渲染、不拼索引）。冷启动期文件不存在→注入为空→dream 首跑后填充。
+- **`memory.go` `Set` 加 `Profile`/`ProfileName` 字段**；`Options` 加 `Profile`；`Load` 调 `discoverProfile` 填充。`ProfileName` 保留原始模式名供 reload（否则写后 reload 丢维度——v1 规划漏点①）。
+
+### Added — dev/cowork 记忆模式隔离（StoreFor 加 profile 维度）
+
+原系统 profile 在 `boot.go` 控制 model/effort/prompt/skill/cowork工具（11 处引用），**唯独不流入 `memory.Load`**——`StoreFor(userDir, cwd)` 目录派生只依赖 `(userDir, cwd)`，dev/cowork 切换后 Store 指向同一目录，隔离为零（全码库核查证实的核心断层）。
+
+- **`store.go` `StoreFor(userDir, cwd, profile string)`**：把 profile 编码进路径——`Dir = <userDir>/projects/<slug>/<profile>/memory`，`GlobalDir = <userDir>/memory/<profile>`。切换 profile 指向不相交子树，所有读写入口（remember/forget/dream/passive）自动隔离。
+- **`store.go` `NormalizeProfile` + `validProfiles`**：profile 归一化（""→"dev"，未配置 profile 的调用保持原路径）。
+- **`boot.go:269`**：`memory.Load(..., Profile: profileName(opts.Profile))`；新增 `profileName` helper（nil profile → "dev"）。
+- **`controller.go` `refreshMemoryLocked`**：reload 时带 `c.mem.ProfileName`——每次 remember/forget 后重载不丢模式维度。
+- **SwitchProfile 重建**（`desktop/app.go`）：走 boot.Build 整体重建 controller，新 c.reg/Store 自然带新 profile 路径（已验证）。
+- 测试：`TestProfilePartition`（dev 看不到 cowork 画像，反之亦然）、`TestBlockInjectsUserProfile`/`TestBlockOmitsProfileWhenNone`（重写为新画像机制）。
+
+### Changed — 档案层重做（store.go 1689 行 → ~460 行）
+
+散落事实（remember/forget 维护）改为**不注入**，需时模型主动 recall。Memory 结构体从 17 字段砍到 5 字段。
+
+- **`Memory` 结构体**：只留 `Name`/`Body`/`Type`/`Profile`/`CreatedAt`。删 Title/Description/ValidFrom/ValidTo/Status/Supersedes/SupersededBy/LastAccessedAt/AccessCount/TTL/Importance/Category/Tags。
+- **`remember` 工具 schema**：11 字段 → `name`/`body`/`profile`(可选,默认global)/`project`(可选bool)。name 留空时从 body 首行派生。构造签名 `NewRememberTool(store)`（删 ConflictDetector 参数）。
+- **`Delete`**：改为硬删除（去掉 .archive/ 归档层——历史交 git）。`List` 跳过 MEMORY.md 索引文件本身。`indexLine` 标签从 body 首行派生（原 Title/Description）。
+- **`oneLine`**：折叠所有空白（含换行）为单空格（AppendDoc 多行 note 不破坏单行 bullet 格式）。
+- 测试：`store_test.go`/`remember_test.go`/`forget_test.go`/`store_extra_test.go` 重写适配新 schema。
+
+### Removed — 激进删除（9 源文件 + 5 测试文件，~5000 行）
+
+记忆的"管理机制"（为 per-turn 注入而生，注入砍了它们就没用了）整体删除。历史回溯交给 git。
+
+| 删除文件 | 原职责 |
+|---|---|
+| `compact.go` | 压缩合并（active 超 50 条触发 LLM 合并） |
+| `conflict.go` | LLM 冲突检测（同名覆盖足够） |
+| `extractor.go` | 被动捕获 pending memory（模型主动 remember 即可） |
+| `fts.go` | FTS5 全文检索（recall 用文件名扫描） |
+| `service.go` | SearchService（只为 FTS） |
+| `reconcile.go` | FTS 索引同步 |
+| `profile.go` | memory_profile 工具（画像已注入，不需工具看） |
+| `query.go` | memory_query 工具（FTS 删除） |
+| `recall.go` | recall 工具（dormant 概念删除） |
+| `status.go` | memory_status 工具 |
+| `bitemporal_test.go`(941) / `fts_test.go`(280) / `index_test.go`(400) / `extractor_test.go`(149) | 整删 |
+| `store_extra_test.go` | 删后半 ~460 行（supersede/decay/recall/profile/compact/status 测试） |
+
+### Removed — boot/controller/desktop 连带清理
+
+- **`boot.go`**：删 FTS 开启块、conflictDetector、factExtractor、recall/compact/profile/status/memory_query 工具注册（6→2）、`buildTurnEndExtractor`（passive capture 钩子，置 OnTurnEnd=nil）、`providerChatFunc`（detector/extractor 删后成死代码）、`truncateForLog`。~80 行。
+- **`controller.go`**：删 `PromoteMemory`/`RejectMemory`（pending 机制随 extractor 删除）。保留 Memory/ForgetMemory/QuickAdd/SaveDoc/QueueMemory。**勿误删** `pendingMemory []string`（quick-add 的 turn-tail 注入缓冲，与 pending status 无关）。
+- **`desktop/app.go`**：`MemoryHistory` 保留（退化成 List，timeline 显示空）、`PromoteMemory`/`RejectMemory` 保留为 no-op 桩（返回 false，前端按钮无害）。`memoryFactView` 适配 5 字段。
+- **`dream.go`**：删 `DreamRun.Memories` 死字段（全库零读取）。
+
+### Changed — dream 重定向到画像（从"塞索引"到"维护画像文件"）
+
+dream 的产出从"往散落记忆塞第 51 条"（加剧注入臃肿）改成"直接更新画像文件"——从源头保证注入干净。
+
+- **`dream.go` `DreamTask`**（const 字符串重写，零签名变更）：dream agent 用 `write_file` 覆盖画像文件，**不用 remember**。prompt 强制凝练（"像同事写的备忘录，不是日志"；global ≤500字、mode ≤300字；同类合并、过时即删；no-op run 是正确的）。
+- **`dream.go` `DistillTask`**：明确"用 write_file 写技能，不用 remember"——技能是独立系统，不进记忆注入。继续产出到 `.momapeer/skills/`。
+- **dream_state.json 结构不变**（调度只读 StartedAt + sessions mtime，与记忆无关）；dream agent 复用 `c.reg`（SwitchProfile 重建时自然带新 Store）。
+
+### Changed — 前端适配（types.ts + MemoryPanel）
+
+- **`types.ts` `MemoryFact`**：`description` 改可选（store 不再发）；bitemporal 字段保留可选（timeline UI 编译不破，新 fact 上为 undefined）。
+- **`MemoryPanel.tsx` `displayTitle`**：优先用 body 首行（匹配后端 index 标签派生），回退 title → de-kebabed name。
+- **`desktop/memory_view_test.go`**：重写为 5 字段契约（TestMemoryFactViewMapsBasics/OmitsZeroTime）。
+
+### Changed — 画像层按"内容性质"分文件（参考 Hermes USER.md / MEMORY.md）
+
+原画像层只有 `global.md` + `<mode>.md`——按"模式"分但没按"内容性质"分，导致极慢变的身份事实（"你是后端工程师"）和较快变的客观事实（"截止日期周五"）挤在同一个 global.md 里，更新后者时容易把前者带飞。参考 Hermes 的 USER.md/MEMORY.md 设计，把全局画像按性质拆开，叠加我们的模式维度（Hermes 没有，是我们的优势）。
+
+- **`memory.go` `globalProfileFiles = ["user.md", "memory.md"]`**（新）：`discoverProfile` 现在注入 `user.md`（WHO——身份/偏好/红线，月年级慢变）+ `memory.md`（WHAT——环境/工具/截止日期/经验，天周级快变）+ 当前模式 `.md`。三者拼接后仍受 `profileMaxChars` 硬上限。
+- **`dream.go` `DreamTask`**：文件清单从 2 个改 4 个，明确每个的职责、字数目标（user/memory ≤400，mode ≤300）、变化速度、写入规则。重点强调"user.md 最稳定，只在强证据下修改"。
+- **本质**：两种变化速度的事实分家，避免频繁更新客观事实时重写身份事实。这也是上一轮发现的"compact 摘要无处落"缺口的承接——compact 压出的 `Standing facts`→user.md，`Decisions/Files`→memory.md 或 mode 文件。
+- 测试：`TestBlockInjectsUserProfile`/`TestProfilePartition`/`TestProfileTruncation` 全部更新为新文件结构。
+
+### Added — 模式画像暴露给用户编辑（偏好面板）
+
+原画像文件（cowork.md / dev.md）只有 dream 能写，用户既看不见也改不了——dream 写错用户没法纠正，冷启动期画像为空用户没法手动初始化。现在两个工作区各自暴露画像编辑入口，用户可直接编辑当前模式的画像（cowork 编辑 cowork.md，dev 编辑 dev.md）。user.md / memory.md 暂不暴露（dream 维护）。
+
+- **后端**：`memory.go` 加 `ProfilePath()`（当前模式画像文件路径）+ `ProfileContent()`（读取内容）+ `allowedDocPaths` 加入画像路径（SaveDoc 白名单放行）。`controller.go` 加 `Profile()` 返回 `ProfileView{Path, Content}`。`desktop/app.go` 加 `PortraitProfile()` 导出（命名避开已有的模式切换 `Profile()`）。
+- **前端 cowork**：`CoWorkLayout` 侧边栏专家团下方加「办公偏好」导航项（`SlidersHorizontal` 图标），中间面板渲染新组件 `PreferencePanel`。
+- **前端 dev**：`SettingsPanel` 设置中心加 `preference` tab，复用同一个 `PreferencePanel` 组件（dev 模式下它读 dev.md）。两工作区在各自"相同位置"（cowork 侧边栏 / dev 设置中心）编辑对应模式画像。
+- **`PreferencePanel` 组件**（新，cowork/PreferencePanel.tsx）：调 `PortraitProfile()` 读、`SaveDoc` 写，textarea 编辑 + 字数计数（软目标 300 字，超限禁用保存按钮并提示）+ 保存 toast。保存后走 SaveDoc → refreshMemoryLocked → 下一轮注入生效。
+- **i18n**：zh/en 加 `settings.tab.preference` / `cowork.preference` / `preference.*` 文案；styles.css 加 `.preference-panel` 样式（复用 mem-doc 编辑器风格）；wails generate 同步 `PortraitProfile` 绑定。
+
+### Added — 画像文件超阈值自动压缩（dream 自洁，防无限膨胀）
+
+画像文件（user.md/memory.md/dev.md/cowork.md）会越写越大——dream 的本能是"记录新认知"而非"压缩"，prompt 里"≤400字"只是软建议，代码无强制。`profileMaxChars=2000` 只在**注入时**截断，**不碰文件**——文件涨到 50KB，模型永远只看到前 2000 字符，后半段白写。讽刺的是不注入的档案层原来有 compact（已删），每轮注入的画像层反而从未有压缩。现补上：dream 每次跑前先量画像文件大小，正常时"合并新增"，臃肿时自动切"压缩瘦身"模式。
+
+- **`dream.go` 阈值常量**：`portraitTargetUser/Memory=400`、`portraitTargetMode=300`（软目标，prompt 里要求）；`dreamCompactThreshold=1.3`（硬触发——文件达目标的 130% 时切压缩）。
+- **`dream.go` `DreamCompactTask`**（新 prompt）：压缩模式下 dream 的首要任务是**收缩文件到目标**——合并冗余行、删过时事实、收紧啰嗦表述；只有在压缩后还有空间时才并入新认知。和 `DreamTask`（合并新增）形成正反两态。
+- **`dream.go` `dreamTaskFor(profile)`**（新）：读 `config.MemoryUserDir()/profile/` 下 user.md/memory.md/<mode>.md 的文件大小，任一超阈值返回 `DreamCompactTask`，否则返回 `DreamTask`。这让 dream 自我修正——累积期添加，臃肿期瘦身，文件物理上长不大。
+- **调用链**：`SpawnDream`/`RunDreamOnce` 加 `profile` 参数，改用 `dreamTaskFor(profile)` 选 prompt；`controller.go` 加 `profileForDream()`（从 `c.mem.ProfileName` 读，默认 dev）传参。
+- 测试：`TestPortraitCompactThresholds` 验证阈值常量一致性（目标必须 < 1.3×目标，否则健康文件误触压缩）。
+
+### Added — dream/distill 用迅捷任务模型（减负，不烧主模型额度）
+
+dream/distill 原来用主模型跑完整 agent 循环（带整套工具，5-10 分钟超时），成本重。现接入已存在但从未接线的 `fast_task_model` 配置——用户在前端"迅捷任务模型"填轻量模型（如 Qwen3-30B-A3B），dream/distill 自动用它；不填则 fallback 主模型（向后兼容）。
+
+- **`boot.go`**：构建 `dreamProv`——`cfg.Agent.FastTaskModel` 非空时 `ResolveModel` + `NewProviderWithProxy` 构建专用 provider，失败/未知 fallback 主模型并告警。传给 `ctrlOpts.DreamProvider`。
+- **`controller.go`**：`Options` + `Controller` 加 `DreamProvider` 字段；`dreamProv()` helper（dreamProvider 优先，nil 回退 executor 主 provider）；`maybeDreamDistill`/`TriggerDream`/`TriggerDistill` 全改用 `dreamProv()` 替代 `c.executor.Provider()`。
+- **关键**：`FastTaskModel` 字段前端 UI（SettingsPanel 的 ModelSwitcher）+ config edit/render 一直都在，只是 boot 从没用它构建 provider——这次补上接线，让那个配置框真正生效。
+- **默认值**（`config.go`）：新增 `DefaultFastTaskModel = "moma/qwen/qwen3.6-35b"` 常量，`Default()` 的 `AgentConfig` 设此默认。所有未来的 exe/安装包开箱即用——dream/distill 自动跑 Qwen3.6-35B 而非主模型。`moma` 是内置 provider（`ensureMoMAOfficialProvider`），`qwen/qwen3.6-35b` 在 `BuiltinMoMAModels` 里，所以新装环境一定能 resolve。现有 config.toml（无 fast_task_model 行）经 mergeFile 也拿到此默认（字段级 merge，磁盘未写的字段保留 Default）。用户可在 [agent].fast_task_model 覆盖。测试：`TestDefaultFastTaskModel` 验证默认值非空 + 可 resolve + 在 BuiltinMoMAModels 内。
+
+### Added — recall 工具（档案层读端，零 LLM 成本）
+
+remember 能存事实但模型找不回来——档案层成了"只写黑洞"（recall/memory_query 工具在 v0.4 重做时删了）。现补回极简 recall：纯文件系统扫描，**不请求大模型**，让模型能查自己记过什么。
+
+- **`memory/recall.go`**（新，~90 行）：`recallTool` 绑 `Store`。无 name → 列出所有可见档案（name + body 首行摘要）；有 name → 返回该档案完整 body。可见性跟随 profile 分区（global + 当前模式）。
+- **`boot.go`**：注册 `memory.NewRecallTool(mem.Store)`。
+- **`remember.go` Description**：补"用 recall 读回已存事实"，让模型知道有这个工具。
+
+### Removed — autoCompact 死代码（memory_compact 已删）
+
+`dream.go` 的 `autoCompact`/`autoCompactEnabled` 在 dream 成功后调 `memory_compact` 工具，但该工具在 v0.4 记忆重做时已删——`reg.Get("memory_compact")` 永远返回 false，每次 dream 白跑一次查找。删除函数定义 + runKind 里的调用。画像层的超阈值压缩机制已取代它。
+
+### Fixed — 注入上限兜底（防"记忆撑爆"，审查发现）
+
+逐条核查了进 system prompt 的全部 5 条注入路径，发现 3 条无硬上限（skill index 4000 字符上限、codegraph 编译期常量这 2 条已安全）。重点补齐了用户担心的两个无兜底场景——dream 失控写大画像、模型一轮暴量调 remember。这是规划阶段的疏漏（当初只关注"砍散落索引"，没给保留的注入路径加上限），借 `skill.IndexMaxChars` 的范式补回。
+
+- **画像层硬上限（`memory.go` `profileMaxChars = 2000`）**：`discoverProfile` 对拼接结果做 rune 截断 + 追加 "truncated to fit" 标记。dream 用通用 `write_file` 写画像无专属校验——若失控写了 10KB，注入最多到 2000 字符（含截断提示），不再撑爆每轮前缀。dream prompt 里的"≤500字"只是软建议，这是代码层硬兜底。测试：`TestProfileTruncationGuardsInjection`。
+- **pendingMemory 硬上限（`input.go` Compose）**：单条 note 截断 200 字符（尤其 `SaveDoc` 会把整个文件 body 当一条 note，这是最大的撑爆源）；整块上限 1500 字符，超限合并为 "…(N more memory change(s) not shown)" 摘要行。每轮 drain 只防跨轮累积，不防单轮暴量——现在单轮内 100 次 remember 也只灌入 1500 字符上限的块。模型仍知道"发生了变更"，但不再为每条全量文本付费。
+- **保留不动**：文档层（momapeer.md）未加截断——这是用户手写的永久真理，截断会破坏语义；import 深度 5 已防递归爆炸，单文件体积由用户自己负责（与原设计一致）。
+
+### 验证
+
+- `go build ./...` 通过；`go vet`（memory/cli/desktop）通过。
+- memory/agent/control/cli/boot 测试全绿；desktop memory_view 测试全绿。
+- 前端 `npm run build`（含 `tsc --noEmit`）通过。
+- memory 包源码 ~1500 行（含注释），总 2323 行（含测试）。
+
+### Changed — Dream 改为闲暇时触发（空闲检测，而非 turn 开始）
+
+原设计 dream 在 `runTurnWithRawDisplay` 开头（用户每发一条消息时）检查触发——用户正说话、正等回复时在背后塞一个 5 分钟子 agent 跑模型，抢占资源且语义不对（dream 本意是"系统闲下来整理最近发生了什么"）。改为**真正的空闲检测**：用户停止活动 N 分钟后才触发。
+
+- **`config.go` `DreamConfig` 加 `IdleMinutes`**（默认 10 分钟，`IdleMinutesEffective()` 方法；负值禁用闲置触发）。
+- **`controller.go` 空闲计时器**：新增 `lastActivity`/`idleTimer` 字段 + `touchActivity`（turn 开始和完成各调一次，重置倒计时）+ `idleDreamFired`（计时器回调，二次校验阈值 + cadence 后 spawn）+ `stopIdleDream`（Close 时取消）。`runTurnWithRawDisplay` 旧触发点（line 545）移除。
+- **门控正交**：idle 是"触发时机"（controller 管），cadence（7天）+ 总开关 + inFlight 仍是"频率/并发"（dream.go 管），两者叠加——"用户闲了 + 也到日子了"才跑。用户连续说话时计时器不断重置，绝不打断。
+- `render.go` [dream] 段加 `idle_minutes` 行；顺带修正 `auto_compact` 的过时注释（v0.4 compact 已随记忆重做移除）。
+
+### 跳过 — 经核实不做（避免做多余的事）
+
+| 项 | 跳过原因 |
+|---|---|
+| ~~数据迁移~~ | 生产真实记忆数据为 0（AppData 下全是 momapeer-test 空目录），无需迁移；旧 .fts/.archive 自然忽略 |
+| ~~bitemporal/时间点回溯~~ | 历史交 git；散落事实不注入，无需控规模 |
+| ~~衰减/TTL/压缩~~ | 档案不注入，无需控制 active 数量 |
+| ~~LLM 冲突检测~~ | 同名覆盖（update）足够；不同名冲突由模型在 remember 时自行判断 |
+| ~~passive capture~~ | 模型主动 remember 即可；被动捕获加剧注入臃肿 |
+| ~~前端 timeline UI 彻底删除（~400 行）~~ | 后端保留 no-op 桩 + DTO omitempty，前端不崩（timeline 显示空）；彻底删是独立前端重构，不阻塞隔离生效 |
+| ~~doc 文档层（momapeer.md/AGENTS.md）按 profile 区分~~ | discoverDocs 只匹配固定文件名不扫 profile/ 目录，与画像层并存无冲突；文档层保持现状 |
+
 ## [0.3.7] — 2026-07-02
 
-**借鉴 MiMo-Code / DeepSeek-Reasonix 的编码质量与稳定性提升：执行后验证（verify + TDD retry）、edit 最近行提示、输出循环检测、Windows UTF-8 收口。** 每项均经源码核实为 momapeer 真实缺口（撤掉了不扎实的「token 压缩」建议——momapeer 已有 compact+prune+truncate 完整体系）。
+**借鉴 MiMo-Code / DeepSeek-Reasonix 的编码质量与稳定性提升：执行后验证（verify + TDD retry）、长文生成闭环（DocVerifier + docx 追加）、edit 最近行提示、输出循环检测、Windows UTF-8 收口。** 每项均经源码核实为 momapeer 真实缺口（撤掉了不扎实的「token 压缩」建议——momapeer 已有 compact+prune+truncate 完整体系）。
 
 ---
 
@@ -81,6 +425,44 @@ review = "on"              # verify 之后让 executor 自审 git diff 并修 cr
 | repeat_text 测试（6 用例：正常/verbatim/reset/短文本/CJK/n-gram 边界） | ✅ |
 | tool.builtin / hook 测试 | ✅ 全过 |
 | 我引入的 gofmt 对齐（repeatText 字段） | ✅ 已修 |
+
+### Added — 长文生成闭环（DocVerifier + docx 追加，零新增暴露）
+
+把 0.3.7 的 verify 阶段从"仅代码"扩展到"代码 + 文档"，补齐 cowork profile 的校验缺口，使长文（如 10 万字）可分章生成、累积进同一 docx、生成后机器校验。**全程对 LLM 零新增暴露**：不新增 skill / 工具名 / MCP / 系统文件——校验是 Coordinator 内部阶段，append 复用 doc_write 已有的 `append` 字段。
+
+- **`internal/agent/verify.go` 扩展**：新增 `DocVerifier`（实现 `Verifier` 接口，DevVerifier 的 cowork 对位）——扫描工作区找最新 `.docx`，解析 `word/document.xml` 的 `<w:t>` 文本统计字数，校验"文档非空"+ 可选"达标字数"。失败返回 `Failures`（如"当前 3200 字，目标 5000，差 1800"）喂回 executor 重试，复用既有 `verifyAndRetry`。XML 解析用 `DecodeElement`（实体/空元素/子元素都正确），独立实现避免 `agent → tool/builtin` 循环依赖。`TargetWords=0`（默认）= 仅存在性校验，是 boot 接线的安全默认；精确字数目标留给未来配置项，不进 prompt。
+- **`internal/tool/builtin/docxwrite.go` 扩展**：`DocInput` 加 `Append bool` + `appendDOCXSections`——读已有 `document.xml`，在 `</w:body>` 前插入新章节 OOXML，**原子写入**（先写临时文件再 rename，失败永不破坏已有内容，mirrors `Session.Save`），保留原 styles/numbering/所有 part（不丢字体/页眉/媒体）。文件不存在则退化为全量写（"首章"场景）。
+- **`internal/tool/builtin/document.go`**：docx 分支把既有 `p.Append` 传进 `DocInput.Append`（1 行；字段一直在 schema 里，此前仅对文本格式生效）；schema 的 `append` 描述更新为含 `.docx`。
+- **`internal/boot/boot.go`**：`:1107` 的 cowork 排除条件改为 profile 分派——cowork → `DocVerifier`，dev → `DevVerifier`，同一个 `verify="on"` 开关，零额外配置。
+- 测试：`verify_doc_test.go`（5 用例：存在性/空文档失败/字数目标/无 docx 跳过/指定路径）、`docxwrite_append_test.go`（4 用例：保持+新增有序/退化全写/保留 styles/5 章累积）。
+- **经核实不做**：auto-plan 触发文档任务（评分对"写书"=0，是代码任务专用设计，规划由 planner 模型/用户 `/plan` 驱动）；doc_target.json 系统文件（违背少暴露，目标字数留 boot 构造传入）；todo 加字数字段（Coordinator 闭环不依赖它）。
+
+### 验证（长文生成闭环）
+
+| 项 | 结果 |
+|---|---|
+| `go build ./...` | ✅ |
+| `go vet`（agent/builtin/boot） | ✅ 无新增告警 |
+| DocVerifier 测试（5 用例） | ✅ |
+| docx append 测试（4 用例） | ✅ |
+| agent / tool.builtin 全量测试 | ✅ 零回归 |
+| 复查修复：append 原子写入（原为 os.Create 截断，失败丢数据） | ✅ 已修 |
+| 复查修复：extractWtText 改用 DecodeElement（原手动单 token 不够健壮） | ✅ 已修 |
+
+### Fixed — RAG 表格类文档分块（CSV/TSV 表头驻留）+ 中英混排切片乱码
+
+修复知识库（`internal/rag`）对表格类文档的两个分块缺陷。背景：用户提出"表格类是否要转 Markdown 处理"——经源码核实，单纯转 Markdown 再走原流程无效（md 按 `\n\n` 切段，表格行间只有单 `\n` 会被整段当一坨，超 1200 字符后仍被打回暴力字节切）。正确解法是为表格写专门的、按行切分的 chunker。
+
+- **缺陷一：CSV/TSV 竖列语义丢失**（`store.go:chunkDoc`）。原实现里 CSV 不在 md/txt 分支，落到 `windowChunk` 按 1200 字符暴力切 → 行被腰斩、表头仅存于首块。AI 读后续分块只见孤立值（`张三,35,开发`），不知列名。
+- **缺陷二：中英混排切片乱码**（`store.go:windowChunk`）。`s[i:end]` 字节切片在中英混排时会切坏中文——**实证**：`"a"+中文` 切出的块 `utf8.ValidString=false`；真实中文技术文档（中文为主+少量英文/标点/数字）实测损坏率 3/3 块。纯中文（`1200%3==0` 对齐）安全，故隐患隐蔽。
+- **修复**：
+  - `chunkTabular`（新）：用 `encoding/csv` 逐行解析 → 第一行为表头 → 累积数据行至接近 1200 字符 → **flush 时把表头重新拼到每个新块开头** → 每块输出为完整 Markdown 管道表格（表头+分隔行+数据行）。`chunkDoc` 加 csv/tsv 路由（在段落分支之前拦截，绕开 `\n\n` 切段）。
+  - **真实脏数据容错**（复查抓到的隐藏缺陷）：`FieldsPerRecord=-1`（某行列数不符不整体失败，`padRow` 少补空多截断对齐表头列数）、`LazyQuotes=true`（引号未闭合降级为字面值不致命）、`TrimPrefix("\uFEFF")`（剥离 Excel/记事本另存常见的 UTF-8 BOM，否则首列名带 BOM 导致搜索不命中）。坏行跳过、好行保留，不再静默退化回乱码切片。
+  - `windowChunk`：字节切 → **rune 切**（`[]rune(s)` 按字符切），多字节字符永不被切半。所有格式（代码、超长段落、CSV 兜底）受益。
+  - `extract.go` / `desktop/rag_app.go`：白名单与导入提示一致加 `.tsv`，复用同一 chunker（comma=`'\t'`）。
+- 测试：10 个新用例（表头驻留、带引号字段、CSV/TSV 路由、超长行不丢、rune 安全、端到端搜索往返、**脏行列数不一致、BOM 剥离、引号未闭合**）。全套 31/31 通过（21 原有零回归）。`go vet` 干净。
+- **不与 Hyper-Extract 牵连**：HE 的 RAG 用通用 `chunk_size/overlap` 文本切片，无表头驻留——在表格分块这一具体问题上无更优实现可借鉴；"学习 HE"是独立议题另立规划。
+- 规划文档：`docs/RAG_TABULAR_CHUNKING_PLAN.md`（含两轮源码核对 + 编译运行实证记录）。
 
 ---
 
@@ -842,6 +1224,26 @@ cowork 第四面板「专家团」上线，四面板全活。让多个大模型�
 - **聊天内发起专家团（`internal/tool/builtin/expert.go`，新）**：`expert_team_run`（同步跑团队返回综合结论 + 紧凑发言记录）+ `expert_team_list`（列团队供选择）。`team_id` 留空可按 `team_name` 模糊匹配或回退首团队。orchestrator + store 经 `SetExpertOrchestrator`/`SetExpertStore` 注入（同 SetScheduler 模式），在 cowork profile 注册。流式事件仍推 `experts:collab`，用户切面板可见进度。
 - **空状态快捷起点气泡（`components/Welcome.tsx`）**：dev profile 保留 4 个即时发送示例（原行为）；cowork profile 显示 6 个办公气泡（周报/表格/思维导图/专家团评审 + 解释代码/翻译），点击**填入输入框不发送**（复用 `composerInsertRequest` 机制，用户可编辑后再发）。profile 经 `coworkActive` prop 传入（`useProfile` context 未挂载，必须走 prop）。6 个 `welcome.coworkEx1-6` i18n key（zh/en）。CSS 加 `.welcome--cowork` 变体（3 列网格，3×2 排布）。
 - **测试**：`team_test.go`（builtin 不变量：8 团队/ID 唯一/同团队专家名唯一/mode 合法值/ID pin 防误改名破坏迁移）。
+
+### Added — 专家团场景扩充 + 团队级网络搜索能力
+
+专家团从「单模型一次性回答」升级为可选的「多模型 + 网络搜索」协作。新增 9 个团队覆盖更多使用场景，其中 3 个场景团默认开启网络搜索——专家先查资料再讨论，适合需要实时数据的决策（高考选专业、赛事预测、研究项目论证）。
+
+- **团队级网络搜索开关（`Team.AllowSearch`）**：每个团队可独立配置是否允许专家调网络搜索。`false`（默认）= 一次性 completion（快、省配额，翻译/润色/邮件走这条零延迟变化）；`true` = 每个专家跑 mini-agent loop，先调 `web_search`（复用内置 Brave→Exa→Linkup 降级链）查资料再回答。
+  - **架构（`desktop/experts_app.go` `desktopExpertRunner` 双模式）**：`allowSearch=false` 走原 `prov.Stream` 一次性路径（一行不动）；`allowSearch=true` 走 `agent.RunSubAgentWithSession` + 受限 registry（只含 `web_search`+`web_fetch`，无写工具/bash/文件系统——专家只读网络，绝不碰用户文件）。`MaxSteps=4` 钳位防失控烧配额；`ContextWindow` 取 provider entry 真实值（否则 compaction 禁用，4 步搜索结果会撑爆上下文）。
+  - **流式体验**：mini-agent 的 `event.Text` delta 直接喂 `streamFn`（专家"边查边说"），`web_search` 调用映射成 `🔍 搜索: <query>` 文本块，用户在面板实时看到专家在查什么。registry 用 `sync.Once` 懒加载缓存，避免每次重建。
+  - **接口改动（`internal/experts/orchestrator.go`）**：`ExpertRunner.Run` 加 `allowSearch bool` 参数；`runExpert` 从 `team.AllowSearch` 透传；`buildExpertPrompt` 在 `allowSearch=true` 时追加搜索指引（涉及实时数据先搜索、标注来源时效）。主持人（synthesize）固定 `allowSearch=false`（它消化专家发言，不需自己搜）。
+- **9 个新团队（`internal/experts/team.go`）**：内置团队 8 → 17。
+  - 场景团（`AllowSearch=true`，开搜索）：高考选专业团（debate：教育专家↔就业前景分析师↔批判者）、赛事预测团（debate：数据分析师↔战术观察↔黑马猎手）、研究项目论证团（debate：技术专家↔教育专家↔产业分析师，如智算中心 FDE 工程师培养）。
+  - 通用角色团（`AllowSearch=false`，用户面板可开）：法律建议团、医学建议团（含急症红线 + 免责声明）、考学规划团、股票分析团（含风控纪律 + 免责）、产品运营团、开发架构团。医学/法律/股票团 Perspective 内嵌"非专业意见，重大决策请咨询持证专业人士"免责。
+- **前端**：`TeamManager` 加「允许网络搜索」勾选框 + 说明；`ExpertPanel` 团队卡片名加 `🔍` 徽章 + 活跃团队输入框上方显示 `🌐 允许网络搜索` 提示带。3 个 i18n key（zh/en）。
+- **搜索步数上限的优雅降级（`experts_app.go` `runSearchMiniAgent`）**：mini-agent 的 `MaxSteps=4` 触顶会返回硬错误"paused after N tool-call rounds"——直接用 `agent.RunSubAgentWithSession` 会让搜索中（搜→读→再搜→答）的专家整轮失败、拖垮协作。改为内联 `agent.New`+`Run`，触顶时用 `lastAssistantText(sess)` 从 session 回收最后一条助手文本作为部分答案（带"已达搜索步数上限，基于已查到的信息作答"提示），仅当完全无文本时才报错。`isMaxStepsPaused` 区分步数上限（良性，可恢复）vs 真错误（provider/取消）。`experts_search_test.go`（新）覆盖两 helper 的 session 遍历 + 错误判定。
+- **使用体验（4 个迷茫点修复）**：补齐「用户怎么知道、怎么选、怎么看过程、怎么理解代价」：
+  - **团队分类筛选（`ExpertPanel`）**：17 个团队上方加 4 个筛选 tab（全部/场景团/通用团/可搜索），按 stable builtin ID 识别场景团，避免用户滚动找半天。筛选态下隐藏"新建团队"占位卡，减少干扰。
+  - **搜索过程视觉化（`CollabStream`）**：`splitSegments` 在渲染时把 `🔍 搜索: query` 标记从专家发言文本里拆出来，渲染成独立的虚线边「🔍 搜索中: query」状态卡片，和专家发言正文视觉区分——用户清楚看到专家在查资料而非在发言。无搜索团队无标记，单段文本，渲染不变。
+  - **运行前成本提示（`ExpertPanel`）**：开搜索团队的运行按钮旁显示 `⏱ 较慢·较耗配额` 标签；首次点运行弹二次确认（每换一次团队重置，避免反复 nag）。
+  - **聊天发起→面板联动（`CoWorkLayout`）**：agent 在聊天里调 `expert_team_run` 时，`CoWorkLayout` 订阅 `experts:collab`，收到 `expert_start` 且当前不在专家面板时自动切过去，让用户看到流式协作而非盯着卡住的聊天等几分钟。
+- **测试**：`orchestrator_test.go` 加 `TestBuildExpertPromptSearchGuidance`（allowSearch=true 时 prompt 含 web_search）、`TestOrchestratorPassesAllowSearch`（断言 expert 调用透传 flag、moderator 调用固定 false）；`team_test.go` 加 9 新 ID + `TestBuiltinTeamsAllowSearch`（场景团 true/其余 false）。
 
 ### Changed — Office 文档工具矩阵升级后
 

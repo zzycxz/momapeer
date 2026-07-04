@@ -85,14 +85,13 @@ type App struct {
 	botInstalls map[string]*botInstallSession
 	botGW       atomic.Pointer[bot.BotGateway] // nil when bot is disabled or not started; atomic for lock-free reads from Push/hotkey
 	hotkeyMgr   *hotkeyManager  // screenshot hotkey manager; nil when feature off/stopped
+	estopMgr    *estopManager   // emergency-stop hotkey manager; nil when feature off/stopped
 
 	// sharedHosts shares one plugin.Host per workspace root across desktop tabs
 	// so opening N tabs on the same project spawns MCP subprocesses (CodeGraph,
 	// etc.) once, not N times. See desktop/shared_host.go.
 	sharedHosts   map[string]*sharedPluginHost
 	sharedHostsMu sync.Mutex
-
-	metrics atomic.Pointer[metricsAggregator] // non-nil only when desktop.metrics is opted in; swapped live by SetDesktopMetrics
 
 	// scheduler is the app-level scheduled-task engine (coWork). Created once at
 	// startup; bound to the active cowork controller via schedulerRunner so
@@ -111,6 +110,9 @@ type App struct {
 	// screenshotHwnd is the hidden message-only window receiving WM_HOTKEY for
 	// the global screenshot hotkey. 0 when the feature is off.
 	screenshotHwnd uintptr
+	// estopHwnd is the hidden message-only window receiving WM_HOTKEY for the
+	// global emergency-stop hotkey. 0 when the feature is off.
+	estopHwnd uintptr
 }
 
 // mediaTokenEntry holds metadata for a workspace media file served via temporary URL.
@@ -303,10 +305,6 @@ func (a *App) startup(ctx context.Context) {
 	installSystemQuitHook()
 	a.startTray()
 
-	if cfg, err := config.Load(); err == nil && cfg.DesktopMetrics() && version != "dev" {
-		a.metrics.Store(newMetricsAggregator(filepath.Dir(config.UserConfigPath())))
-	}
-
 	// 启动内嵌 bot gateway
 	if cfg, err := config.Load(); err == nil && cfg.Bot.Enabled {
 		a.startBotGateway(cfg)
@@ -314,7 +312,6 @@ func (a *App) startup(ctx context.Context) {
 
 	go a.restoreOrBuildTabs()
 	go a.sendStartupPing()
-	go a.flushMetrics()
 	// Load coWork secrets (SMTP/IMAP passwords) from the momapeer-managed .env
 	// into the process environment BEFORE initScheduler/initRAG, so coWork tools
 	// find them via os.Getenv without the user setting system env vars manually.
@@ -323,6 +320,11 @@ func (a *App) startup(ctx context.Context) {
 	a.initRAG()
 	a.initExperts()
 	a.StartScreenshotHotkey()
+	// Start the emergency-stop hotkey AFTER the screenshot hotkey so both
+	// global combos are registered before the app reports ready. E-stop is the
+	// safety baseline for screen_* tools; registering it unconditionally (rather
+	// than only when a turn is running) keeps the kill switch always-available.
+	a.StartEStopHotkey()
 }
 
 // initRAG opens the coWork knowledge-base store (FTS5 + structured entities)
@@ -361,7 +363,8 @@ func (a *App) initRAG() {
 		// model name, so we can't safely fall back to "provider/model" refs.
 		if model := strings.TrimSpace(c.Cowork.ExtractModel); model != "" {
 			extractor = ragpkg.NewJiutianExtractor(ragpkg.JiutianExtractorConfig{
-				Model: model,
+				Model:    model,
+				TwoStage: true, // entities→relations seeded with known entities (cuts hallucinated edges); ~2× tokens
 			})
 		}
 	}
@@ -398,6 +401,8 @@ func (a *App) initScheduler() {
 	a.scheduler.SetNotifier(schedulerNotifier{app: a})
 	a.scheduler.Start()
 	builtin.SetScheduler(a.scheduler)
+	builtin.SetAuthNotifier(authNotifier{app: a})
+	a.scheduler.SetAccountProber(imapProber{})
 }
 
 // schedulerIMPusher implements scheduler.IMPusher by routing through the bot
@@ -655,6 +660,8 @@ func (a *App) shutdown(context.Context) {
 	// leaking (it now uses non-blocking PeekMessage + stopCh, so this returns
 	// within one tick).
 	a.StopScreenshotHotkey()
+	// Stop the emergency-stop hotkey loop likewise.
+	a.StopEStopHotkey()
 	// Save window geometry synchronously from Go so it's persisted even if the
 	// frontend's beforeunload promise hasn't resolved yet.
 	a.saveWindowStateSync()
@@ -801,6 +808,41 @@ func (a *App) SteerForTab(tabID, text string) {
 	if ctrl := a.ctrlByTabID(tabID); ctrl != nil {
 		ctrl.Steer(text)
 	}
+}
+
+// Pause requests a graceful pause of the active tab's in-flight turn. The agent
+// finishes its current step, then freezes with full state preserved. Contrast
+// Cancel, which aborts and discards partial work. No-op when nothing is running.
+func (a *App) Pause() {
+	a.PauseTab("")
+}
+
+// PauseTab requests a graceful pause on a specific tab.
+func (a *App) PauseTab(tabID string) {
+	if ctrl := a.ctrlByTabID(tabID); ctrl != nil {
+		ctrl.Pause()
+	}
+}
+
+// ResumeTurn unblocks a paused turn on the active tab. No-op when not paused.
+func (a *App) ResumeTurn() {
+	a.ResumeTurnTab("")
+}
+
+// ResumeTurnTab unblocks a paused turn on a specific tab.
+func (a *App) ResumeTurnTab(tabID string) {
+	if ctrl := a.ctrlByTabID(tabID); ctrl != nil {
+		ctrl.ResumeTurn()
+	}
+}
+
+// PausedTab reports whether the given tab's turn is frozen on a graceful pause.
+func (a *App) PausedTab(tabID string) bool {
+	ctrl := a.ctrlByTabID(tabID)
+	if ctrl == nil {
+		return false
+	}
+	return ctrl.Paused()
 }
 
 // Approve answers a pending approval_request by ID: allow runs the call, session
@@ -4855,30 +4897,20 @@ func (a *App) Memory() MemoryView {
 	return view
 }
 
-// memoryFactView maps a memory.Memory onto the panel's MemoryFact DTO,
-// carrying the bitemporal fields through. time.Time values are formatted
-// RFC3339 (Go's default) so the frontend can parse them with new Date().
-// Empty/zero times yield "" via the Format guard so the panel's "expired at"
-// badges don't render bogus dates.
+// memoryFactView maps a memory.Memory onto the panel's MemoryFact DTO.
+// memory.Memory was slimmed to {Name,Body,Type,Profile,CreatedAt}; the legacy
+// bitemporal fields (Title/Description/ValidFrom/ValidTo/Status/Category/Tags/
+// SupersededBy/UpdatedAt) are no longer on the store struct, so they stay at
+// their zero value here. The frontend tolerates empty fields (omitempty on the
+// JSON side). CreatedAt is still carried so the timeline can sort entries.
 func memoryFactView(f memory.Memory) MemoryFact {
 	out := MemoryFact{
-		Name:         f.Name,
-		Title:        f.Title,
-		Description:  f.Description,
-		Type:         string(f.Type),
-		Body:         f.Body,
-		ValidFrom:    f.ValidFrom,
-		ValidTo:      f.ValidTo,
-		Status:       f.Status,
-		Category:     f.Category,
-		Tags:         f.Tags,
-		SupersededBy: f.SupersededBy,
+		Name: f.Name,
+		Type: string(f.Type),
+		Body: f.Body,
 	}
 	if !f.CreatedAt.IsZero() {
 		out.CreatedAt = f.CreatedAt.UTC().Format(time.RFC3339)
-	}
-	if !f.UpdatedAt.IsZero() {
-		out.UpdatedAt = f.UpdatedAt.UTC().Format(time.RFC3339)
 	}
 	return out
 }
@@ -4902,7 +4934,7 @@ func (a *App) MemoryHistory() MemoryView {
 	}
 	view.StoreDir = set.Store.Dir
 	view.Available = true
-	for _, f := range set.Store.ListTimeline() {
+	for _, f := range set.Store.List() {
 		view.Facts = append(view.Facts, memoryFactView(f))
 	}
 	return view
@@ -4933,30 +4965,20 @@ func (a *App) Forget(name string) error {
 	return ctrl.ForgetMemory(name)
 }
 
-// PromoteMemory confirms an auto-captured "pending" memory (from the passive
-// capture hook), flipping it to active so it enters the prompt/profile. The
-// timeline panel's "confirm" button calls this. Returns whether a pending
-// record was actually promoted (false = nothing to promote).
+// PromoteMemory confirms an auto-captured "pending" memory. The pending-capture
+// pipeline was removed when memory.Memory was slimmed, so there are no pending
+// records to promote anymore — this is now a no-op that returns false so the
+// frontend's confirm button stays harmless. The signature is kept so the panel
+// call site doesn't need a frontend change.
 func (a *App) PromoteMemory(name string) (bool, error) {
-	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
-	a.mu.RUnlock()
-	if ctrl == nil {
-		return false, nil
-	}
-	return ctrl.PromoteMemory(name), nil
+	return false, nil
 }
 
-// RejectMemory dismisses an auto-captured "pending" memory, deleting it. Only
-// pending records are affected. The timeline panel's "ignore" button calls this.
+// RejectMemory dismisses an auto-captured "pending" memory. As with PromoteMemory,
+// the pending-capture pipeline no longer exists, so this is a no-op returning
+// false. Signature retained for the frontend's ignore button.
 func (a *App) RejectMemory(name string) (bool, error) {
-	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
-	a.mu.RUnlock()
-	if ctrl == nil {
-		return false, nil
-	}
-	return ctrl.RejectMemory(name), nil
+	return false, nil
 }
 
 // SaveDoc overwrites a memory doc with the panel editor's contents. The controller
@@ -4969,6 +4991,30 @@ func (a *App) SaveDoc(path, body string) (string, error) {
 		return "", nil
 	}
 	return ctrl.SaveDoc(path, body)
+}
+
+// ProfileView is the payload the workspace preference panel reads: the path of
+// the active mode's portrait file and its current contents. Under cowork this
+// is cowork.md; under dev it is dev.md. user.md / memory.md are intentionally
+// not exposed — only the mode file is user-editable for now.
+type ProfileView struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+// PortraitProfile returns the active mode's portrait for the workspace
+// preference panel. Read-only; saves go through SaveDoc (the profile path is
+// whitelisted in memory.allowedDocPaths, so a normal SaveDoc call accepts it).
+// Named PortraitProfile to avoid clashing with Profile() (the mode switch).
+func (a *App) PortraitProfile() ProfileView {
+	a.mu.RLock()
+	ctrl := a.activeCtrlLocked()
+	a.mu.RUnlock()
+	if ctrl == nil {
+		return ProfileView{}
+	}
+	pv := ctrl.Profile()
+	return ProfileView{Path: pv.Path, Content: pv.Content}
 }
 
 // parseScope maps a frontend scope id to a memory.Scope, defaulting to project.

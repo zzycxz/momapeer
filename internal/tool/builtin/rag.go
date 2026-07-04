@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -63,7 +64,7 @@ func (ragImport) Schema() json.RawMessage {
 "properties":{
   "path":{"type":"string","description":"Absolute path to the document file to import"},
   "collection":{"type":"string","description":"Collection name (default \"default\")"},
-  "tags":{"type":"array","items":{"type":"string"},"description":"Optional tags (informational, not yet searchable)"}
+  "tags":{"type":"array","items":{"type":"string"},"description":"Deprecated/ignored. Reserved; pass null."}
 },
 "required":["path"]
 }`)
@@ -108,7 +109,7 @@ type ragSearch struct{}
 func (ragSearch) Name() string { return "rag_search" }
 
 func (ragSearch) Description() string {
-	return "Search the knowledge base for documents matching a query. Returns two kinds of hits merged together: (1) structured entities + their relations (when the collection has been deep-extracted — high-value facts with no chunk-boundary noise), and (2) FTS5 original-text snippets (always available, for quotable source text). Scoped to one collection when set, else searches all. Use top_k to cap each layer (default 5). When the query looks like a name or a relation question (\"who is X\", \"X 负责 什么\"), the structured layer is the authoritative answer; the FTS5 layer backs it up with citations."
+	return "Search the knowledge base for documents matching a query. Returns two kinds of hits merged together: (1) structured entities + their relations (when the collection has been deep-extracted — high-value facts with no chunk-boundary noise), and (2) FTS5 original-text snippets (always available, for quotable source text). Scoped to one collection when set, else searches all. Use top_k to cap each layer (default 5). When the query looks like a name or a relation question (\"who is X\", \"X 负责 什么\"), the structured layer is the authoritative answer; the FTS5 layer backs it up with citations. Every structured hit is annotated with its provenance (source file + chunk), so you can cite where a fact came from; and when a hit is a topic/event, its members are expanded inline (\"成员：...\") so one hit reveals the whole group."
 }
 
 func (ragSearch) Schema() json.RawMessage {
@@ -191,20 +192,53 @@ func (ragSearch) Execute(ctx context.Context, args json.RawMessage) (string, err
 		return fmt.Sprintf("no matches in %s — import documents with rag_import first", scope), nil
 	}
 
-	// Structured layer first (higher value for fact questions).
+	// Structured layer first (higher value for fact questions). Each entity and
+	// relation is annotated with its provenance (the source files/chunks it was
+	// extracted from) so the agent can cite where a fact came from — this is the
+	// data the DB already stores (Sources), now surfaced instead of hidden.
 	if len(entities) > 0 {
 		fmt.Fprintf(&b, "结构化命中（%d 个实体，%d 条关系）in %s：\n", len(entities), len(relations), scope)
+		sourceFiles := map[string]bool{} // for the provenance summary at the end
 		for _, e := range entities {
 			fmt.Fprintf(&b, "- %s [%s]", e.NameRaw, e.Type)
 			if e.Description != "" {
 				fmt.Fprintf(&b, " · %s", e.Description)
 			}
+			if lbl := sourceLabel(e.Sources); lbl != "" {
+				fmt.Fprintf(&b, " · 来源：%s", lbl)
+				for _, s := range e.Sources {
+					sourceFiles[filepath.Base(s.Path)] = true
+				}
+			}
 			b.WriteString("\n")
+			// Topic/event expansion (cog_rag-style): a topic entity acts as a
+			// hub connecting its members via member_of/part_of relations. Surface
+			// the membership as a compact "成员：" line so a hit on the topic
+			// reveals everyone/thing it aggregates — "by point to face" retrieval.
+			if isTopicType(e.Type) {
+				var members []string
+				for _, r := range relations {
+					if r.Target == e.Name && (r.Type == "member_of" || r.Type == "part_of" || r.Type == "属于") {
+						members = append(members, r.Source)
+					}
+				}
+				if len(members) > 0 {
+					fmt.Fprintf(&b, "    成员：%s\n", strings.Join(dedupStrings(members), "、"))
+				}
+			}
 			for _, r := range relations {
 				if r.Source == e.Name {
+					// member_of/part_of into a topic is already shown above as
+					// "成员"; skip re-printing it as a plain relation to avoid noise.
+					if isTopicType(e.Type) && (r.Type == "member_of" || r.Type == "part_of") {
+						continue
+					}
 					fmt.Fprintf(&b, "    关系：%s --[%s]--> %s", r.Source, r.Type, r.Target)
 					if r.Description != "" {
 						fmt.Fprintf(&b, "（%s）", r.Description)
+					}
+					if lbl := sourceLabel(r.Sources); lbl != "" {
+						fmt.Fprintf(&b, " · 来源：%s", lbl)
 					}
 					b.WriteString("\n")
 				} else if r.Target == e.Name {
@@ -212,9 +246,23 @@ func (ragSearch) Execute(ctx context.Context, args json.RawMessage) (string, err
 					if r.Description != "" {
 						fmt.Fprintf(&b, "（%s）", r.Description)
 					}
+					if lbl := sourceLabel(r.Sources); lbl != "" {
+						fmt.Fprintf(&b, " · 来源：%s", lbl)
+					}
 					b.WriteString("\n")
 				}
 			}
+		}
+		// Provenance summary: the distinct source files behind these hits, so the
+		// agent can answer "where did these facts come from" without scanning
+		// every line (mirrors HE's additional_kwargs retrieval-provenance idea).
+		if len(sourceFiles) > 0 {
+			files := make([]string, 0, len(sourceFiles))
+			for f := range sourceFiles {
+				files = append(files, f)
+			}
+			sort.Strings(files)
+			fmt.Fprintf(&b, "溯源文件：%s\n", strings.Join(files, "、"))
 		}
 		if len(results) > 0 {
 			b.WriteString("\n")
@@ -231,7 +279,9 @@ func (ragSearch) Execute(ctx context.Context, args json.RawMessage) (string, err
 			fmt.Fprintf(&b, "- %s [%s · chunk %d · score %.3f]\n  %s\n", r.Path, r.Collection, r.Chunk, r.Score, r.Snippet)
 		}
 	}
-	return b.String(), nil
+	// Imported documents are external content (could carry prompt-injection
+	// text from their source); wrap so the model treats snippets as data.
+	return wrapUntrusted("rag", b.String()), nil
 }
 
 // --- rag_graph --------------------------------------------------------------
@@ -313,7 +363,9 @@ func (ragGraph) Execute(ctx context.Context, args json.RawMessage) (string, erro
 			b.WriteString("\n")
 		}
 	}
-	return b.String(), nil
+	// Entity/relation descriptions originate from imported documents — same
+	// untrusted-content fence as rag_search.
+	return wrapUntrusted("rag", b.String()), nil
 }
 
 // --- rag_mindmap ------------------------------------------------------------
@@ -539,4 +591,54 @@ func humanSize(n int64) string {
 	default:
 		return fmt.Sprintf("%.1fMB", float64(n)/(1024*1024))
 	}
+}
+
+// isTopicType reports whether an entity acts as a topic/event hub — a node that
+// aggregates members via member_of/part_of relations (cog_rag's theme concept,
+// modeled here with the existing binary relation schema, no schema change).
+func isTopicType(t string) bool {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "topic", "event", "theme", "group", "team":
+		return true
+	}
+	return false
+}
+
+// dedupStrings returns s with duplicates removed, order preserved.
+func dedupStrings(s []string) []string {
+	seen := map[string]bool{}
+	out := s[:0]
+	for _, v := range s {
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
+}
+
+// sourceLabel renders an entity/relation's provenance as a compact citation
+// like "doc.md#3、notes.md#1" (basename + chunk index). Empty when there are no
+// sources. Deduplicated and capped to keep the line readable when an entity was
+// extracted from many chunks.
+func sourceLabel(srcs []rag.Source) string {
+	if len(srcs) == 0 {
+		return ""
+	}
+	seen := map[string]bool{}
+	var parts []string
+	for _, s := range srcs {
+		key := fmt.Sprintf("%s#%d", filepath.Base(s.Path), s.Chunk)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		parts = append(parts, key)
+	}
+	sort.Strings(parts)
+	if len(parts) > 4 {
+		parts = append(parts[:4], "…")
+	}
+	return strings.Join(parts, "、")
 }

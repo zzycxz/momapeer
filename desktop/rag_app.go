@@ -14,6 +14,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -302,6 +303,29 @@ func (a *App) RagRemovePath(collection, path string) error {
 	return nil
 }
 
+// RagClear removes an entire collection (all docs, chunks, entities, relations,
+// extraction jobs) and reclaims the freed space with VACUUM. This is the
+// "reset this knowledge base" entrypoint — irreversible, so callers (UI) should
+// confirm. An empty collection name clears nothing; pass an explicit name.
+func (a *App) RagClear(collection string) error {
+	if a.ragStore == nil {
+		return fmt.Errorf("RAG store offline")
+	}
+	if strings.TrimSpace(collection) == "" {
+		return fmt.Errorf("collection name is required to clear (use RagRemovePath per-doc instead)")
+	}
+	if err := a.ragStore.Delete(collection, ""); err != nil {
+		return err
+	}
+	if err := a.ragStore.Vacuum(); err != nil {
+		// VACUUM failing is non-fatal: the data is already gone, only space
+		// reclaim didn't happen. Log and proceed.
+		slog.Warn("rag: vacuum after clear failed", "err", err)
+	}
+	a.emitRagChanged()
+	return nil
+}
+
 // RagSearch runs a combined search (structured entities + FTS5 snippets) for
 // the in-panel search bar. Mirrors rag_search tool output but as JSON.
 func (a *App) RagSearch(collection, query string, topK int) (RagSearchHitView, error) {
@@ -374,7 +398,7 @@ func (a *App) RagPreviewETA(jobID string) (RagETAView, error) {
 // RagListTemplates returns the supported file extensions (informational — for
 // the import dialog's "supported formats" hint).
 func (a *App) RagListTemplates() []string {
-	return []string{".txt", ".md", ".csv", ".json", ".html", ".py", ".go", ".js", ".ts", ".yaml"}
+	return []string{".txt", ".md", ".csv", ".tsv", ".json", ".html", ".py", ".go", ".js", ".ts", ".yaml"}
 }
 
 // emitRagChanged notifies the frontend that the tree/collections mutated.
