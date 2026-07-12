@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { asArray } from "../lib/array";
 import { app, openExternal } from "../lib/bridge";
 import { useT } from "../lib/i18n";
-import type { Translator } from "../lib/i18n";
 import type { CapabilitiesView, MCPServerInput, ServerView, SkillRootSkillView, SkillRootView, SkillView } from "../lib/types";
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { ResizableDrawer } from "./ResizableDrawer";
@@ -1435,7 +1434,7 @@ function AddServerForm({
 
 // MCPServersSettingsPage is a self-contained MCP servers management page
 // embedded inside the settings centre.
-export function MCPServersSettingsPage() {
+export function MCPServersSettingsPage({ initialHighlight }: { initialHighlight?: string }) {
 	const t = useT();
 	const [view, setView] = useState<CapabilitiesView | null>(null);
 	const [busy, setBusy] = useState(false);
@@ -1443,7 +1442,7 @@ export function MCPServersSettingsPage() {
 	const [adding, setAdding] = useState(false);
 	const [editing, setEditing] = useState<string | null>(null);
 	const [expandedErrors, setExpandedErrors] = useState<Set<string>>(() => new Set());
-	const [expandedServers, setExpandedServers] = useState<Set<string>>(() => new Set());
+	const [expandedServers, setExpandedServers] = useState<Set<string>>(() => new Set(initialHighlight ? [initialHighlight] : []));
 	const [expandedServerTools, setExpandedServerTools] = useState<Set<string>>(() => new Set());
 
 	const reload = useCallback(async () => {
@@ -1561,13 +1560,13 @@ export function MCPServersSettingsPage() {
 
 // SkillsSettingsPage is a self-contained skills management page embedded inside
 // the settings centre.
-export function SkillsSettingsPage() {
+export function SkillsSettingsPage({ initialHighlight }: { initialHighlight?: string }) {
 	const t = useT();
 	const [view, setView] = useState<CapabilitiesView | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState<string | null>(null);
-	const [skillQuery, setSkillQuery] = useState("");
-	const [expandedSkills, setExpandedSkills] = useState<Set<string>>(() => new Set());
+	const [skillQuery, setSkillQuery] = useState(initialHighlight || "");
+	const [expandedSkills, setExpandedSkills] = useState<Set<string>>(() => new Set(initialHighlight ? [initialHighlight] : []));
 
 	const reload = useCallback(async () => {
 		setView(normalizeCapabilitiesView(await app.Capabilities().catch(() => ({ servers: [], skills: [], skillRoots: [] }))));
@@ -1610,19 +1609,31 @@ export function SkillsSettingsPage() {
 		() => filteredSkills.filter((sk) => sk.scope === "builtin"),
 		[filteredSkills],
 	);
+	const builtinCodingSkills = useMemo(
+		() => builtinSkills.filter((sk) => sk.name !== "browser-auto" && sk.name !== "computer-auto" && sk.name !== "ppt-auto"),
+		[builtinSkills],
+	);
+	const builtinOfficeSkills = useMemo(
+		() => builtinSkills.filter((sk) => sk.name === "browser-auto" || sk.name === "computer-auto" || sk.name === "ppt-auto"),
+		[builtinSkills],
+	);
 	const userSkills = useMemo(
 		() => filteredSkills.filter((sk) => sk.scope !== "builtin"),
 		[filteredSkills],
 	);
-	const builtinEnabledCount = useMemo(
-		() => builtinSkills.filter((sk) => sk.enabled).length,
-		[builtinSkills],
+	const builtinCodingEnabledCount = useMemo(
+		() => builtinCodingSkills.filter((sk) => sk.enabled).length,
+		[builtinCodingSkills],
+	);
+	const builtinOfficeEnabledCount = useMemo(
+		() => builtinOfficeSkills.filter((sk) => sk.enabled).length,
+		[builtinOfficeSkills],
 	);
 
 	const skillSummary = useMemo(() => {
 		if (!view) return "";
-		return skillListSummary(view.skills, filteredSkills, skillQuery.trim().length > 0, t);
-	}, [filteredSkills, skillQuery, t, view]);
+		return skillListSummary(userSkills, filteredSkills.filter((sk) => sk.scope !== "builtin"), skillQuery.trim().length > 0, t);
+	}, [filteredSkills, skillQuery, t, view, userSkills]);
 
 	const toggleSkill = useCallback((name: string) => {
 		setExpandedSkills((prev) => { const next = new Set(prev); if (next.has(name)) next.delete(name); else next.add(name); return next; });
@@ -1656,24 +1667,50 @@ export function SkillsSettingsPage() {
 			{/* Built-in skill market: the catalog of skills shipped with momapeer.
 			    Each card is a one-click enable toggle (builtins are always present
 			    on disk; "install" == "enable"). Mirrors Trae Work's skill market. */}
-			{builtinSkills.length > 0 && (
+			{builtinCodingSkills.length > 0 && (
 				<div className="cap-market">
 					<div className="cap-skills-head">
 						<div className="cap-skills-head__copy">
-							<div className="cap-skills-head__title">{t("caps.marketTitle")}</div>
+							<div className="cap-skills-head__title">{t("caps.marketTitleCoding")}</div>
 							<div className="cap-skills-head__summary">
-								{t("caps.marketSummary", { on: builtinEnabledCount, total: builtinSkills.length })}
+								{t("caps.marketSummary", { on: builtinCodingEnabledCount, total: builtinCodingSkills.length })}
 							</div>
 						</div>
 					</div>
-					<div className="cap-market__grid">
-						{builtinSkills.map((sk) => (
-							<SkillMarketCard
+					<div className="cap-skills">
+						{builtinCodingSkills.map((sk) => (
+							<SkillRow
 								key={sk.name}
 								skill={sk}
 								busy={busy}
+								expanded={expandedSkills.has(sk.name)}
+								onToggle={() => toggleSkill(sk.name)}
 								onToggleEnabled={(enabled) => void mutate(() => app.SetSkillEnabled(sk.name, enabled))}
-								t={t}
+							/>
+						))}
+					</div>
+				</div>
+			)}
+
+			{builtinOfficeSkills.length > 0 && (
+				<div className="cap-market">
+					<div className="cap-skills-head">
+						<div className="cap-skills-head__copy">
+							<div className="cap-skills-head__title">{t("caps.marketTitleOffice")}</div>
+							<div className="cap-skills-head__summary">
+								{t("caps.marketSummary", { on: builtinOfficeEnabledCount, total: builtinOfficeSkills.length })}
+							</div>
+						</div>
+					</div>
+					<div className="cap-skills">
+						{builtinOfficeSkills.map((sk) => (
+							<SkillRow
+								key={sk.name}
+								skill={sk}
+								busy={busy}
+								expanded={expandedSkills.has(sk.name)}
+								onToggle={() => toggleSkill(sk.name)}
+								onToggleEnabled={(enabled) => void mutate(() => app.SetSkillEnabled(sk.name, enabled))}
 							/>
 						))}
 					</div>
@@ -1707,40 +1744,3 @@ export function SkillsSettingsPage() {
 	);
 }
 
-// SkillMarketCard renders one built-in skill in the market grid. Unlike SkillRow
-// (a list item with expand/collapse), this is a compact card optimized for
-// discovery: name, one-line description, scope/runAs badges, and a single
-// enable/disable toggle that reads as "install / installed".
-function SkillMarketCard({
-	skill: sk,
-	busy,
-	onToggleEnabled,
-	t,
-}: {
-	skill: SkillView;
-	busy: boolean;
-	onToggleEnabled: (enabled: boolean) => void;
-	t: Translator;
-}) {
-	return (
-		<div className={"cap-market-card" + (sk.enabled ? " cap-market-card--on" : "")}>
-			<div className="cap-market-card__head">
-				<span className="cap-market-card__name">/{sk.name}</span>
-				<div className="cap-market-card__badges">
-					{sk.runAs === "subagent" && (
-						<span className="cap-skill-card__badge">{t("caps.subagent")}</span>
-					)}
-				</div>
-			</div>
-			<p className="cap-market-card__desc">{sk.description}</p>
-			<button
-				className={"btn btn--small" + (sk.enabled ? "" : " btn--primary")}
-				onClick={() => onToggleEnabled(!sk.enabled)}
-				disabled={busy}
-				type="button"
-			>
-				{sk.enabled ? t("caps.installed") : t("caps.install")}
-			</button>
-		</div>
-	);
-}
