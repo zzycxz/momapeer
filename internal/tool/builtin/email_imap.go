@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -31,13 +33,20 @@ import (
 // unchanged — this is a drop-in implementation upgrade. When IMAP isn't
 // configured, the tools return a clear error.
 
+// EmailAttachment is metadata for one email attachment.
+type EmailAttachment struct {
+	Name string `json:"name"`
+	Size int    `json:"size"`
+}
+
 // EmailMessage is the read/search result: envelope fields + a body preview.
 type EmailMessage struct {
-	From    string `json:"from"`
-	To      string `json:"to"`
-	Subject string `json:"subject"`
-	Date    string `json:"date"`
-	Preview string `json:"preview"`
+	From        string           `json:"from"`
+	To          string           `json:"to"`
+	Subject     string           `json:"subject"`
+	Date        string           `json:"date"`
+	Preview     string           `json:"preview"`
+	Attachments []EmailAttachment `json:"attachments,omitempty"`
 }
 
 // imapConnect dials (TLS for 993, plain/STARTTLS for 143), logs in. Returns the
@@ -48,27 +57,120 @@ func imapConnect(ctx context.Context, cfg config.IMAPConfig) (*client.Client, er
 		port = 993
 	}
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(port))
-	// Dial with a context-bound deadline so a hung server doesn't block forever.
-	dialCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
+	// Bound the TCP/TLS handshake so a hung or unreachable server fails fast
+	// instead of blocking forever. go-imap v1's DialTLS/Dial do not accept a
+	// context, so we pass a net.Dialer with a Timeout (the library honors it as
+	// the dial deadline). A subsequent per-command deadline is set via Timeout.
+	const dialTimeout = 20 * time.Second
+	dialer := &net.Dialer{Timeout: dialTimeout}
 
 	var c *client.Client
 	var err error
 	if port == 993 {
-		c, err = client.DialTLS(addr, &tls.Config{ServerName: cfg.Host})
+		// Try strict TLS first; on handshake failure, retry with RSA key-exchange
+		// ciphers re-enabled. Go 1.22+ removed RSA key-exchange suites from the
+		// default list, but some providers (notably 139.com/10086.cn) only support
+		// RSA key exchange — without these the handshake always fails. Certificate
+		// verification stays ON unless the user opted in via skip_tls_verify.
+		tlsCfg := &tls.Config{ServerName: cfg.Host}
+		c, err = client.DialWithDialerTLS(dialer, addr, tlsCfg)
+		if err != nil && isTLSError(err) {
+			tlsCfg.InsecureSkipVerify = cfg.SkipTLSVerify
+			tlsCfg.CipherSuites = []uint16{
+				tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
+			}
+			c, err = client.DialWithDialerTLS(dialer, addr, tlsCfg)
+		}
 	} else {
-		c, err = client.Dial(addr)
+		c, err = client.DialWithDialer(dialer, addr)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("imap dial %s: %w", addr, err)
 	}
-	_ = dialCtx
+	// Per-command deadline so a stalled SELECT/SEARCH/Fetch can't hang the tool.
+	c.Timeout = 30 * time.Second
 	pass := imapPassword(cfg)
 	if err := c.Login(cfg.Username, pass); err != nil {
 		c.Logout()
-		return nil, fmt.Errorf("imap login (check credentials): %w", err)
+		return nil, classifyAuthErr(fmt.Errorf("imap login (check credentials): %w", err))
 	}
 	return c, nil
+}
+
+// ProbeAccountIMAP cheaply verifies that account (default when empty) can
+// connect + log in to IMAP, without fetching mail. Returns nil when the account
+// has no IMAP host (a send-only setup) so it doesn't block send-only tasks. On
+// an auth failure it returns a friendly error and fires the auth-expired toast.
+// Used to surface an expired 139 authorization code (90-day life) up front,
+// before a scheduled task burns tokens.
+func ProbeAccountIMAP(account string) error {
+	a, ok := accountByName(account)
+	if !ok {
+		return errors.New("email account not configured")
+	}
+	if strings.TrimSpace(a.IMAP.Host) == "" {
+		return nil // send-only account — nothing to probe over IMAP
+	}
+	return ProbeIMAPConfig(a.IMAP)
+}
+
+// ReadInboxFor reads the most recent `limit` messages from INBOX (unread only
+// when unreadOnly=true). Exported so the cowork dock's "邮件" tab can preview
+// the inbox WITHOUT going through the agent tool path or the global
+// emailAccounts slice (which is only refreshed on boot). Same pattern as
+// ProbeIMAPConfig: takes a standalone IMAP config, applies its own timeout,
+// returns a friendly error on auth/connection failure.
+func ReadInboxFor(cfg config.IMAPConfig, limit int, unreadOnly bool) ([]EmailMessage, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return imapRead(ctx, cfg, limit, unreadOnly, time.Time{}, time.Time{})
+}
+
+// ProbeIMAPConfig verifies a standalone IMAP config can connect + log in +
+// select INBOX, without fetching mail. Exported so the desktop settings panel
+// can probe a freshly saved mailbox WITHOUT going through the global
+// emailAccounts slice (which is only refreshed on boot, not on every save).
+// Returns a friendly error on auth failure. Caller sets the timeout.
+func ProbeIMAPConfig(cfg config.IMAPConfig) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	c, err := imapConnect(ctx, cfg)
+	if err != nil {
+		return friendlyEmailErr("", err)
+	}
+	if _, err := c.Select("INBOX", true); err != nil {
+		c.Logout()
+		return fmt.Errorf("select inbox: %w", err)
+	}
+	return c.Logout()
+}
+
+// isTLSError reports whether err looks like a TLS handshake failure.
+func isTLSError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "handshake") ||
+		strings.Contains(s, "tls:") ||
+		strings.Contains(s, "SSL") ||
+		strings.Contains(s, "certificate")
+}
+
+// decodeRFC2047 decodes RFC 2047 encoded words (e.g. =?gbk?b?...?=) in header
+// values. Falls back to the original string if decoding fails. Handles GBK and
+// other charsets that go-imap's default decoder misses.
+func decodeRFC2047(s string) string {
+	dec := &mime.WordDecoder{}
+	decoded, err := dec.DecodeHeader(s)
+	if err != nil {
+		return s // fallback to raw string
+	}
+	return decoded
 }
 
 func imapPassword(cfg config.IMAPConfig) string {
@@ -80,7 +182,7 @@ func imapPassword(cfg config.IMAPConfig) string {
 
 // imapRead selects INBOX, fetches the most recent `limit` messages (or unread
 // only). Returns envelopes + a plain-text body preview per message.
-func imapRead(ctx context.Context, cfg config.IMAPConfig, limit int, unreadOnly bool) ([]EmailMessage, error) {
+func imapRead(ctx context.Context, cfg config.IMAPConfig, limit int, unreadOnly bool, since, before time.Time) ([]EmailMessage, error) {
 	c, err := imapConnect(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -94,6 +196,12 @@ func imapRead(ctx context.Context, cfg config.IMAPConfig, limit int, unreadOnly 
 	criteria := &imap.SearchCriteria{}
 	if unreadOnly {
 		criteria.WithoutFlags = []string{imap.SeenFlag}
+	}
+	if !since.IsZero() {
+		criteria.Since = since
+	}
+	if !before.IsZero() {
+		criteria.Before = before
 	}
 	seqs, err := c.Search(criteria)
 	if err != nil {
@@ -113,8 +221,10 @@ func imapRead(ctx context.Context, cfg config.IMAPConfig, limit int, unreadOnly 
 	return fetchMessages(c, seqs)
 }
 
-// imapSearch runs SEARCH FROM "x" then fetches matches.
-func imapSearch(ctx context.Context, cfg config.IMAPConfig, from string, limit int) ([]EmailMessage, error) {
+// imapSearch runs a server-side IMAP SEARCH narrowed by from/subject header
+// substrings and/or an internal-date range, then fetches matches. Empty filters
+// are omitted, so a date-only search returns every message in the window.
+func imapSearch(ctx context.Context, cfg config.IMAPConfig, from, subject string, limit int, since, before time.Time) ([]EmailMessage, error) {
 	c, err := imapConnect(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -125,8 +235,21 @@ func imapSearch(ctx context.Context, cfg config.IMAPConfig, from string, limit i
 		return nil, err
 	}
 	// go-imap's SearchCriteria.Header is a map[string][]string of header fields
-	// to match; IMAP SEARCH HEADER From "x". This is server-side filtering.
-	criteria := &imap.SearchCriteria{Header: map[string][]string{"From": {from}}}
+	// to match (IMAP SEARCH HEADER). Build it from whichever of from/subject the
+	// caller supplied; date bounds go on Since/Before (internal date = receive).
+	criteria := &imap.SearchCriteria{Header: map[string][]string{}}
+	if strings.TrimSpace(from) != "" {
+		criteria.Header["From"] = []string{from}
+	}
+	if strings.TrimSpace(subject) != "" {
+		criteria.Header["Subject"] = []string{subject}
+	}
+	if !since.IsZero() {
+		criteria.Since = since
+	}
+	if !before.IsZero() {
+		criteria.Before = before
+	}
 	seqs, err := c.Search(criteria)
 	if err != nil {
 		return nil, fmt.Errorf("search: %w", err)
@@ -174,12 +297,12 @@ func parseMessage(msg *imap.Message) EmailMessage {
 	if env := msg.Envelope; env != nil {
 		m.From = formatAddresses(env.From)
 		m.To = formatAddresses(env.To)
-		m.Subject = env.Subject // go-imap already decodes RFC 2047
+		m.Subject = decodeRFC2047(env.Subject)
 		if env.Date != (time.Time{}) {
 			m.Date = env.Date.Format(time.RFC1123Z)
 		}
 	}
-	// Read the raw message bytes and parse MIME for a body preview.
+	// Read the raw message bytes and parse MIME for a body preview + attachments.
 	var bodyBytes []byte
 	section := &imap.BodySectionName{}
 	r := msg.GetBody(section)
@@ -188,6 +311,7 @@ func parseMessage(msg *imap.Message) EmailMessage {
 	}
 	if len(bodyBytes) > 0 {
 		m.Preview = extractTextPreview(bodyBytes)
+		m.Attachments = extractAttachmentMeta(bodyBytes)
 	}
 	return m
 }
@@ -209,7 +333,7 @@ func extractTextPreview(raw []byte) string {
 		ct := part.Header.Get("Content-Type")
 		if strings.HasPrefix(ct, "text/plain") {
 			data, _ := io.ReadAll(part.Body)
-			return truncatePreview(strings.TrimSpace(string(data)), 500)
+			return truncatePreview(strings.TrimSpace(string(data)), 2000)
 		}
 	}
 	// No text/plain found — fall back to first text part (html) stripped.
@@ -229,6 +353,155 @@ func extractTextPreview(raw []byte) string {
 		}
 	}
 	return ""
+}
+
+// extractAttachmentMeta parses a raw MIME message and returns metadata for
+// attachments (filename + size). Does NOT return the attachment content.
+func extractAttachmentMeta(raw []byte) []EmailAttachment {
+	mr, err := mail.CreateReader(strings.NewReader(string(raw)))
+	if err != nil {
+		return nil
+	}
+	defer mr.Close()
+	var out []EmailAttachment
+	for {
+		part, err := mr.NextPart()
+		if err != nil {
+			break
+		}
+		cd := part.Header.Get("Content-Disposition")
+		if !strings.HasPrefix(cd, "attachment") {
+			continue
+		}
+		name := ""
+		// Parse filename from Content-Disposition
+		for _, seg := range strings.Split(cd, ";") {
+			seg = strings.TrimSpace(seg)
+			if strings.HasPrefix(seg, "filename=") {
+				name = strings.Trim(strings.TrimPrefix(seg, "filename="), "\"")
+			}
+		}
+		if name == "" {
+			continue
+		}
+		data, _ := io.ReadAll(part.Body)
+		out = append(out, EmailAttachment{Name: name, Size: len(data)})
+	}
+	return out
+}
+
+// downloadAttachments fetches recent messages and saves their attachments to dir.
+// Returns the count of saved files.
+func downloadAttachments(ctx context.Context, cfg config.IMAPConfig, limit int, unreadOnly bool, since, before time.Time, dir string) (int, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return 0, fmt.Errorf("mkdir %s: %w", dir, err)
+	}
+	c, err := imapConnect(ctx, cfg)
+	if err != nil {
+		return 0, err
+	}
+	defer c.Logout()
+
+	if _, err := c.Select("INBOX", true); err != nil {
+		return 0, fmt.Errorf("select inbox: %w", err)
+	}
+
+	criteria := &imap.SearchCriteria{}
+	if unreadOnly {
+		criteria.WithoutFlags = []string{imap.SeenFlag}
+	}
+	if !since.IsZero() {
+		criteria.Since = since
+	}
+	if !before.IsZero() {
+		criteria.Before = before
+	}
+	seqs, err := c.Search(criteria)
+	if err != nil {
+		return 0, fmt.Errorf("search: %w", err)
+	}
+	if len(seqs) == 0 {
+		return 0, nil
+	}
+	if limit > 0 && len(seqs) > limit {
+		seqs = seqs[len(seqs)-limit:]
+	}
+
+	seqset := new(imap.SeqSet)
+	for _, s := range seqs {
+		seqset.AddNum(s)
+	}
+	messages := make(chan *imap.Message, len(seqs))
+	items := []imap.FetchItem{imap.FetchEnvelope, imap.FetchItem("BODY[]")}
+	if err := c.Fetch(seqset, items, messages); err != nil {
+		return 0, fmt.Errorf("fetch: %w", err)
+	}
+
+	saved := 0
+	for msg := range messages {
+		if msg == nil {
+			continue
+		}
+		section := &imap.BodySectionName{}
+		r := msg.GetBody(section)
+		if r == nil {
+			continue
+		}
+		bodyBytes, _ := io.ReadAll(r)
+		if len(bodyBytes) == 0 {
+			continue
+		}
+		files := saveAttachmentsFromRaw(bodyBytes, dir)
+		saved += files
+	}
+	return saved, nil
+}
+
+// saveAttachmentsFromRaw extracts attachments from a raw MIME message and saves
+// them to dir. Returns the count of saved files.
+func saveAttachmentsFromRaw(raw []byte, dir string) int {
+	mr, err := mail.CreateReader(strings.NewReader(string(raw)))
+	if err != nil {
+		return 0
+	}
+	defer mr.Close()
+	saved := 0
+	for {
+		part, err := mr.NextPart()
+		if err != nil {
+			break
+		}
+		cd := part.Header.Get("Content-Disposition")
+		if !strings.HasPrefix(cd, "attachment") {
+			continue
+		}
+		name := ""
+		for _, seg := range strings.Split(cd, ";") {
+			seg = strings.TrimSpace(seg)
+			if strings.HasPrefix(seg, "filename=") {
+				name = strings.Trim(strings.TrimPrefix(seg, "filename="), "\"")
+			}
+		}
+		if name == "" {
+			continue
+		}
+		// SECURITY: attachment names come straight from the sender's MIME
+		// Content-Disposition header, which an attacker fully controls. A
+		// name like "../../evil.exe" would let a malicious email write
+		// anywhere on disk via filepath.Join. Reduce to a bare filename and
+		// reject anything that still looks pathy after Base. See audit A5.
+		name = filepath.Base(name)
+		if name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+			continue
+		}
+		data, _ := io.ReadAll(part.Body)
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			continue
+		}
+		saved++
+	}
+	return saved
 }
 
 // formatAddresses renders an imap.Address slice as "Name <addr>, Name2 <addr2>".
@@ -266,18 +539,26 @@ func (emailReadTool) Schema() json.RawMessage {
 "type":"object",
 "properties":{
   "limit":{"type":"integer","description":"Max messages to return (default 10)"},
-  "unread_only":{"type":"boolean","description":"Only unread messages (default false)"}
+  "unread_only":{"type":"boolean","description":"Only unread messages (default false)"},
+  "account":{"type":"string","description":"邮箱账号名（[[cowork.email_accounts]] 的 name），留空=默认账号"},
+  "since":{"type":"string","description":"只读这个日期之后的邮件；绝对日期 2026-06-01 或相对 7d/1w/1m（近N天/周/月）"},
+  "before":{"type":"string","description":"只读这个日期之前的邮件；格式同 since"},
+  "save_attachments":{"type":"string","description":"附件下载目录（绝对路径）；留空=只列出附件名不下载"}
 },
 "required":[]
 }`)
 }
 
-func (emailReadTool) ReadOnly() bool { return true }
+func (emailReadTool) ReadOnly() bool { return false } // save_attachments writes files
 
 func (emailReadTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct {
-		Limit      int  `json:"limit"`
-		UnreadOnly bool `json:"unread_only"`
+		Limit            int    `json:"limit"`
+		UnreadOnly       bool   `json:"unread_only"`
+		Account          string `json:"account"`
+		Since            string `json:"since"`
+		Before           string `json:"before"`
+		SaveAttachments  string `json:"save_attachments"`
 	}
 	if len(args) > 0 {
 		_ = json.Unmarshal(args, &p)
@@ -285,16 +566,28 @@ func (emailReadTool) Execute(ctx context.Context, args json.RawMessage) (string,
 	if p.Limit <= 0 {
 		p.Limit = 10
 	}
-	cfg := currentIMAPConfig()
-	if cfg == nil {
-		return "", errors.New("email read not configured — set [cowork.imap] host/port/username/password_env in config")
-	}
-	msgs, err := imapRead(ctx, *cfg, p.Limit, p.UnreadOnly)
+	since, before, err := parseDateRange(p.Since, p.Before)
 	if err != nil {
 		return "", err
 	}
+	cfg, err := resolveIMAP(p.Account)
+	if err != nil {
+		return "", err
+	}
+	msgs, err := imapRead(ctx, cfg, p.Limit, p.UnreadOnly, since, before)
+	if err != nil {
+		return "", friendlyEmailErr(p.Account, err)
+	}
 	if len(msgs) == 0 {
 		return "no messages", nil
+	}
+	// Download attachments if requested.
+	if p.SaveAttachments != "" {
+		saved, err := downloadAttachments(ctx, cfg, p.Limit, p.UnreadOnly, since, before, p.SaveAttachments)
+		if err != nil {
+			return "", fmt.Errorf("download attachments: %w", err)
+		}
+		return formatMessages(msgs) + fmt.Sprintf("\n%saved %d attachment(s) to %s", "", saved, p.SaveAttachments), nil
 	}
 	return formatMessages(msgs), nil
 }
@@ -311,10 +604,14 @@ func (emailSearchTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
 "type":"object",
 "properties":{
-  "from":{"type":"string","description":"Sender address substring to match (IMAP SEARCH FROM)"},
-  "limit":{"type":"integer","description":"Max results (default 10)"}
+  "from":{"type":"string","description":"发件人地址子串（IMAP SEARCH FROM），可选"},
+  "subject":{"type":"string","description":"主题子串（IMAP SEARCH SUBJECT），可选"},
+  "limit":{"type":"integer","description":"Max results (default 10)"},
+  "account":{"type":"string","description":"邮箱账号名（[[cowork.email_accounts]] 的 name），留空=默认账号"},
+  "since":{"type":"string","description":"只搜这个日期之后的邮件；绝对日期 2026-06-01 或相对 7d/1w/1m"},
+  "before":{"type":"string","description":"只搜这个日期之前的邮件；格式同 since"}
 },
-"required":["from"]
+"required":[]
 }`)
 }
 
@@ -322,25 +619,33 @@ func (emailSearchTool) ReadOnly() bool { return true }
 
 func (emailSearchTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct {
-		From  string `json:"from"`
-		Limit int    `json:"limit"`
+		From    string `json:"from"`
+		Subject string `json:"subject"`
+		Limit   int    `json:"limit"`
+		Account string `json:"account"`
+		Since   string `json:"since"`
+		Before  string `json:"before"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
-	if strings.TrimSpace(p.From) == "" {
-		return "", errors.New("from is required")
+	if strings.TrimSpace(p.From) == "" && strings.TrimSpace(p.Subject) == "" && strings.TrimSpace(p.Since) == "" && strings.TrimSpace(p.Before) == "" {
+		return "", errors.New("at least one of from / subject / since / before is required")
 	}
 	if p.Limit <= 0 {
 		p.Limit = 10
 	}
-	cfg := currentIMAPConfig()
-	if cfg == nil {
-		return "", errors.New("email search not configured — set [cowork.imap] in config")
-	}
-	msgs, err := imapSearch(ctx, *cfg, p.From, p.Limit)
+	since, before, err := parseDateRange(p.Since, p.Before)
 	if err != nil {
 		return "", err
+	}
+	cfg, err := resolveIMAP(p.Account)
+	if err != nil {
+		return "", err
+	}
+	msgs, err := imapSearch(ctx, cfg, p.From, p.Subject, p.Limit, since, before)
+	if err != nil {
+		return "", friendlyEmailErr(p.Account, err)
 	}
 	if len(msgs) == 0 {
 		return "no matching messages", nil
@@ -351,10 +656,27 @@ func (emailSearchTool) Execute(ctx context.Context, args json.RawMessage) (strin
 func formatMessages(msgs []EmailMessage) string {
 	var b strings.Builder
 	for i, m := range msgs {
-		fmt.Fprintf(&b, "%d. from: %s\n   to: %s\n   date: %s\n   subject: %s\n   preview: %s\n\n",
+		fmt.Fprintf(&b, "%d. from: %s\n   to: %s\n   date: %s\n   subject: %s\n   preview: %s\n",
 			i+1, m.From, m.To, m.Date, m.Subject, m.Preview)
+		if len(m.Attachments) > 0 {
+			fmt.Fprintf(&b, "   attachments: ")
+			for j, a := range m.Attachments {
+				if j > 0 {
+					fmt.Fprintf(&b, ", ")
+				}
+				fmt.Fprintf(&b, "%s (%dKB)", a.Name, a.Size/1024+1)
+			}
+			fmt.Fprintf(&b, "\n")
+		}
+		fmt.Fprintf(&b, "\n")
 	}
-	return b.String()
+	// SECURITY: every field above (From, Subject, Preview, attachment names)
+	// comes from the email sender, who fully controls the bytes. A malicious
+	// email can embed prompt-injection text ("ignore prior instructions…") in
+	// any of them. Wrap the whole block so the model treats it as DATA. This
+	// is the same defense web_fetch / rag_search / browser use; email is the
+	// one untrusted channel that was missing it. See audit finding A4.
+	return WrapUntrusted("email", b.String())
 }
 
 func truncatePreview(s string, n int) string {
@@ -366,14 +688,6 @@ func truncatePreview(s string, n int) string {
 
 // osGetenv wraps os.Getenv (kept so this file's env access is localized).
 func osGetenv(key string) string { return os.Getenv(key) }
-
-// currentIMAPConfig returns the injected IMAP config, or nil if unset.
-func currentIMAPConfig() *config.IMAPConfig {
-	if globalIMAPConfig == nil || globalIMAPConfig.Host == "" {
-		return nil
-	}
-	return globalIMAPConfig
-}
 
 // getenv is a thin wrapper over os.Getenv, localized to email's env access.
 func getenv(key string) string { return os.Getenv(key) }
