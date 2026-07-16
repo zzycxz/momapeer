@@ -28,22 +28,33 @@ func ConfineWebFetch(proxySpec netclient.ProxySpec) tool.Tool {
 	return webFetch{proxySpec: proxySpec}
 }
 
-// ConfineWriters returns the file-writing built-ins (write_file, edit_file,
-// multi_edit, notebook_edit) bound to roots — the only directories they may
-// modify. The composition root adds these to the per-run registry to override
-// the unconfined instances registered at init time, so writes stay inside the
-// workspace by default. roots may be relative; they are resolved to absolute,
-// symlink-free paths once here. An empty roots slice yields unconfined writers.
+// ConfineWriters returns the file-writing built-ins (write_file, edit_file)
+// bound to roots — the only directories they may modify. The composition root
+// adds these to the per-run registry to override the unconfined instances
+// registered at init time, so writes stay inside the workspace by default.
+// roots may be relative; they are resolved to absolute, symlink-free paths once
+// here. An empty roots slice yields unconfined writers.
+//
+// NOTE: confine is WRITE-only. read_file, grep, and bash are NOT confined to
+// roots — they can read any host path the OS permits. This is by design (an
+// agent legitimately needs to read /etc, system headers, ~/.gitconfig, etc.),
+// but it means the workspace boundary is a write boundary, NOT a read/data-
+// isolation boundary. Do not assume "confined to workspace" implies read
+// isolation when reasoning about security; bash + read_file can still exfiltrate
+// any readable host file. See security audit finding A7.
 func ConfineWriters(roots []string) []tool.Tool {
 	rs := realRoots(roots)
 	return []tool.Tool{
 		writeFile{roots: rs},
 		editFile{roots: rs},
 		multiEdit{roots: rs},
-		notebookEdit{roots: rs},
-		deleteRange{roots: rs},
-		deleteSymbol{roots: rs},
-		moveFile{roots: rs},
+		// Document tools that write files (doc_write/csv_write/xlsx_write/doc_convert)
+		// are confined here too — without this they'd only do filepath.Abs and could
+		// write anywhere (e.g. ~/.ssh/authorized_keys), bypassing [sandbox] workspace_root.
+		docWrite{roots: rs},
+		csvWrite{roots: rs},
+		xlsxWrite{roots: rs},
+		docConvert{roots: rs},
 	}
 }
 
