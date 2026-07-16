@@ -364,9 +364,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	sysPrompt = skill.ApplyIndex(sysPrompt, indexedSkills)
 
 	reg := tool.NewRegistry()
-	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: cfg.WriteRootsForRoot(root), Network: cfg.Sandbox.Network}
+	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: cfg.WriteRootsForRoot(root), Network: cfg.Sandbox.Network, RequireAvailable: cfg.Sandbox.RequireAvailable}
 	if bashSpec.Mode == "enforce" && !sandbox.Available() {
-		fmt.Fprintln(stderr, "warning: bash sandbox requested but unavailable on this platform; running bash unconfined")
+		if cfg.Sandbox.RequireAvailable {
+			fmt.Fprintln(stderr, "warning: bash sandbox 'enforce' requested with require_available=true, but no OS sandbox is available on this platform. bash commands will be REFUSED (fail-closed) until an OS sandbox is available or require_available is disabled.")
+		} else {
+			fmt.Fprintln(stderr, "warning: bash sandbox requested but unavailable on this platform; running bash unconfined (set [sandbox] require_available = true to refuse instead)")
+		}
 	}
 	if sandbox.ResolveShell().Kind == sandbox.ShellPowerShell {
 		fmt.Fprintln(stderr, "warning: bash not found on PATH; the shell tool will run commands under Windows PowerShell. Install Git for Windows or WSL to use bash.")
@@ -1199,7 +1203,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		// message and inject it as a preamble — so the agent always has
 		// knowledge-base facts available without needing to call rag_search.
 		RAGContextFn: func(ctx context.Context, query string) string {
-			return builtin.AutoSearch(ctx, query)
+			// AutoSearch returns raw knowledge-base snippets that may carry
+			// prompt-injection text from imported documents. Wrap them so the
+			// model treats the auto-injected context as DATA, never commands —
+			// this is the main-chat injection path and must be fenced.
+			return builtin.WrapUntrusted("rag", builtin.AutoSearch(ctx, query))
 		},
 	}
 	if classifier != nil {

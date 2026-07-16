@@ -36,6 +36,87 @@ func SetRAGEmbedder(e rag.Embedder) { globalRAGEmbedder = e }
 
 var globalRAGEmbedder rag.Embedder
 
+// globalRAGSessionResolver returns the session's active collections so that
+// rag_search can auto-scope when the caller omits the collection parameter.
+// Injected via SetRAGSessionResolver (desktop app.go). nil = no session scope
+// (search all collections, the original behavior).
+var globalRAGSessionResolver func() []string
+
+// SetRAGSessionResolver injects a callback that returns the session's active
+// collections. This bridges the desktop UI's "activate collection" control to
+// the agent's rag_search calls — without it, the UI selection has no effect on
+// LLM-driven searches. Called once at cowork boot.
+func SetRAGSessionResolver(fn func() []string) { globalRAGSessionResolver = fn }
+
+// AutoSearch performs a lightweight knowledge-base retrieval for auto-injection
+// into the main chat. Returns a formatted context string (entities + snippets)
+// or "" when there are no matches or the store is offline. This lets the
+// controller prepend knowledge-base context to user messages without exposing
+// the rag_search tool to the main agent loop.
+func AutoSearch(ctx context.Context, query string) string {
+	if globalRAGStore == nil || strings.TrimSpace(query) == "" {
+		return ""
+	}
+	collection := resolveRAGScope("")
+	hasEntities, _ := globalRAGStore.HasEntities(collection)
+	const topK = 5
+
+	var b strings.Builder
+
+	// Layer 1: structured entities (if deep-extracted).
+	if hasEntities {
+		entities, err := globalRAGStore.SearchEntities(query, collection, topK)
+		if err == nil && len(entities) > 0 {
+			fmt.Fprintf(&b, "知识库命中实体（%d 个）：\n", len(entities))
+			for _, e := range entities {
+				fmt.Fprintf(&b, "- %s [%s]", e.NameRaw, e.Type)
+				if e.Description != "" {
+					fmt.Fprintf(&b, " · %s", e.Description)
+				}
+				b.WriteString("\n")
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	// Layer 2: FTS5 original-text snippets.
+	results, err := globalRAGStore.Search(query, collection, topK)
+	if err == nil && len(results) > 0 {
+		if globalRAGEmbedder != nil {
+			results = globalRAGStore.Rerank(ctx, query, results, globalRAGEmbedder, 0.5)
+			if len(results) > topK {
+				results = results[:topK]
+			}
+		}
+		b.WriteString("知识库文档片段：\n")
+		for _, r := range results {
+			snippet := r.Snippet
+			if snippet == "" {
+				continue
+			}
+			label := filepath.Base(r.Path)
+			fmt.Fprintf(&b, "【%s】%s\n\n", label, snippet)
+		}
+	}
+
+	return b.String()
+}
+
+// resolveRAGScope returns the effective collection for a rag_search call: an
+// explicit collection parameter always wins; otherwise, if the session has
+// exactly one active collection, use it; otherwise "" (all collections).
+func resolveRAGScope(explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if globalRAGSessionResolver != nil {
+		if active := globalRAGSessionResolver(); len(active) == 1 {
+			return active[0]
+		}
+	}
+	return ""
+}
+
 func requireRAG() (*rag.Store, error) {
 	if globalRAGStore == nil {
 		return nil, errors.New("RAG store is offline (only available under the cowork profile)")
@@ -145,20 +226,25 @@ func (ragSearch) Execute(ctx context.Context, args json.RawMessage) (string, err
 	if err != nil {
 		return "", err
 	}
+	// Resolve the effective collection scope: an explicit parameter wins,
+	// otherwise fall back to the session's active collection (if exactly one
+	// is active). This bridges the UI "activate collection" control to the
+	// agent's rag_search calls.
+	collection := resolveRAGScope(p.Collection)
 
 	// Layer 1: structured entities + relations (only if this collection has been
 	// deep-extracted). This is the high-precision layer — direct fact hits with
 	// no chunk-boundary noise.
-	hasEntities, _ := s.HasEntities(p.Collection)
+	hasEntities, _ := s.HasEntities(collection)
 	var entities []rag.Entity
 	var relations []rag.Relation
 	if hasEntities {
-		entities, err = s.SearchEntities(p.Query, p.Collection, p.TopK)
+		entities, err = s.SearchEntities(p.Query, collection, p.TopK)
 		if err != nil {
 			return "", err
 		}
 		for _, e := range entities {
-			rels, _ := s.RelationsOf(p.Collection, e.Name, true)
+			rels, _ := s.RelationsOf(collection, e.Name, true)
 			relations = append(relations, rels...)
 		}
 	}
@@ -172,7 +258,7 @@ func (ragSearch) Execute(ctx context.Context, args json.RawMessage) (string, err
 			pool = 20
 		}
 	}
-	results, err := s.Search(p.Query, p.Collection, pool)
+	results, err := s.Search(p.Query, collection, pool)
 	if err != nil {
 		return "", err
 	}
@@ -185,8 +271,8 @@ func (ragSearch) Execute(ctx context.Context, args json.RawMessage) (string, err
 
 	var b strings.Builder
 	scope := "all collections"
-	if p.Collection != "" {
-		scope = fmt.Sprintf("%q", p.Collection)
+	if collection != "" {
+		scope = fmt.Sprintf("%q", collection)
 	}
 	if len(entities) == 0 && len(results) == 0 {
 		return fmt.Sprintf("no matches in %s — import documents with rag_import first", scope), nil
@@ -271,8 +357,8 @@ func (ragSearch) Execute(ctx context.Context, args json.RawMessage) (string, err
 	// FTS5 layer.
 	if len(results) > 0 {
 		fmt.Fprintf(&b, "原文命中（%d 段）", len(results))
-		if p.Collection != "" {
-			fmt.Fprintf(&b, " in %q", p.Collection)
+		if collection != "" {
+			fmt.Fprintf(&b, " in %q", collection)
 		}
 		b.WriteString("：\n")
 		for _, r := range results {
@@ -281,7 +367,21 @@ func (ragSearch) Execute(ctx context.Context, args json.RawMessage) (string, err
 	}
 	// Imported documents are external content (could carry prompt-injection
 	// text from their source); wrap so the model treats snippets as data.
-	return wrapUntrusted("rag", b.String()), nil
+	return WrapUntrusted("rag", capOutput(b.String())), nil
+}
+
+// ragMaxOutputChars caps the total output of rag_search/rag_graph so a single
+// call can't flood the model's context with an oversized result (each entity
+// recursively pulls all its relations, and topic/event members expand inline).
+// When truncating, we append a marker so the model knows results were trimmed.
+const ragMaxOutputChars = 12000
+
+func capOutput(s string) string {
+	if len(s) <= ragMaxOutputChars {
+		return s
+	}
+	// Truncate at a safe boundary and note how much was dropped.
+	return s[:ragMaxOutputChars] + "\n…（结果过长，已截断；可用更具体的 query 或更小的 top_k 缩小范围）"
 }
 
 // --- rag_graph --------------------------------------------------------------
@@ -365,10 +465,8 @@ func (ragGraph) Execute(ctx context.Context, args json.RawMessage) (string, erro
 	}
 	// Entity/relation descriptions originate from imported documents — same
 	// untrusted-content fence as rag_search.
-	return wrapUntrusted("rag", b.String()), nil
+	return WrapUntrusted("rag", capOutput(b.String())), nil
 }
-
-// --- rag_mindmap ------------------------------------------------------------
 
 type ragMindMap struct{}
 

@@ -254,7 +254,9 @@ func (wf webFetch) Execute(ctx context.Context, args json.RawMessage) (string, e
 		return fmt.Sprintf("(empty body — status %s)", resp.Status), nil
 	}
 	header := fmt.Sprintf("status %s · %s · %d bytes\n\n", resp.Status, contentTypeShort(ct), len(body))
-	return header + out, nil
+	// Arbitrary web content is the highest prompt-injection risk — wrap so the
+	// model treats the fetched page as data, never as instructions.
+	return WrapUntrusted("web", header+out), nil
 }
 
 // looksLikeHTML lets servers that misreport Content-Type still hit the HTML
