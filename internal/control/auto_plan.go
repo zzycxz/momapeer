@@ -9,14 +9,26 @@ import (
 )
 
 const (
-	autoPlanOff = "off"
-	autoPlanOn  = "on"
+	AutoPlanOff = "off"
+	AutoPlanOn  = "on"
+)
+
+// keep lowercase aliases for internal use
+const (
+	autoPlanOff = AutoPlanOff
+	autoPlanOn  = AutoPlanOn
 )
 
 var numberedListRE = regexp.MustCompile(`(?m)^\s*(?:[-*]|\d+[.)])\s+\S`)
 
 type autoPlanClassifier interface {
 	NeedsPlan(ctx context.Context, input string, score int) (bool, string, error)
+}
+
+// NormalizeAutoPlan is the single source of truth for auto_plan normalization.
+// Exported so boot.go and config consumers share the same semantics.
+func NormalizeAutoPlan(mode string) string {
+	return normalizeAutoPlan(mode)
 }
 
 func normalizeAutoPlan(mode string) string {
@@ -66,18 +78,6 @@ func (c *Controller) shouldAutoPlan(ctx context.Context, input string) bool {
 	return score >= 2
 }
 
-// TaskWarrantsPlanner reports whether a task turn is worth a planner pass in
-// two-model mode. Empty input, slash commands, and low-risk informational asks
-// (explain / show / what / why / 解释 / 查一下 …) skip straight to the executor;
-// anything that reads like a work request — even a terse one — still gets planned.
-func TaskWarrantsPlanner(input string) bool {
-	text := strings.TrimSpace(input)
-	if text == "" || strings.HasPrefix(text, "/") || strings.HasPrefix(text, PlanModeMarker) {
-		return false
-	}
-	return !isLowRiskQuestion(strings.ToLower(text))
-}
-
 func autoPlanScore(input string) int {
 	text := strings.TrimSpace(input)
 	if text == "" || strings.HasPrefix(text, "/") || strings.HasPrefix(text, PlanModeMarker) {
@@ -108,7 +108,9 @@ func autoPlanScore(input string) int {
 		score++
 	}
 	if strings.Count(text, "@") >= 2 || strings.Count(lower, ".go")+
-		strings.Count(lower, ".ts")+strings.Count(lower, ".tsx")+strings.Count(lower, ".js") >= 2 {
+		strings.Count(lower, ".tsx")+
+		(strings.Count(lower, ".ts")-strings.Count(lower, ".tsx"))+ // ".ts" is a substring of ".tsx", so each .tsx file is counted once by the .tsx term AND once by the .ts term; subtract the overlap so a .tsx file counts once, not twice.
+		strings.Count(lower, ".js") >= 2 {
 		score++
 	}
 	return score
