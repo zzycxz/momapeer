@@ -624,7 +624,7 @@ func isPackageManagerRun(base string) bool {
 // IsFileMutationTool reports whether a built-in tool mutates workspace files.
 func IsFileMutationTool(toolName string) bool {
 	switch toolName {
-	case "write_file", "edit_file":
+	case "write_file", "edit_file", "multi_edit":
 		return true
 	default:
 		return false
@@ -647,7 +647,8 @@ func canonicalRuleTool(toolName string) string {
 	switch strings.TrimSpace(toolName) {
 	case "Bash", "bash":
 		return "bash"
-	case "Edit", "edit", "file_mutation":
+	case "Edit", "edit", "file_mutation",
+		"write_file", "edit_file", "multi_edit": // the concrete builtin tool names
 		return "file_mutation"
 	default:
 		return toolName

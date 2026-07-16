@@ -410,3 +410,25 @@ func TestEmailSubjectsBCCDefeatsDeny(t *testing.T) {
 	}
 	t.Fatalf("bcc domain evil.com missing from subjects %v — deny(exvil.com) would be bypassed", got)
 }
+
+// --- multi_edit deny coverage (security regression A2) ---
+
+// TestMultiEditCoveredByFileMutationDeny confirms that a deny rule expressed
+// as Edit/edit_file/file_mutation (the natural forms users write) also blocks
+// multi_edit. Before the fix, IsFileMutationTool omitted multi_edit, so a user
+// who denied editing secrets/ was bypassable via multi_edit.
+func TestMultiEditCoveredByFileMutationDeny(t *testing.T) {
+	for _, rule := range []string{
+		"Edit(secrets/*)",
+		"edit_file(secrets/*)",
+		"file_mutation(secrets/*)",
+	} {
+		t.Run(rule, func(t *testing.T) {
+			p := New("allow", nil, nil, []string{rule})
+			got := p.Decide("multi_edit", false, json.RawMessage(`{"path":"secrets/key.pem","edits":[{"old_string":"a","new_string":"b"}]}`))
+			if got != Deny {
+				t.Errorf("multi_edit with %q = %v, want Deny (was bypassable before fix)", rule, got)
+			}
+		})
+	}
+}
