@@ -60,6 +60,17 @@ func (m *chatTUI) runModelSubcommand(input string) {
 		if err != nil {
 			return modelSwitchMsg{ref: ref, err: err}
 		}
+		// Preserve the user's runtime mode across the model switch. buildController
+		// (cli.go) reconstructs the controller with defaults (plan off, ask, no
+		// goal), so without this a user who Shift+Tab'd into plan mode or Ctrl+Y'd
+		// into YOLO would silently lose that state after /model or /effort —
+		// leading to either surprise writes (plan gone) or surprise prompts
+		// (YOLO gone). See audit finding C2.
+		c.SetPlanMode(oldCtrl.PlanMode())
+		c.SetToolApprovalMode(oldCtrl.ToolApprovalMode())
+		if g := oldCtrl.Goal(); g != "" {
+			c.SetGoal(g)
+		}
 		// Do NOT close the old controller here. Controller.Close() runs
 		// SessionEnd hooks (arbitrary shell commands) and kills plugin
 		// subprocesses — operations that corrupt bubbletea's terminal raw
