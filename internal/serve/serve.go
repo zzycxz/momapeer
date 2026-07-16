@@ -114,6 +114,11 @@ func (s *Server) switchModel(ctx context.Context, ref string) error {
 		newCtrl.SetSessionPath(newPath)
 	}
 
+	// Re-enable interactive approval on the rebuilt controller. boot.Build wires
+	// a headless gate (nil sink) that cannot surface ApprovalRequests, so without
+	// this call tool/plan approvals stop reaching the SSE stream after a
+	// /model or /effort switch — only the initial Run/RunGraceful call sets it.
+	newCtrl.EnableInteractiveApproval()
 	s.ctrl = newCtrl
 	cur.Close()
 	return nil
@@ -317,6 +322,17 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Fprint(w, ": connected\n\n") // open the stream immediately
 	flusher.Flush()
+
+	// Replay any pending approval/ask prompt so a browser that reconnects
+	// (refresh, network blip) immediately rebuilds its modal instead of staring
+	// at a "running" status with no way to answer — and no way to stop. Without
+	// this, a controller blocked in requestApproval waits forever for a reply
+	// the user can't send because they never saw the prompt. The desktop app
+	// calls the equivalent on load (app.go ReplayPendingPrompts); serve was
+	// missing it. See audit finding B5.
+	if c := s.ctl(); c != nil {
+		c.ReplayPendingPrompts()
+	}
 
 	keepalive := time.NewTicker(sseKeepaliveInterval)
 	defer keepalive.Stop()
@@ -971,7 +987,7 @@ func previewSessionFile(path string) (string, int) {
 		if m.Role == "user" {
 			turns++
 			if first == "" {
-				first = strings.TrimSpace(agent.HandoffTask(m.Content))
+				first = strings.TrimSpace(m.Content)
 			}
 		}
 	}
