@@ -43,17 +43,17 @@ Agent 可以在 **终端**（TUI）、**桌面客户端**（基于 Wails）、**
 
 ### 工程化与生态
 
-- **九天原生架构** — 深度优化对接 MoMA 平台，支持 thinking mode 协议、reasoning_content 回传、28 个预置模型 CNY 定价，通过 `momapeer.toml` 完全配置驱动。
-- **双模型协作引擎** — 支持双端模型协作（逻辑推演规划器 + 代码生成执行器），大幅降低幻觉。
+- **九天原生架构** — 深度优化对接 MoMA 平台，支持 thinking mode 协议、reasoning_content 回传、16 个预置模型 CNY 定价，通过 `momapeer.toml` 完全配置驱动。
 - **MCP 插件生态** — 全面支持 Model Context Protocol (MCP)，外部工具以子进程形式通过 stdio / HTTP 运行，无限扩展 Agent 能力。
 - **内置 Web Search** — 集成 Brave → Exa → Linkup 三引擎链式降级搜索，无需外部 MCP 即可联网检索。
 - **极速轻量分发** — `CGO_ENABLED=0` 单二进制打包，极简部署，支持交叉编译 6 大操作系统架构。
 
-### 内置智能工具箱（20+）
+### 内置智能工具箱
 
-原生集成全套 IDE 级工具链：`bash` · `read_file` · `write_file` · `edit_file` · `multi_edit` · `move_file` · `glob` · `grep`（支持超时） · `ls` ·
-`web_fetch` · `web_search` · `todo_write` · `complete_step` · `notebook_edit` · `workspace` · `preview` · `gitignore` ·
+原生集成精简 IDE 级工具链：`bash` · `read_file`（兼并目录列表） · `write_file` · `edit_file` · `grep`（支持超时） ·
+`web_fetch` · `web_search` · `todo_write` · `complete_step` ·
 `codegraph_*`（基于 tree-sitter 的项目级符号与调用图谱精准搜索）。
+领域能力（浏览器/桌面自动化/邮件/知识库/文档/日程/专家团队）封装为 subagent skill，按需通过 `run_skill` 调用。
 
 ### 独家代码智能
 
@@ -71,7 +71,7 @@ Agent 可以在 **终端**（TUI）、**桌面客户端**（基于 Wails）、**
 
 ### 安全与可靠性
 
-- **权限系统多 subject 评估** — `move_file` 等多端点工具同时检查 source 和 destination 路径，deny 规则不会被绕过。
+- **权限系统 subject 评估** — 写工具（`write_file`/`edit_file`）和不可逆操作（`email_send`/`rag_delete`）的 subject 路径经 glob 匹配审批，deny 规则不会被绕过。
 - **Checkpoint 路径穿越防护** — `safePath` 使用 `filepath.IsLocal` 显式拒绝 `..`、UNC 路径等逃逸向量。
 - **Memory store 路径防护** — `safeJoin` 防止通过 `remember` 工具注入路径穿越攻击。
 - **Summarizer 超时保护** — 90 秒超时防止 LLM 流式卡死导致 compaction 永久阻塞。
@@ -129,7 +129,7 @@ momapeer setup                        # 启动配置向导 → 生成 ./momapeer
 export JIUTIAN_API_KEY=your-key-here  # 设置九天平台密钥 (或写入 .env)
 momapeer chat                         # 进入交互终端，输入 /init 生成项目上下文
 momapeer run "实现 main.go 里的所有 TODO"
-momapeer run --model moma/jiutian/jiutian-code-8b "补充单元测试"
+momapeer run --model moma/deepseek/deepseek-v4-flash "补充单元测试"
 echo "解释这段代码" | momapeer run
 ```
 
@@ -177,8 +177,8 @@ api_key_env = "JIUTIAN_API_KEY"
 | 模型 ID | 核心优势 | 适用场景 |
 |---------|------|------|
 | `moma/jiutian/jiutian-lan-35b` | 综合能力强大，逻辑严密 | 核心架构设计、复杂需求分析、主力编码 |
-| `moma/jiutian/jiutian-code-8b` | 极速响应，代码专精 | 代码片段补全、快速重构、单元测试生成 |
-| `moma/jiutian/jiutian-lan-8b` | 成本与速度最优解 | 文档翻译、简单文本处理、快速指令路由 |
+| `moma/jiutian/jiutian-lan-236b` | 旗舰模型，推理最强 | 复杂架构设计、疑难 bug、跨模块重构 |
+| `moma/deepseek/deepseek-v4-flash` | 极速响应，代码专精 | 代码片段补全、快速重构、单元测试生成 |
 
 > 完整模型列表请登录 [九天平台控制台](https://jiutian.10086.cn/largemodel/llmstudio/#/modelHub) 查看。只需修改 `model` 字段即可无缝热切换，零代码侵入。
 
@@ -186,7 +186,7 @@ api_key_env = "JIUTIAN_API_KEY"
 
 | 参考文档 | 涵盖内容 |
 |------|------|
-| **[使用指南](./docs/GUIDE.zh-CN.md)** | 权限控制、沙盒运行、MCP 插件、终端斜杠命令、`@` 语法、双模型配置 |
+| **[使用指南](./docs/GUIDE.zh-CN.md)** | 权限控制、沙盒运行、MCP 插件、终端斜杠命令、`@` 语法、Plan 模式、后台模型 |
 | **[架构规格](./docs/SPEC.md)** | 工程契约：系统架构、Registry 机制、数据类型约束与长期路线图 |
 | **[快照机制](./docs/CHECKPOINTS.md)** | 基于文件快照的代码修改安全网设计 |
 | **[Session 架构](./docs/SESSION_REFERENCE_ARCHITECTURE.md)** | 会话生命周期管理、状态持久化与无缝恢复机制 |

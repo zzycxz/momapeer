@@ -42,17 +42,17 @@ The agent can run in your **terminal** (TUI), as a **native desktop app** (Wails
 
 ### Architecture & Ecosystem
 
-- **MoMA-Native Architecture** — Deep integration with the MoMA platform: thinking mode protocol, reasoning_content round-trip, 28 built-in models with CNY pricing. Fully configuration-driven via `momapeer.toml`.
-- **Dual-Model Coordination** — Supports dual-model orchestration (logic-driven Planner + code-generation Executor) to drastically reduce hallucination.
+- **MoMA-Native Architecture** — Deep integration with the MoMA platform: thinking mode protocol, reasoning_content round-trip, 16 built-in models with CNY pricing. Fully configuration-driven via `momapeer.toml`.
 - **MCP Plugin Ecosystem** — Full support for Model Context Protocol (MCP). External tools run as subprocesses over stdio / HTTP, providing infinite extensibility.
 - **Built-in Web Search** — Integrated Brave → Exa → Linkup three-engine fallback chain search, no external MCP needed.
 - **Zero-Friction Distribution** — `CGO_ENABLED=0` single binary. Cross-compiled for 6 major OS/Architecture targets.
 
-### Built-in Intelligent Tools (20+)
+### Built-in Intelligent Tools
 
-Native integration of a full IDE-grade toolchain: `bash` · `read_file` · `write_file` · `edit_file` · `multi_edit` · `move_file` · `glob` · `grep` (with timeout) · `ls` ·
-`web_fetch` · `web_search` · `todo_write` · `complete_step` · `notebook_edit` · `workspace` · `preview` · `gitignore` ·
+Native integration of a streamlined IDE-grade toolchain: `bash` · `read_file` (doubles as directory listing) · `write_file` · `edit_file` · `grep` (with timeout) ·
+`web_fetch` · `web_search` · `todo_write` · `complete_step` ·
 `codegraph_*` (Tree-sitter based project-wide symbol and call-graph semantic search).
+Domain capabilities (browser/desktop automation, email, knowledge base, documents, scheduling, expert teams) are packaged as subagent skills, invoked on demand via `run_skill`.
 
 ### Exclusive Code Intelligence
 
@@ -70,7 +70,7 @@ Native integration of a full IDE-grade toolchain: `bash` · `read_file` · `writ
 
 ### Safety & Reliability
 
-- **Multi-Subject Permission Evaluation** — Multi-endpoint tools like `move_file` check both source and destination paths simultaneously; deny rules cannot be bypassed.
+- **Subject-based Permission Evaluation** — Writer tools (`write_file`/`edit_file`) and irreversible operations (`email_send`/`rag_delete`) have their subject paths glob-matched for approval; deny rules cannot be bypassed.
 - **Checkpoint Path Traversal Protection** — `safePath` uses `filepath.IsLocal` to explicitly reject `..`, UNC paths, and other escape vectors.
 - **Memory Store Path Protection** — `safeJoin` prevents path traversal attacks via the `remember` tool.
 - **Summarizer Timeout Protection** — 90-second timeout prevents LLM stream stalls from permanently blocking compaction.
@@ -128,7 +128,7 @@ momapeer setup                        # Configuration wizard → generates ./mom
 export JIUTIAN_API_KEY=your-key-here  # Set your Jiutian platform API key (or add to .env)
 momapeer chat                         # Enter the interactive TUI, type /init to generate project context
 momapeer run "implement all TODOs in main.go"
-momapeer run --model moma/jiutian/jiutian-code-8b "add unit tests"
+momapeer run --model moma/deepseek/deepseek-v4-flash "add unit tests"
 echo "explain this code block" | momapeer run
 ```
 
@@ -176,8 +176,8 @@ In the `model` field, you can flexibly switch using the `provider/vendor/model-n
 | Model ID | Core Advantage | Best For |
 |---------|------|------|
 | `moma/jiutian/jiutian-lan-35b` | Strong comprehensive capability, rigorous logic | Core architecture design, complex analysis, primary coding |
-| `moma/jiutian/jiutian-code-8b` | Extremely fast response, code-specialized | Code snippet completion, quick refactoring, unit tests |
-| `moma/jiutian/jiutian-lan-8b` | Optimal balance of cost and speed | Documentation translation, simple text processing, routing |
+| `moma/jiutian/jiutian-lan-236b` | Flagship model, strongest reasoning | Complex architecture design, tricky bugs, cross-module refactoring |
+| `moma/deepseek/deepseek-v4-flash` | Extremely fast response, code-specialized | Code snippet completion, quick refactoring, unit tests |
 
 > For the full list of available models, visit the [Jiutian Platform Console](https://jiutian.10086.cn/largemodel/llmstudio/#/modelHub). Switch models seamlessly by changing the `model` field — zero code changes required.
 
@@ -185,7 +185,7 @@ In the `model` field, you can flexibly switch using the `provider/vendor/model-n
 
 | Document | Contents |
 |------|------|
-| **[Guide](./docs/GUIDE.md)** | Permissions, sandbox execution, MCP plugins, slash commands, `@` refs, dual-model setup |
+| **[Guide](./docs/GUIDE.md)** | Permissions, sandbox execution, MCP plugins, slash commands, `@` refs, plan mode, background model |
 | **[Specification](./docs/SPEC.md)** | Engineering contract: architecture, registry mechanism, data types, and roadmap |
 | **[Checkpoints](./docs/CHECKPOINTS.md)** | Snapshot-based safety net for code modifications |
 | **[Session Architecture](./docs/SESSION_REFERENCE_ARCHITECTURE.md)** | Session lifecycle management, persistence, and seamless resumption |
