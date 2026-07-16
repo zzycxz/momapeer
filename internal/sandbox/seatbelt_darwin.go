@@ -12,9 +12,17 @@ import (
 // when the spec enforces and the tool is available. The second return is whether
 // wrapping happened; false means the command runs unconfined (sandbox off, or
 // sandbox-exec missing — a graceful fallback rather than a hard failure, since
-// the permission layer still gates the call).
+// the permission layer still gates the call). When spec.RequireAvailable is set
+// and enforcement is requested but the tool is unavailable, the argv is nil to
+// signal the caller (bash tool) to refuse the command (fail-closed).
 func Command(spec Spec, sh Shell, command string) ([]string, bool) {
-	if !spec.enforce() || !Available() {
+	if !spec.enforce() {
+		return sh.argv(command), false
+	}
+	if !Available() {
+		if spec.RequireAvailable {
+			return nil, false
+		}
 		return sh.argv(command), false
 	}
 	return append([]string{"sandbox-exec", "-p", seatbeltProfile(spec)}, sh.argv(command)...), true
@@ -55,6 +63,17 @@ func writeAllowDirs(roots []string) []string {
 	dirs = append(dirs, "/dev", "/tmp", "/private/tmp", "/private/var/folders", os.TempDir())
 	if home, err := os.UserHomeDir(); err == nil {
 		// go build/test → Library/Caches + go; pip/etc → .cache; npm/cargo too.
+		//
+		// SECURITY NOTE (audit A8): these whole-directory write grants cover not
+		// just cache subdirs but also the toolchain's bin/persistent locations
+		// (e.g. ~/.cargo/bin, ~/.npm, ~/go/bin). A prompt-injected bash command
+		// could drop a binary in ~/.cargo/bin and have it execute on the next
+		// `cargo run` / npm lifecycle script — a persistence backdoor. We keep
+		// the broad grants here because narrowing them to cache-only subdirs
+		// (e.g. .cargo/registry/cache) breaks `go install`, `cargo build`, and
+		// `npm install` which legitimately write to bin/pkg dirs. A future
+		// "strict" sandbox mode should scope these to true cache subdirs for
+		// high-security deployments where build-tool execution is not expected.
 		for _, sub := range []string{"Library/Caches", ".cache", ".npm", ".cargo", "go"} {
 			dirs = append(dirs, filepath.Join(home, sub))
 		}
