@@ -432,3 +432,34 @@ func TestMultiEditCoveredByFileMutationDeny(t *testing.T) {
 		})
 	}
 }
+
+// --- path normalization vs ./ bypass (security regression A3) ---
+
+// TestPathNormalizationDefeatsDotSlashBypass confirms that a deny rule on a
+// path prefix cannot be evaded by prepending "./" or doubling separators.
+// Before the fix, Subjects returned the raw "./secrets/key.pem" which did not
+// match the glob "secrets/*", so deny edit_file(secrets/*) was bypassable.
+func TestPathNormalizationDefeatsDotSlashBypass(t *testing.T) {
+	p := New("allow", nil, nil, []string{"edit_file(secrets/*)"})
+	for _, raw := range []string{
+		`{"path":"./secrets/key.pem"}`,
+		`{"path":"secrets//key.pem"}`,
+		`{"path":"secrets/./key.pem"}`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			got := p.Decide("edit_file", false, json.RawMessage(raw))
+			if got != Deny {
+				t.Errorf("edit_file %s = %v, want Deny (./ bypass worked before fix)", raw, got)
+			}
+		})
+	}
+}
+
+// TestPathNormalizationKeepsBashCommandVerbatim confirms command subjects are
+// NOT filepath-cleaned (a bash command like "git log ./x" must not be mangled).
+func TestPathNormalizationKeepsBashCommandVerbatim(t *testing.T) {
+	got := Subjects(json.RawMessage(`{"command":"cat ./secrets/x"}`))
+	if len(got) != 1 || got[0] != "cat ./secrets/x" {
+		t.Errorf("bash command subject should be verbatim, got %v", got)
+	}
+}

@@ -8,6 +8,7 @@ package permission
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 )
 
@@ -412,6 +413,13 @@ func bashRulePrefixBaseMatches(existing, candidate Rule) bool {
 // file tools expose path / file_path, grep exposes pattern.
 var subjectKeys = []string{"command", "file_path", "path", "pattern"}
 
+// pathSubjectKeys are the subject keys that carry a filesystem path (as opposed
+// to a bash command or a grep pattern). These are normalized with filepath.Clean
+// before matching so a deny rule like edit_file(secrets/*) cannot be evaded by
+// the agent supplying "./secrets/key.pem" or "secrets//key.pem" — the raw value
+// would not match the glob. See security audit finding A3.
+var pathSubjectKeys = map[string]bool{"file_path": true, "path": true}
+
 // Subjects extracts all matchable subject strings from a call's raw JSON args.
 // A call may return multiple entries when several keys are present, so
 // permission evaluation can check every endpoint.
@@ -427,6 +435,17 @@ func Subjects(args json.RawMessage) []string {
 	for _, k := range subjectKeys {
 		if v, ok := m[k]; ok {
 			if s, ok := v.(string); ok && s != "" {
+				// Normalize filesystem paths so "./secrets/x" or "secrets//x"
+				// matches a deny rule written as "secrets/*". Bash commands and
+				// grep patterns are NOT paths — leave them verbatim.
+				//
+				// ToSlash is applied after Clean so the subject uses forward
+				// slashes on every platform — the same convention rule strings
+				// and matchGlob use. Without it, Windows filepath.Clean yields
+				// "secrets\key.pem" which fails to match the glob "secrets/*".
+				if pathSubjectKeys[k] {
+					s = filepath.ToSlash(filepath.Clean(s))
+				}
 				out = append(out, s)
 			}
 		}
