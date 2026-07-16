@@ -3511,6 +3511,8 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.showMemory()
 	case "/goal":
 		return m.runGoalSubcommand(input)
+	case "/plan":
+		return m.runPlanSubcommand(input)
 	case "/remember":
 		note := strings.TrimSpace(strings.TrimPrefix(input, cmd))
 		if note == "" {
@@ -3565,6 +3567,39 @@ func (m *chatTUI) runGoalSubcommand(input string) tea.Cmd {
 			m.notice(i18n.M.GoalEmpty)
 		} else {
 			m.notice(fmt.Sprintf(i18n.M.GoalCurrentFmt, goal))
+		}
+	}
+	return nil
+}
+
+// runPlanSubcommand handles /plan in the TUI. /plan with no args toggles plan
+// mode; /plan <text> enters plan mode and sends the text as a planning turn;
+// /plan off exits plan mode. Without this case the TUI fell through to the
+// default branch and reported "/plan: unknown command" even though the
+// completion menu advertised it — see audit finding C1.
+func (m *chatTUI) runPlanSubcommand(input string) tea.Cmd {
+	cmd, ok := control.ParsePlanCommand(input)
+	if !ok {
+		m.echoLocalCommand(input)
+		m.notice(fmt.Sprintf("%s: /plan", i18n.M.SlashUnknown))
+		return nil
+	}
+	m.echoLocalCommand(input)
+	switch {
+	case cmd.Off:
+		m.ctrl.SetPlanMode(false)
+		m.notice("plan mode off")
+	case cmd.Text != "":
+		m.ctrl.SetPlanMode(true)
+		m.notice("plan mode on — exploring read-only; write tools will ask for approval")
+		return m.startTurn(cmd.Text, input, input)
+	default: // bare "/plan" → toggle
+		next := !m.ctrl.PlanMode()
+		m.ctrl.SetPlanMode(next)
+		if next {
+			m.notice("plan mode on — exploring read-only; write tools will ask for approval")
+		} else {
+			m.notice("plan mode off")
 		}
 	}
 	return nil
