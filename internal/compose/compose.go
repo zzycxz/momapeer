@@ -87,7 +87,20 @@ type Runner struct {
 	history        func() string            // reads last assistant reply for verdict parsing
 	implementNudge string                   // base nudge for the implement phase (plan-approved message)
 	requestApproval func(ctx context.Context, reason string) (bool, error) // asks the user to approve a plan change
+
+	// gaveUp is set true when Run exits after exhausting MaxImplementAttempts (or
+	// the user declined a replan) without a clean review. Run still returns nil
+	// in that case ("not a hard error — the work partially landed"), so the
+	// controller uses GaveUp() to decide whether to mark the plan todos
+	// completed (clean exit) or leave them in their actual state (partial work).
+	// See audit finding C5.
+	gaveUp bool
 }
+
+// GaveUp reports whether the last Run gave up without a clean review (attempts
+// exhausted or replan declined). When true, the work only partially landed and
+// the caller should not mark the plan as fully completed.
+func (r *Runner) GaveUp() bool { return r.gaveUp }
 
 // NewRunner builds a Runner that borrows the controller's dispatch primitives.
 // implementNudge is the plan-approved message the controller would normally send
@@ -127,6 +140,9 @@ func (r *Runner) Run(ctx context.Context, proposal string, seededTodosJSON strin
 	if r == nil || r.runner == nil {
 		return fmt.Errorf("compose: runner not initialized")
 	}
+	// Reset the gave-up flag at the start of each Run so GaveUp() reflects only
+	// this invocation's outcome (Run may be called multiple times on one Runner).
+	r.gaveUp = false
 
 	failures := ""
 	skipImplement := false
@@ -240,6 +256,7 @@ func (r *Runner) Run(ctx context.Context, proposal string, seededTodosJSON strin
 	}
 
 	r.notice(fmt.Sprintf("compose: gave up after %d attempts; last failures:\n%s", MaxImplementAttempts, truncate(failures, 500)))
+	r.gaveUp = true
 	return nil // not a hard error — the work partially landed; controller completes todos
 }
 

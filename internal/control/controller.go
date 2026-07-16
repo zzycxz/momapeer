@@ -716,6 +716,15 @@ func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input any, raw, 
 		if err := runner.Run(ctx, proposal, seededTodos); err != nil {
 			return err
 		}
+		// compose returns nil even when it gave up (attempts exhausted / replan
+		// declined) — "not a hard error, work partially landed". Marking the
+		// plan fully completed in that case misleads the user into thinking the
+		// whole task is done. When compose gave up, leave the todos in their
+		// actual state (the gave-up notice already told the user what happened).
+		// See audit finding C5.
+		if runner.GaveUp() {
+			return nil
+		}
 	} else {
 		if err := c.runner.Run(ctx, c.ComposeSynthetic(PlanApprovedMessage)); err != nil {
 			return err
