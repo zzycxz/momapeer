@@ -428,6 +428,26 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 	case strings.HasPrefix(msg.Text, "/whoami"):
 		_ = gw.sendText(ctx, adapter, msg, fmt.Sprintf("平台: %s\n用户 ID: %s", msg.Platform, msg.UserID))
 
+	case strings.HasPrefix(msg.Text, "/plan"):
+		// /plan toggles plan mode on; /plan off turns it off. Without this,
+		// IM users had no way to enter plan mode manually (only auto_plan could
+		// trigger it) and no way to exit once in it. See audit finding C10.
+		gw.mu.Lock()
+		state, ok := gw.controllers[key]
+		gw.mu.Unlock()
+		if !ok || state.ctrl == nil {
+			_ = gw.sendText(ctx, adapter, msg, "没有找到当前会话。")
+			return
+		}
+		arg := strings.TrimSpace(strings.TrimPrefix(msg.Text, "/plan"))
+		turnOn := !strings.EqualFold(arg, "off")
+		state.ctrl.SetPlanMode(turnOn)
+		if turnOn {
+			_ = gw.sendText(ctx, adapter, msg, "已进入规划模式（只读探索，写操作需审批）。")
+		} else {
+			_ = gw.sendText(ctx, adapter, msg, "已退出规划模式。")
+		}
+
 	case strings.HasPrefix(msg.Text, "/help"):
 		help := "可用命令:\n" +
 			"/stop - 停止当前任务\n" +
@@ -436,6 +456,8 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 			"/approve <id> - 批准操作\n" +
 			"/deny <id> - 拒绝操作\n" +
 			"/answer <id> <选项> - 回答 ask 问题\n" +
+			"/plan - 进入规划模式（只读）\n" +
+			"/plan off - 退出规划模式\n" +
 			"/status - 查看状态\n" +
 			"/whoami - 查看你的用户 ID\n" +
 			"/help - 显示帮助"
