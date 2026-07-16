@@ -36,7 +36,10 @@ import (
 // live streams emit tokens/keepalives far more often. Stored per-client
 // (client.idleTimeout) so a test can shorten it without a shared global that
 // would race other streams' watchdogs.
-const defaultStreamIdleTimeout = 120 * time.Second
+// NOTE: Increased from 120s to 180s to accommodate slower models (e.g. glm-5.1)
+// that may take longer to generate responses, especially for complex tasks like
+// PPT generation.
+const defaultStreamIdleTimeout = 180 * time.Second
 
 func init() {
 	provider.Register("openai", New)
@@ -65,7 +68,15 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	// moma is true when the provider uses MoMA-compatible thinking mode.
 	// For MoMA, only thinking-capable models (registered in MoMAThinkingModels)
 	// get thinking enabled — non-reasoning models (qwen, glm, etc.) would 400.
-	moma := protocol == "moma" || (protocol == "" && IsMoMA(cfg.BaseURL) && MoMAThinkingModels[strings.ToLower(strings.TrimSpace(cfg.Model))])
+	//
+	// SECURITY/RELIABILITY: a model in MoMAHarmfulThinkingModels is excluded
+	// from thinking EVEN when the user explicitly sets reasoning_protocol=moma.
+	// Without this guard, glm-5.2 + explicit moma short-circuits past the
+	// MoMAThinkingModels allow-list (line 71's first term) and sends thinking
+	// params to a model the MoMA platform hangs on — a 180s stall with a
+	// misleading "stream stalled" error. See audit finding B4.
+	modelKey := strings.ToLower(strings.TrimSpace(cfg.Model))
+	moma := (protocol == "moma" || (protocol == "" && IsMoMA(cfg.BaseURL) && MoMAThinkingModels[modelKey])) && !MoMAHarmfulThinkingModels[modelKey]
 	minimax := protocol == "" && IsMiniMax(cfg.BaseURL)
 	switch {
 	case protocol == "none":
@@ -141,7 +152,7 @@ func newHTTPClient(cfg provider.Config) (*http.Client, error) {
 		DialTimeout:           30 * time.Second,
 		KeepAlive:             30 * time.Second,
 		TLSHandshakeTimeout:   15 * time.Second,
-		ResponseHeaderTimeout: 120 * time.Second, // models can think for a while before the first token
+		ResponseHeaderTimeout: 180 * time.Second, // models can think for a while before the first token; increased for slow models
 	})
 }
 
@@ -160,9 +171,18 @@ type client struct {
 	imageUnderstand bool          // true when Jiutian image_understand tool is enabled (auto-degradation)
 	idleTimeout     time.Duration // SSE stall watchdog window; defaultStreamIdleTimeout unless a test overrides
 	authed          atomic.Bool   // true after first successful auth; enables transient 401 retry
+	onReplay        func(ctx context.Context) error // optional: charged by the RPM limiter on each mid-stream replay
 }
 
 func (c *client) Name() string { return c.name }
+
+// SetOnReplay installs a hook fired immediately before each mid-stream
+// reconnect replay (the streamWithReconnect path). The RPM rate limiter sets
+// it so a replay — which sends a fresh HTTP request to the gateway — draws a
+// second slot from the budget, matching the real request count the provider
+// meters. Without this, one user-facing Stream() call could issue up to
+// maxStreamReconnects+1 gateway requests while the budget counted only one.
+func (c *client) SetOnReplay(fn func(ctx context.Context) error) { c.onReplay = fn }
 
 func normalizeReasoningProtocol(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
@@ -185,15 +205,27 @@ var MoMAThinkingModels = map[string]bool{
 	"qwen/qwen3.6-35b":              true,
 	"qwen/qwen3.6-27b":              true,
 	"qwen/qwen3.5-397b-a17b":        true,
-	"qwen/qwen3-coder-next":         true,
 	"z.ai/glm-5.1":                  true,
-	"z.ai/glm-5":                    true,
+	// "z.ai/glm-5.2": removed — MoMA platform hangs (no response) when
+	// thinking parameters are sent to glm-5.2; glm-5.1 works fine.
 	"minimax/minimax-m2.7":          true,
 	"minimax/minimax-m2.5":          true,
 	"moonshotai/kimi-k2.6":          true,
 	"moonshotai/kimi-k2.5-thinking": true,
-	"stepfun/step-3.5-flash":        true,
 	"openai/gpt-oss-120b":           true,
+}
+
+// MoMAHarmfulThinkingModels lists models the MoMA platform HANGS on (no
+// response, eventually times out) when thinking parameters are sent. These are
+// excluded from moma thinking even when the user explicitly sets
+// reasoning_protocol = "moma" — that explicit setting would otherwise bypass
+// the MoMAThinkingModels allow-list above. Each entry must reference a real
+// platform behavior with a documented failure mode.
+var MoMAHarmfulThinkingModels = map[string]bool{
+	// glm-5.2: verified platform hang (2026-06-13). glm-5.1 works fine, so
+	// this is model-specific. The user experiences a ~180s idle-timeout stall
+	// reported as "stream stalled" rather than a clear "thinking not supported".
+	"z.ai/glm-5.2": true,
 }
 
 // MoMAVisionModels lists MoMA-hosted models that support image_url content
@@ -226,10 +258,11 @@ var bufPool = sync.Pool{
 }
 
 func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
-	// When the model doesn't support vision, automatically call the standalone
-	// Jiutian image understanding API to get text descriptions of each image,
-	// then replace image parts with the descriptions. Only when the feature
-	// is enabled in config and the API key is available.
+	// When the model doesn't support vision, automatically analyze each image
+	// via the VLM degradation chain (qwen → 九天, injected via SetVLMBridge) and
+	// replace image parts with the text descriptions. Only when the feature is
+	// enabled in config ([jiutian] image_understand) — that toggle is the only
+	// remaining use of the field after image_understand was globally unified.
 	if !ModelSupportsVision(c.model, c.vision) && c.imageUnderstand {
 		analyzed := false
 		imageCount := 0
@@ -260,7 +293,7 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 			copy(msgs, req.Messages)
 			req.Messages = msgs
 
-			statusMsg := fmt.Sprintf("[Analyzing %d %s via LLMImage2Text...]", imageCount, noun)
+			statusMsg := fmt.Sprintf("[Analyzing %d %s via vision model...]", imageCount, noun)
 			req.Messages = append(req.Messages[:len(req.Messages)-1],
 				provider.Message{Role: provider.RoleAssistant, Content: statusMsg},
 				req.Messages[len(req.Messages)-1],
@@ -303,13 +336,13 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 			m.Content = replaced
 		}
 		if analyzed {
-			req.Messages = append(req.Messages[:len(req.Messages)-1],
-				provider.Message{Role: provider.RoleAssistant, Content: fmt.Sprintf(
-					"[Image analysis complete via LLMImage2Text. Your model %q does not support native image input, so images were pre-analyzed by a dedicated vision model. The descriptions above are the vision model's output — use them to answer the user's question.]",
-					c.model,
-				)},
-				req.Messages[len(req.Messages)-1],
-			)
+				req.Messages = append(req.Messages[:len(req.Messages)-1],
+					provider.Message{Role: provider.RoleAssistant, Content: fmt.Sprintf(
+						"[Image analysis complete. Your model %q does not support native image input, so images were pre-analyzed by a vision model. The descriptions above are the vision model's output — use them to answer the user's question.]",
+						c.model,
+					)},
+					req.Messages[len(req.Messages)-1],
+				)
 		}
 	}
 
@@ -376,6 +409,17 @@ func (c *client) streamWithReconnect(ctx context.Context, resp *http.Response, n
 		if attempt >= maxStreamReconnects {
 			out <- provider.Chunk{Type: provider.ChunkError, Err: err}
 			return
+		}
+		// A replay is a fresh gateway request, so charge the RPM budget for it
+		// (the outer Stream() already charged the first attempt). If the budget
+		// is exhausted or the context is cancelled, surface that rather than
+		// silently bypassing the limit. onReplay is nil when no limiter wraps
+		// this client (e.g. tests, or RPM disabled) — then replays are free.
+		if c.onReplay != nil {
+			if rerr := c.onReplay(ctx); rerr != nil {
+				out <- provider.Chunk{Type: provider.ChunkError, Err: rerr}
+				return
+			}
 		}
 		next, rerr := provider.SendWithRetry(ctx, c.http, provider.SendOptions{
 			ProvName:   c.name,
@@ -815,10 +859,31 @@ func imageContentParts(parts []provider.ContentPart, detail string) []chatConten
 // by a text-only LLM, so it should produce stable, structured descriptions.
 const imageUnderstandPrompt = "Your output will be read by a text-only AI model. Describe the image concisely in one paragraph — transcribe all visible text (errors, code, labels) exactly, skip decorative elements and filler phrases, match the dominant language of the text."
 
-// jiutianImageUnderstand calls Jiutian's standalone image understanding API
-// (/v3/image/text) with the LLMImage2Text model. imageParam can be a base64
-// data URL or a Jiutian uploaded file path. Returns the text description.
+// vlmBridge 是注入的图片理解降级链入口。boot.go 启动时把 builtin.CallVLM
+// 注入进来，让会话降级复用全局链条（qwen 397B → 27B → 九天）。
+// 未注入时（nil）回退到旧的直调九天路径，保持向后兼容。
+var vlmBridge func(ctx context.Context, image, prompt string) (string, error)
+
+// SetVLMBridge 注入图片理解降级链。由 boot.go 调用，避免 provider→builtin 循环依赖。
+func SetVLMBridge(fn func(ctx context.Context, image, prompt string) (string, error)) {
+	vlmBridge = fn
+}
+
+// jiutianImageUnderstand calls the configured VLM chain (default qwen → 九天 fallback)
+// to describe an image. imageParam can be a base64 data URL or a Jiutian uploaded
+// file path. Returns the text description.
+//
+// 当 vlmBridge 已注入（boot.go 启动后常态），走降级链条；否则回退到直调九天
+// 的旧行为，保证测试和未完成初始化的路径不会 NPE。
 func jiutianImageUnderstand(ctx context.Context, imageParam string) (string, error) {
+	if vlmBridge != nil {
+		text, err := vlmBridge(ctx, imageParam, imageUnderstandPrompt)
+		if err == nil && strings.TrimSpace(text) != "" {
+			return text, nil
+		}
+		// 桥失败（整条链都失败）→ 落到下面的九天直调做最后兜底。
+		// 不在这里 return err，因为旧路径可能仍然可用。
+	}
 	payload := map[string]any{
 		"model":  "LLMImage2Text",
 		"image":  imageParam,
