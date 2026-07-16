@@ -100,7 +100,7 @@ func TestIdleStatuslineIsCompact(t *testing.T) {
 
 	content := renderStatuslineView(t, false)
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "Auto") || !strings.Contains(plain, "ready") {
+	if !strings.Contains(plain, "Ask") || !strings.Contains(plain, "ready") {
 		t.Fatalf("idle status line missing mode status:\n%s", plain)
 	}
 	if !strings.Contains(plain, "(shift+tab toggles plan · ctrl+y yolo)") {
@@ -154,7 +154,7 @@ func TestStatuslineCycleHintFollowsLanguage(t *testing.T) {
 
 	content := renderStatuslineView(t, false)
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "Auto") || !strings.Contains(plain, "就绪") || !strings.Contains(plain, "(shift+tab 切换计划 · ctrl+y yolo)") {
+	if !strings.Contains(plain, "Ask") || !strings.Contains(plain, "就绪") || !strings.Contains(plain, "(shift+tab 切换计划 · ctrl+y yolo)") {
 		t.Fatalf("localized plan-toggle hint missing:\n%s", plain)
 	}
 	if strings.Contains(plain, "ready") || strings.Contains(plain, "shift+tab toggles plan · ctrl+y yolo") {
@@ -331,7 +331,7 @@ func renderPlanStatuslineView(t *testing.T) string {
 
 	ctrl := control.New(control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
-	m.planMode = true
+	ctrl.SetPlanMode(true)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return next.(chatTUI).View().Content
 }

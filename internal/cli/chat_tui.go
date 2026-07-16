@@ -79,10 +79,6 @@ type chatTUI struct {
 	// Persists across turns until the work completes or a new session starts.
 	todoArgs string
 
-	// planMode mirrors the agent's read-only gate (Shift+Tab toggles it). The
-	// marker rides in outgoing user messages so the cache-stable prompt prefix is
-	// left untouched. (MoMA currently does not report cache tokens.)
-	planMode bool
 	// yoloRestoreToolApprovalMode remembers the Ask/Auto base mode that Ctrl+Y
 	// should restore after a desktop-style YOLO toggle.
 	yoloRestoreToolApprovalMode string
@@ -1112,7 +1108,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pendingRestore = line
 				m.bubbleStartIdx = len(m.transcript)
 				m.commitLine("")
-				m.commitLine(renderUserBubble(line, m.width, m.planMode))
+				m.commitLine(renderUserBubble(line, m.width, m.ctrl.PlanMode()))
 				m.bubblePending = true
 				m.turnDiscarded = false
 				m.confirmBubbleSent() // shell events arrive instantly
@@ -2078,23 +2074,17 @@ func flushableMarkdownPrefix(buf string) string {
 	return strings.Join(lines[:boundary], "\n")
 }
 
-// planApprovalTool is the Tool name the controller puts on the ApprovalRequest it
-// emits to gate a plan (mirrors control's constant). The banner, status line, and
-// approval handler key on it to render the plan-specific prompt and to keep the
-// [plan] tag in sync when the plan is approved.
-const planApprovalTool = "exit_plan_mode"
-
 // handleApprovalKey resolves a pending approval from a keystroke and re-arms the
 // listener. 1/y/Enter allows once, 2/a allows for the rest of the session,
 // 3/p writes an "always allow" rule to the config file, and n/Esc denies.
 // Ctrl-C cancels the whole turn via the run context. For a plan approval
-// (planApprovalTool), allowing also drops the local [plan] tag — the
+// (control.PlanApprovalTool), allowing also drops the local [plan] tag — the
 // controller turns plan mode off on its side.
 func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	answer := func(allow, session, persist bool) (tea.Model, tea.Cmd) {
-		if allow && m.pendingApproval.Tool == planApprovalTool {
-			m.planMode = false
-		}
+		// Plan approval is handled entirely by the controller (it calls
+		// SetPlanMode(false) on allow), so there's no local flag to flip —
+		// reading m.ctrl.PlanMode() on the next render stays in sync.
 		m.ctrl.Approve(m.pendingApproval.ID, allow, session, persist)
 		m.pendingApproval = nil
 		return m, nil
@@ -2162,7 +2152,7 @@ func (m chatTUI) View() tea.View {
 		case m.ctrl.AutoApproveTools():
 			color = statusYoloColor
 			foreground = "#ffffff"
-		case m.planMode:
+		case m.ctrl.PlanMode():
 			color = statusPlanColor
 			foreground = "#ffffff"
 		}
@@ -2191,7 +2181,7 @@ func (m chatTUI) View() tea.View {
 		status = "  " + modeTag + " · " + i18n.M.SkillPickerStatusLabel
 	case m.chooser != nil:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusQuestion
-	case m.pendingApproval != nil && m.pendingApproval.Tool == planApprovalTool:
+	case m.pendingApproval != nil && m.pendingApproval.Tool == control.PlanApprovalTool:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusPlanApproval
 	case m.pendingApproval != nil:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusToolApproval
@@ -2506,7 +2496,7 @@ func (m chatTUI) renderApprovalBanner() string {
 	}
 	// A plan approval shows the gate prompt (the plan itself is already printed as
 	// the assistant's reply); a tool approval names the tool + subject.
-	if m.pendingApproval.Tool == planApprovalTool {
+	if m.pendingApproval.Tool == control.PlanApprovalTool {
 		return approvalBannerStyle.Width(w).Render("⏸ " + i18n.M.PlanApprovalPrompt)
 	}
 	name, detail := approvalToolDetails(m.pendingApproval.Tool)
@@ -2684,7 +2674,7 @@ func (m chatTUI) computeStatusLineCount(width int) int {
 		status += " · " + i18n.M.SkillPickerStatusLabel
 	case m.chooser != nil:
 		status += " · " + i18n.M.ChatStatusQuestion
-	case m.pendingApproval != nil && m.pendingApproval.Tool == planApprovalTool:
+	case m.pendingApproval != nil && m.pendingApproval.Tool == control.PlanApprovalTool:
 		status += " · " + i18n.M.ChatStatusPlanApproval
 	case m.pendingApproval != nil:
 		status += " · " + i18n.M.ChatStatusToolApproval
@@ -3043,13 +3033,15 @@ func pastedFileRef(content string) (string, bool) {
 }
 
 // cycleMode handles the Shift+Tab mode gesture. It toggles Plan only; tool
-// approval modes stay on their own axis.
+// approval modes stay on their own axis. The controller is the single source of
+// truth for plan mode (so auto-plan and approval flows are reflected
+// immediately), so we read and write through it rather than mirroring locally.
 func (m *chatTUI) cycleMode() {
-	m.planMode = !m.planMode
-	if m.planMode {
+	next := !m.ctrl.PlanMode()
+	if next {
 		m.ctrl.ClearGoal()
 	}
-	m.ctrl.SetPlanMode(m.planMode)
+	m.ctrl.SetPlanMode(next)
 }
 
 func (m chatTUI) desktopShortcutLayout() bool {
@@ -3083,16 +3075,17 @@ func (m *chatTUI) toggleYoloMode() {
 
 func (m chatTUI) modeTagText() string {
 	goalMode := strings.TrimSpace(m.ctrl.Goal()) != "" && m.ctrl.GoalStatus() == control.GoalStatusRunning
+	planMode := m.ctrl.PlanMode()
 	toolApprovalMode := m.ctrl.ToolApprovalMode()
 	if m.desktopShortcutLayout() {
 		switch {
-		case m.planMode && toolApprovalMode == control.ToolApprovalYolo:
+		case planMode && toolApprovalMode == control.ToolApprovalYolo:
 			return "Plan+YOLO"
 		case goalMode && toolApprovalMode == control.ToolApprovalYolo:
 			return "Goal+YOLO"
 		case toolApprovalMode == control.ToolApprovalYolo:
 			return "YOLO"
-		case m.planMode:
+		case planMode:
 			return "Plan"
 		case goalMode && toolApprovalMode == control.ToolApprovalAuto:
 			return "Goal+Auto"
@@ -3105,9 +3098,9 @@ func (m chatTUI) modeTagText() string {
 		}
 	}
 	switch {
-	case m.planMode && toolApprovalMode == control.ToolApprovalYolo:
+	case planMode && toolApprovalMode == control.ToolApprovalYolo:
 		return "Plan+YOLO"
-	case m.planMode && toolApprovalMode == control.ToolApprovalAuto:
+	case planMode && toolApprovalMode == control.ToolApprovalAuto:
 		return "Plan+Approve"
 	case goalMode && toolApprovalMode == control.ToolApprovalYolo:
 		return "Goal+YOLO"
@@ -3117,12 +3110,17 @@ func (m chatTUI) modeTagText() string {
 		return "YOLO"
 	case toolApprovalMode == control.ToolApprovalAuto:
 		return "Auto+Approve"
-	case m.planMode:
+	case planMode:
 		return "Plan"
 	case goalMode:
 		return "Goal"
 	default:
-		return "Auto"
+		// Controller's default toolApprovalMode is ToolApprovalAsk (every writer
+		// tool prompts). The desktop layout (above) labels this "Ask" correctly;
+		// this classic branch previously returned "Auto", which misled users into
+		// thinking tools were auto-approved when they actually get prompted. See
+		// audit finding C9.
+		return "Ask"
 	}
 }
 
@@ -3166,7 +3164,7 @@ func (m *chatTUI) startTurnWithRaw(sent, displayed, restore, raw string) tea.Cmd
 	m.pendingPastes = m.pasteLabelsIn(restore)
 	m.bubbleStartIdx = len(m.transcript)
 	m.commitLine("") // blank line separating turns
-	m.commitLine(renderUserBubble(displayed, m.width, m.planMode))
+	m.commitLine(renderUserBubble(displayed, m.width, m.ctrl.PlanMode()))
 	m.bubblePending = true
 	m.turnDiscarded = false
 
@@ -3279,13 +3277,11 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 			break
 		}
 		m.finalizeStreamed()
-		switch e.Tool.Name {
-		case "todo_write":
-			// The result decides whether this list becomes canonical; dispatch only
-			// means the model asked for an update.
-		case planApprovalTool:
-			// No longer a tool, but guard anyway: the plan is the assistant's reply.
-		default:
+			switch e.Tool.Name {
+			case "todo_write":
+				// The result decides whether this list becomes canonical; dispatch only
+				// means the model asked for an update.
+			default:
 			m.commitSpacer()
 			if block := diffBlock(e.Tool.Name, e.Tool.Args, e.Tool.FileDiff, m.width, diffScrollbackMaxLines); block != nil {
 				for _, ln := range block {
@@ -3346,10 +3342,6 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		for _, ln := range compactionCardLines(e.Compaction) {
 			m.commitLine(ln)
 		}
-
-	case event.Phase:
-		m.finalizeStreamed()
-		m.commitLine(fmt.Sprintf("[%s]", e.Text))
 
 	case event.ApprovalRequest:
 		// The controller's run goroutine is now blocked inside the gate awaiting
@@ -3558,7 +3550,6 @@ func (m *chatTUI) runGoalSubcommand(input string) tea.Cmd {
 	}
 	switch cmd.Action {
 	case control.GoalCommandSet:
-		m.planMode = false
 		m.ctrl.SetPlanMode(false)
 		m.ctrl.SetGoal(cmd.Text)
 		m.notice(fmt.Sprintf(i18n.M.GoalSetFmt, control.ShortGoalForNotice(cmd.Text)))
