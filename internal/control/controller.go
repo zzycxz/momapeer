@@ -2188,6 +2188,30 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 	c.mu.Unlock()
 	c.rebindCheckpoints(path)
 	c.maybeColdResumePrune(path)
+	c.restoreModeFromMeta(path)
+}
+
+// restoreModeFromMeta reads the plan mode and tool-approval stance from the
+// session's BranchMeta sidecar and re-applies them. This closes the gap where
+// a user who had Shift+Tab'd into plan mode or toggled YOLO, then restarted
+// with --resume/--continue, lost that runtime state and silently dropped back
+// to defaults (plan off / ask). Goal is intentionally NOT restored (it would
+// auto-resume the goal loop; see BranchMeta.Goal comment). See audit C8.
+func (c *Controller) restoreModeFromMeta(path string) {
+	if path == "" {
+		return
+	}
+	meta, ok, err := agent.LoadBranchMeta(path)
+	if err != nil || !ok {
+		return
+	}
+	// PlanMode: restore as-is (it only restricts writes; safe to resume).
+	c.SetPlanMode(meta.PlanMode)
+	// ToolApprovalMode: restore only if explicitly recorded (omitempty → empty
+	// means "legacy sidecar, leave the boot default untouched").
+	if meta.ToolApprovalMode != "" {
+		c.SetToolApprovalMode(meta.ToolApprovalMode)
+	}
 }
 
 // cacheColdAfter approximates how long the provider keeps a prompt prefix
@@ -2288,10 +2312,39 @@ func (c *Controller) snapshot(markActivity bool) error {
 	if err := s.Save(path); err != nil {
 		return err
 	}
+	// Persist the current plan/tool-approval mode into the BranchMeta sidecar
+	// so a later Resume can restore it (see restoreModeFromMeta). Done after
+	// s.Save so we load-modify-write the same meta s.Save just touched.
+	c.syncModeToMeta(path)
 	if markActivity {
 		return agent.TouchBranchMeta(path)
 	}
 	return nil
+}
+
+// syncModeToMeta writes the controller's current plan mode and tool-approval
+// stance into the session's BranchMeta sidecar (load-modify-write, preserving
+// all other fields). Best-effort: a write failure is logged, not propagated,
+// since losing the mode cache only means a restart falls back to defaults
+// rather than corrupting the session. See audit C8.
+func (c *Controller) syncModeToMeta(path string) {
+	if path == "" {
+		return
+	}
+	meta, ok, err := agent.LoadBranchMeta(path)
+	if err != nil || !ok {
+		return
+	}
+	planMode := c.PlanMode()
+	toolApproval := c.ToolApprovalMode()
+	if meta.PlanMode == planMode && meta.ToolApprovalMode == toolApproval {
+		return // already current; avoid an unnecessary write
+	}
+	meta.PlanMode = planMode
+	meta.ToolApprovalMode = toolApproval
+	if err := agent.SaveBranchMetaPreserveUpdated(path, meta); err != nil {
+		slog.Warn("controller: syncModeToMeta", "err", err)
+	}
 }
 
 func (c *Controller) messageCount() int {

@@ -27,6 +27,11 @@ type BranchMeta struct {
 	WorkspaceRoot    string    `json:"workspace_root,omitempty"`
 	TopicID          string    `json:"topic_id,omitempty"`
 	TopicTitle       string    `json:"topic_title,omitempty"`
+	// Profile records the product mode ("dev"|"cowork") this session was created
+	// under. Empty (on legacy sidecars) is treated as "dev". It lets findTopic*
+	// scope its scan so a dev session is never matched as a cowork one and vice
+	// versa, even before topic storage is fully partitioned.
+	Profile string `json:"profile,omitempty"`
 	// CachedTurns/CachedPreview mirror what previewSession computes by decoding
 	// the .jsonl. Session.Save refreshes them so ListSessions reads the sidecar
 	// instead of re-decoding every session file on each render. Older readers
@@ -34,6 +39,18 @@ type BranchMeta struct {
 	// Ported from DeepSeek-Reasonix perf(sessions) work (#4882/#4886).
 	CachedTurns   int    `json:"cached_turns,omitempty"`
 	CachedPreview string `json:"cached_preview,omitempty"`
+	// PlanMode records whether plan mode (read-only gate) was active when the
+	// session was last saved, so Resume can restore it. Restoring plan mode is
+	// safe (it only restricts writes, never starts background work). See C8.
+	PlanMode bool `json:"plan_mode,omitempty"`
+	// ToolApprovalMode records the writer-tool approval stance ("ask"/"auto"/
+	// "yolo") so Resume can restore it. Restoring YOLO is intentional — if the
+	// user had auto-approve on, they expect it to stay on across a restart.
+	ToolApprovalMode string `json:"tool_approval_mode,omitempty"`
+	// NOTE: Goal is intentionally NOT persisted here. Restoring a non-empty goal
+	// would auto-resume the goal loop (continueGoal), re-running a pursuit the
+	// user may have manually stopped. Goal state is ephemeral; users re-enter it
+	// via /goal when they want to resume. See C8 risk discussion.
 }
 
 func (m BranchMeta) DefaultScope() string {
