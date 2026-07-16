@@ -32,6 +32,7 @@ import (
 	"github.com/zzycxz/momapeer/internal/checkpoint"
 	"github.com/zzycxz/momapeer/internal/codegraph"
 	"github.com/zzycxz/momapeer/internal/command"
+	"github.com/zzycxz/momapeer/internal/compose"
 	"github.com/zzycxz/momapeer/internal/config"
 	"github.com/zzycxz/momapeer/internal/diff"
 	"github.com/zzycxz/momapeer/internal/event"
@@ -57,8 +58,13 @@ var ErrTurnRunning = errors.New("turn already running")
 type Controller struct {
 	runner   agent.Runner
 	executor *agent.Agent
-	sink     event.Sink
-	policy   permission.Policy
+	// dreamProvider is the lightweight model dream/distill run on (the configured
+	// fast_task_model); nil falls back to the executor's main provider. Wiring it
+	// here lets the idle-dream path spawn on a cheap model without touching the
+	// main agent.
+	dreamProvider provider.Provider
+	sink          event.Sink
+	policy        permission.Policy
 
 	label         string
 	systemPrompt  string
@@ -75,9 +81,10 @@ type Controller struct {
 	autoPlan      string
 	goalJudge     func(ctx context.Context, prov provider.Provider, transcript []provider.Message, condition string) agent.GoalVerdict
 	classifier    autoPlanClassifier
-	startedOnce   bool                             // guards the one-shot SessionStart hook on first turn
-	onRemember    func(rule string) RememberResult // set via Options; invoked when user picks "always allow"
+	startedOnce   bool                                                         // guards the one-shot SessionStart hook on first turn
+	onRemember    func(rule string) RememberResult                             // set via Options; invoked when user picks "always allow"
 	onTurnEnd     func(ctx context.Context, lastUserMsg, lastAssistant string) // set via Options; passive memory capture
+	ragContextFn  func(ctx context.Context, query string) string               // set via Options; auto-retrieves knowledge-base context
 
 	// jobs is the session-scoped background-job manager. The agent's background
 	// tools spawn into it; Compose drains its completion notes into the next turn;
@@ -113,16 +120,16 @@ type Controller struct {
 
 	// mu guards the run state and approval bookkeeping; every critical section
 	// under it is short and non-blocking.
-	mu          sync.Mutex
-	cancel      context.CancelFunc
-	running     bool
-	autosaveWG  sync.WaitGroup
-	planMode    bool
-	goal        string
-	goalStatus  string
-	goalTurns   int
-	goalBlocks  int
-	goalBlock   string
+	mu         sync.Mutex
+	cancel     context.CancelFunc
+	running    bool
+	autosaveWG sync.WaitGroup
+	planMode   bool
+	goal       string
+	goalStatus string
+	goalTurns  int
+	goalBlocks int
+	goalBlock  string
 	// goalIdleTurns counts consecutive goal turns whose assistant reply made no
 	// tool calls — a sign the agent is stuck narrating instead of working.
 	// Reaching maxGoalIdleTurns stops the goal so the user can intervene.
@@ -131,7 +138,7 @@ type Controller struct {
 	// goalStrict requires every todo step to be evidenced (complete_step) and a
 	// final self-check before a goal may complete, so a strict goal can't be
 	// declared done on the agent's word alone. Off by default; set via SetGoalStrict.
-	goalStrict bool
+	goalStrict  bool
 	sessionPath string
 	approvals   map[string]pendingApproval
 	asks        map[string]pendingAsk
@@ -145,6 +152,17 @@ type Controller struct {
 	// just got cleared to do. Deny rules still bite (those never reach the
 	// approver). Reset when the execution turn returns.
 	approvedPlanAutoApproveTools bool
+
+	// idleDreamTimer fires Dream/Distill after the user goes quiet for the
+	// configured idle threshold (default 10 min), instead of at turn start. Dream
+	// is meant to run in the user's downtime; triggering it while they are
+	// actively working contends for model/context resources and interrupts the
+	// "consolidate when idle" intent. lastActivity is stamped on every turn and
+	// reset; the timer goroutine (idleDreamDone) sleeps until the threshold, then
+	// checks cadence + master switch before spawning. Stopped in Close.
+	lastActivity time.Time
+	idleDreamMu  sync.Mutex
+	idleTimer    *time.Timer
 
 	// toolApprovalMode is the runtime approval posture for permission-gated tool
 	// calls. "ask" prompts by default, "auto" lets the policy auto-approve the
@@ -170,6 +188,11 @@ type Controller struct {
 	pendingMemory []string
 
 	displayRecorder func(content, display string)
+
+	// contextFilter, when set, projects session messages into the context sent
+	// to the model — a read-side transform (e.g. expert-collab records reduced to
+	// synthesis). nil passes messages through unchanged.
+	contextFilter func([]provider.Message) []provider.Message
 }
 
 type approvalReply struct {
@@ -223,6 +246,7 @@ type RememberResult struct {
 type Options struct {
 	Runner        agent.Runner
 	Executor      *agent.Agent
+	DreamProvider provider.Provider // lightweight model for dream/distill; nil = main
 	Sink          event.Sink
 	Policy        permission.Policy
 	Label         string
@@ -266,6 +290,11 @@ type Options struct {
 	// swallowed internally so it can never stall or crash the foreground turn.
 	// A nil callback disables auto-capture entirely.
 	OnTurnEnd func(ctx context.Context, lastUserMsg, lastAssistant string)
+	// RAGContextFn, when set, is called with the user's message before each
+	// turn to auto-retrieve knowledge-base context. The returned string is
+	// prepended to the user's input (like @reference context). A nil callback
+	// or "" return disables injection for that turn.
+	RAGContextFn func(ctx context.Context, query string) string
 }
 
 // New builds a Controller. A nil Sink is replaced with event.Discard.
@@ -285,6 +314,7 @@ func New(opts Options) *Controller {
 	c := &Controller{
 		runner:           opts.Runner,
 		executor:         opts.Executor,
+		dreamProvider:    opts.DreamProvider,
 		sink:             sink,
 		policy:           opts.Policy,
 		label:            opts.Label,
@@ -305,6 +335,7 @@ func New(opts Options) *Controller {
 		classifier:       classifier,
 		onRemember:       opts.OnRemember,
 		onTurnEnd:        opts.OnTurnEnd,
+		ragContextFn:     opts.RAGContextFn,
 		jobs:             opts.Jobs,
 		reg:              opts.Registry,
 		pluginCtx:        pluginCtx,
@@ -325,6 +356,21 @@ func New(opts Options) *Controller {
 		c.executor.SetMemoryQueue(c)
 	}
 	return c
+}
+
+// SetContextFilter installs a read-side transform applied to session messages
+// before they reach the model. It is the seam the experts engine uses to keep a
+// full-fidelity expert-collab message in the transcript while showing the model
+// a synthesis-only projection of it. Pass nil to restore the identity filter.
+// Safe to call before or after the executor is built; applied (re-applied) on
+// the next executor wiring.
+func (c *Controller) SetContextFilter(fn func([]provider.Message) []provider.Message) {
+	c.mu.Lock()
+	c.contextFilter = fn
+	if c.executor != nil {
+		c.executor.SetContextFilter(fn)
+	}
+	c.mu.Unlock()
 }
 
 // SetDisplayRecorder installs an optional hook used by frontends that persist a
@@ -467,14 +513,22 @@ func (c *Controller) SendWithRaw(input, raw string) {
 	c.runGuarded(func(ctx context.Context) error { return c.runGoalLoopWithRaw(ctx, input, raw) })
 }
 
-// planApprovalTool is the Tool name on the ApprovalRequest the controller emits
+// PlanApprovalTool is the Tool name on the ApprovalRequest the controller emits
 // to gate a proposed plan. Frontends key their plan-approval UI on it (the
-// desktop renders a plan card; the chat TUI a plan banner).
-const planApprovalTool = "exit_plan_mode"
+// desktop renders a plan card; the chat TUI a plan banner). This is the single
+// source of truth — frontends import this constant instead of re-declaring it.
+const PlanApprovalTool = "exit_plan_mode"
 
-// planApprovedMessage is the follow-up turn sent once the user approves a plan —
+// composeReplanTool is the Tool name on the ApprovalRequest the controller
+// emits when the compose workflow discovers the approved plan's assumptions
+// are wrong and wants to revise the remaining work. Like PlanApprovalTool it
+// is never auto-approved (not bypassed by YOLO or the plan-execution window):
+// revising a plan is a user decision, even in approval-bypass modes.
+const composeReplanTool = "compose_replan"
+
+// PlanApprovedMessage is the follow-up turn sent once the user approves a plan —
 // the in-context nudge to execute and keep the (already-seeded) task list honest.
-const planApprovedMessage = "Plan approved — plan mode is off; you’re cleared to make the changes without asking again. Implement the plan now. Use this serial workflow: 1) mark the first sub-step in_progress with todo_write (this establishes the task list); 2) execute the sub-step; 3) call complete_step with evidence — the host then marks that sub-step completed and moves the next one to in_progress for you. Repeat 2–3 for each remaining sub-step. You don’t need another todo_write to mark steps completed; each complete_step advances the list. Sign off one sub-step at a time — never batch multiple completions."
+const PlanApprovedMessage = "Plan approved — plan mode is off; you’re cleared to make the changes without asking again. Implement the plan now. Use this serial workflow: 1) mark the first sub-step in_progress with todo_write (this establishes the task list); 2) execute the sub-step; 3) call complete_step with evidence — the host then marks that sub-step completed and moves the next one to in_progress for you. Repeat 2–3 for each remaining sub-step. You don’t need another todo_write to mark steps completed; each complete_step advances the list. Sign off one sub-step at a time — never batch multiple completions."
 
 // runTurn runs one model turn, then applies the plan-approval gate. This is the
 // single, frontend-agnostic plan flow: in plan mode the model just researches
@@ -542,7 +596,7 @@ func (c *Controller) runGoalLoopWithRawDisplay(ctx context.Context, input any, r
 
 func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input any, raw, display string) error {
 	c.maybeSessionStart(ctx)
-	c.maybeDreamDistill(ctx)
+	c.touchActivity() // user is active; the idle-dream countdown restarts from now
 	c.maybeAutoPlan(ctx, raw)
 	ctx = agent.WithParentSession(ctx, c.parentSessionID())
 	composedText := c.Compose(provider.ContentString(input))
@@ -601,6 +655,10 @@ func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input any, raw, 
 	if err := c.runner.Run(ctx, runInput); err != nil {
 		return err
 	}
+	// Turn reply is complete and shown to the user; arm the idle-dream countdown.
+	// If the user stays quiet past the threshold, dream/distill consolidate in
+	// the background. Any new turn calls touchActivity above and cancels this.
+	c.touchActivity()
 	c.mu.Lock()
 	plan := c.planMode
 	c.mu.Unlock()
@@ -613,7 +671,7 @@ func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input any, raw, 
 	}
 	// The plan is already visible as the assistant's answer, so the request
 	// carries no subject — it's purely the gate.
-	allow, _, err := c.requestApproval(ctx, planApprovalTool, "")
+	allow, _, err := c.requestApproval(ctx, PlanApprovalTool, "")
 	if err != nil {
 		return err
 	}
@@ -632,8 +690,36 @@ func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input any, raw, 
 		c.approvedPlanAutoApproveTools = false
 		c.mu.Unlock()
 	}()
-	if err := c.runner.Run(ctx, c.ComposeSynthetic(planApprovedMessage)); err != nil {
-		return err
+	// Dispatch: large plans (≥ compose.MinTasksForCompose tasks) run through
+	// the compose workflow (Implement → Verify → retry), small plans run a
+	// single execution turn as before. The split keeps simple plans fast
+	// while giving multi-step features a verification loop the bare agent lacks.
+	if compose.ShouldCompose(seededTodos) {
+		runner := compose.NewRunner(
+			c.runner, c.sink, c.ComposeSynthetic,
+			func() string { return lastAssistantText(c.History()) },
+			PlanApprovedMessage,
+			func(ctx context.Context, reason string) (bool, error) {
+				allow, _, err := c.requestApproval(ctx, composeReplanTool, reason)
+				return allow, err
+			},
+		)
+		// compose's phased implement/verify/review runs are self-bounded by
+		// MaxImplementAttempts; the agent's final-answer readiness gate would
+		// otherwise force "finish all todos in one turn" or hard-error after
+		// maxFinalReadinessBlocks, conflicting with compose's retry semantics.
+		// Suppress the gate for the whole compose window, then restore. C3.
+		if a, ok := c.runner.(*agent.Agent); ok {
+			a.SetSkipReadiness(true)
+			defer a.SetSkipReadiness(false)
+		}
+		if err := runner.Run(ctx, proposal, seededTodos); err != nil {
+			return err
+		}
+	} else {
+		if err := c.runner.Run(ctx, c.ComposeSynthetic(PlanApprovedMessage)); err != nil {
+			return err
+		}
 	}
 	c.completePlanTodos(seededTodos)
 	return nil
@@ -893,6 +979,9 @@ func (c *Controller) submit(input, display string) {
 		c.rememberProjectNote(note)
 		return
 	}
+	if c.applyPlanCommand(trimmed, display) {
+		return
+	}
 	if c.applyGoalCommand(trimmed, display) {
 		return
 	}
@@ -1031,6 +1120,36 @@ func (c *Controller) rememberProjectNote(note string) {
 	} else {
 		c.notice("remembered → " + path)
 	}
+}
+
+// applyPlanCommand handles /plan slash commands. /plan toggles plan mode;
+// /plan <text> enters plan mode and sends the text as a user turn so the model
+// starts planning that task; /plan off exits plan mode. Plan and goal are
+// mutually exclusive — entering plan clears any active goal.
+func (c *Controller) applyPlanCommand(input, display string) bool {
+	cmd, ok := ParsePlanCommand(input)
+	if !ok {
+		return false
+	}
+	if cmd.Off {
+		c.SetPlanMode(false)
+		c.notice("plan mode off")
+		return true
+	}
+	// Enter plan mode (clears goal — they're mutually exclusive).
+	c.SetGoal("")
+	c.SetPlanMode(true)
+	if cmd.Text != "" {
+		// /plan <text>: send the task as a user turn so the model starts
+		// exploring and planning it in read-only mode immediately.
+		c.notice("plan mode on — planning: " + ShortGoalForNotice(cmd.Text))
+		c.runGuarded(func(ctx context.Context) error {
+			return c.runTurnWithRawDisplay(ctx, cmd.Text, cmd.Text, display)
+		})
+	} else {
+		c.notice("plan mode on — your next message will be planned read-only")
+	}
+	return true
 }
 
 func (c *Controller) applyGoalCommand(input, display string) bool {
@@ -1177,22 +1296,38 @@ func (c *Controller) runRefTurnWithRefs(input, refLine, display string) {
 		for _, e := range errs {
 			c.notice(e)
 		}
+		// Auto-retrieve knowledge-base context (if a RAG store is wired in).
+		ragCtx := ""
+		if c.ragContextFn != nil {
+			ragCtx = c.ragContextFn(ctx, input)
+		}
 		var sent any
+		// Build the context preamble from @references + RAG auto-search.
+		var preamble string
 		switch b := block.(type) {
 		case string:
 			if b != "" {
-				sent = "Referenced context:\n\n" + b + "\n\n" + input
-			} else {
-				sent = input
+				preamble += "Referenced context:\n\n" + b + "\n\n"
 			}
 		case []provider.ContentPart:
+			preamble += "Referenced context:\n\n" + provider.ContentString(block) + "\n\n"
+		}
+		if ragCtx != "" {
+			preamble += "知识库参考（自动检索）：\n\n" + ragCtx + "\n\n"
+		}
+		switch b := block.(type) {
+		case []provider.ContentPart:
 			// Multimodal: prepend text context, then image parts
-			textBlock := "Referenced context:\n\n" + provider.ContentString(block) + "\n\n" + input
+			textBlock := preamble + input
 			parts := []provider.ContentPart{{Type: "text", Text: textBlock}}
 			parts = append(parts, b...)
 			sent = parts
 		default:
-			sent = input
+			if preamble != "" {
+				sent = preamble + input
+			} else {
+				sent = input
+			}
 		}
 		return c.runGoalLoopWithRawDisplay(ctx, sent, input, display)
 	})
@@ -1465,6 +1600,30 @@ func (c *Controller) ReplayPendingPrompts() {
 func (c *Controller) SetPlanMode(v bool) {
 	c.mu.Lock()
 	c.planMode = v
+	// Install/clear HardDeny as a data-layer guarantee. When plan mode is on,
+	// all writer tools (edit_file, write_file, bash, task, run_skill, ...) are
+	// hard-denied at the permission layer — not just by the runtime boolean
+	// gate in agent.executeOne. This means even a user who configured
+	// "*": "allow" cannot bypass plan-mode read-only. When plan mode is off,
+	// HardDeny is cleared so normal operation resumes.
+	if v {
+		writerTools := []string{
+			"edit_file", "write_file", "multi_edit",
+			"run_skill",
+			"task",
+		}
+		// Bash is handled by ReadOnlyCallChecker (per-command read-only
+		// detection) in agent.executeOne, so we don't hard-deny it here —
+		// that would block read-only commands like "git log" that plan mode
+		// intentionally allows.
+		rules := make([]string, 0, len(writerTools))
+		for _, t := range writerTools {
+			rules = append(rules, t)
+		}
+		c.policy = c.policy.SetHardDeny(rules)
+	} else {
+		c.policy = c.policy.SetHardDeny(nil)
+	}
 	c.mu.Unlock()
 	if c.executor != nil {
 		c.executor.SetPlanMode(v)
@@ -2176,6 +2335,97 @@ func (c *Controller) History() []provider.Message {
 	return c.executor.Session().Snapshot() // copy — a turn may be appending concurrently
 }
 
+// AppendExpertCollab persists a finished expert-team collaboration into the
+// active session as a folded-block message (a tool message whose Content is
+// the full collab record JSON, with the context layer projecting it down to a
+// synthesis-only summary for the model). It then emits an ExpertCollab event
+// so the frontend renders an expandable card, and snapshots the session so the
+// record survives restarts.
+//
+// It refuses while a turn is running (the agent's run loop reads session
+// messages lock-free, so mid-turn mutation would race). The collab is then
+// surfaced on the next render rather than interleaved with a live turn.
+func (c *Controller) AppendExpertCollab(content string) error {
+	c.mu.Lock()
+	if c.executor == nil {
+		c.mu.Unlock()
+		return fmt.Errorf("controller has no executor")
+	}
+	if c.running {
+		c.mu.Unlock()
+		return fmt.Errorf("cannot append expert collaboration while a turn is running")
+	}
+	sess := c.executor.Session()
+	sess.Add(provider.Message{Role: provider.RoleTool, Content: content, Name: "expert_team_collab"})
+	path := c.sessionPath
+	c.mu.Unlock()
+	// Persist outside the lock; Session.Save takes its own lock.
+	if path == "" {
+		return fmt.Errorf("AppendExpertCollab: sessionPath is empty, cannot persist")
+	}
+	if err := c.snapshot(true); err != nil {
+		return fmt.Errorf("AppendExpertCollab: snapshot failed: %w", err)
+	}
+	return nil
+}
+
+// EmitExpertCollab fires an ExpertCollab event on this controller's sink so the
+// frontend renders the folded card. Kept separate from AppendExpertCollab so a
+// caller can append-then-emit (or emit for a panel-initiated run whose data it
+// already has) without coupling the two.
+func (c *Controller) EmitExpertCollab(collab event.Collab) {
+	if c.sink == nil {
+		return
+	}
+	c.sink.Emit(event.Event{Kind: event.ExpertCollab, Collab: collab})
+}
+
+// DeleteExpertCollab removes the Nth expert-collab message (0-based among
+// expert_team_collab tool messages) from the session and re-persists. This is
+// the "不采纳" affordance: a user discards a collaboration from both the stored
+// transcript and the model's context. The ordinal is stable — deleting one
+// doesn't shift the others' ordinals — because it's recomputed over the
+// remaining set each call. Refused while a turn is running, like the append.
+func (c *Controller) DeleteExpertCollab(ordinal int) error {
+	c.mu.Lock()
+	if c.executor == nil {
+		c.mu.Unlock()
+		return fmt.Errorf("controller has no executor")
+	}
+	if c.running {
+		c.mu.Unlock()
+		return fmt.Errorf("cannot delete expert collaboration while a turn is running")
+	}
+	sess := c.executor.Session()
+	// Find the ordinal-th expert_team_collab message in the snapshot and map it
+	// back to a live index to remove. Computing over a snapshot then re-locking
+	// is safe because c.running is false (the run loop is the only other writer).
+	snap := sess.Snapshot()
+	target := -1
+	seen := 0
+	for i, m := range snap {
+		if m.Role == provider.RoleTool && m.Name == "expert_team_collab" {
+			if seen == ordinal {
+				target = i
+				break
+			}
+			seen++
+		}
+	}
+	if target < 0 {
+		c.mu.Unlock()
+		return fmt.Errorf("no expert collaboration at ordinal %d", ordinal)
+	}
+	// Rebuild without the target message.
+	filtered := make([]provider.Message, 0, len(snap)-1)
+	filtered = append(filtered, snap[:target]...)
+	filtered = append(filtered, snap[target+1:]...)
+	sess.Replace(filtered)
+	c.mu.Unlock()
+	_ = c.snapshot(true)
+	return nil
+}
+
 // ContextSnapshot returns (promptTokens, contextWindow) from the most recent
 // turn. Both zero means no data yet — a gauge hides itself.
 func (c *Controller) ContextSnapshot() (int, int) {
@@ -2296,17 +2546,108 @@ func (c *Controller) SetSkillEnabled(name string, enabled bool) error {
 // so a frontend can list the active hooks via `/hooks`.
 func (c *Controller) HookRunner() *hook.Runner { return c.hooks }
 
-func (c *Controller) maybeDreamDistill(ctx context.Context) {
+// profileForDream returns the active profile name for dream's portrait sizing,
+// defaulting to "dev" when memory isn't loaded yet. dream uses it to pick the
+// right portrait file to size-check (and thus whether to run in compress mode).
+func (c *Controller) profileForDream() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.mem != nil && c.mem.ProfileName != "" {
+		return c.mem.ProfileName
+	}
+	return "dev"
+}
+
+// maybeDreamDistill spawns Dream/Distill from an idle trigger. It is the idle
+// counterpart of the old turn-start hook: instead of firing while the user is
+// busy, it fires only after the idle timer confirms the user has gone quiet.
+// Cadence + master-switch + inFlight gates still apply inside agent.SpawnDream/
+// SpawnDistill, so an idle fire that is not yet due is a cheap no-op.
+// dreamProv returns the provider dream/distill run on: the configured
+// fast_task_model when wired, else the main executor provider.
+func (c *Controller) dreamProv() provider.Provider {
+	if c.dreamProvider != nil {
+		return c.dreamProvider
+	}
+	if c.executor != nil {
+		return c.executor.Provider()
+	}
+	return nil
+}
+
+func (c *Controller) maybeDreamDistill() {
 	if c.sessionDir == "" || c.executor == nil {
 		return
 	}
-	// The cadence + master-switch gate lives inside agent.ShouldAutoDream /
-	// ShouldAutoDistill (which read live config), so this is a cheap no-op when
-	// self-evolution is disabled or not yet due.
-	// Tracked on autosaveWG so Close drains these instead of orphaning a
-	// background dream/distill mid-write to a closing store.
-	agent.SpawnDream(ctx, c.sessionDir, c.executor.Provider(), c.reg, c.executor.Session(), c.sink, &c.autosaveWG)
-	agent.SpawnDistill(ctx, c.sessionDir, c.executor.Provider(), c.reg, c.executor.Session(), c.sink, &c.autosaveWG)
+	ctx := context.Background()
+	prov := c.dreamProv()
+	agent.SpawnDream(ctx, c.sessionDir, c.profileForDream(), prov, c.reg, c.executor.Session(), c.sink, &c.autosaveWG)
+	agent.SpawnDistill(ctx, c.sessionDir, prov, c.reg, c.executor.Session(), c.sink, &c.autosaveWG)
+}
+
+// touchActivity records that the user is active (turn start or turn end) and
+// (re)arms the idle-dream countdown. Called on every turn so a continuous
+// conversation keeps pushing the idle fire out; only a genuine pause lets the
+// timer reach zero. No-op when self-evolution is disabled or no threshold set.
+func (c *Controller) touchActivity() {
+	if c.sessionDir == "" || c.executor == nil {
+		return
+	}
+	// Read the live idle threshold; a negative/zero config disables idle dream.
+	cfg, err := config.Load()
+	if err != nil || !cfg.Dream.Enabled {
+		return
+	}
+	threshold := cfg.Dream.IdleMinutesEffective()
+	if threshold <= 0 {
+		return // idle triggering disabled
+	}
+	c.idleDreamMu.Lock()
+	c.lastActivity = time.Now()
+	// (Re)start the single pending timer. A running timer is stopped first so we
+	// never accumulate goroutines across rapid turns.
+	if c.idleTimer != nil {
+		c.idleTimer.Stop()
+	}
+	delay := time.Duration(threshold) * time.Minute
+	c.idleTimer = time.AfterFunc(delay, c.idleDreamFired)
+	c.idleDreamMu.Unlock()
+}
+
+// idleDreamFired is the timer callback: the user has been quiet past the
+// threshold. Re-check the gate (config may have changed, or a turn may have
+// started racing the timer) before spawning, then consolidate. Runs on the
+// timer goroutine.
+func (c *Controller) idleDreamFired() {
+	c.idleDreamMu.Lock()
+	last := c.lastActivity
+	c.idleTimer = nil
+	c.idleDreamMu.Unlock()
+	if c.sessionDir == "" || c.executor == nil {
+		return
+	}
+	// Re-read config: the threshold could have been raised/disabled since the
+	// timer was armed. If the user is no longer idle past it, skip.
+	cfg, err := config.Load()
+	if err != nil || !cfg.Dream.Enabled {
+		return
+	}
+	threshold := time.Duration(cfg.Dream.IdleMinutesEffective()) * time.Minute
+	if threshold > 0 && time.Since(last) < threshold {
+		return // a turn touched activity after we fired; not idle anymore
+	}
+	c.maybeDreamDistill()
+}
+
+// stopIdleDream cancels any pending idle-dream timer. Called from Close so a
+// shutting-down controller doesn't spawn a dream into a closing store.
+func (c *Controller) stopIdleDream() {
+	c.idleDreamMu.Lock()
+	if c.idleTimer != nil {
+		c.idleTimer.Stop()
+		c.idleTimer = nil
+	}
+	c.idleDreamMu.Unlock()
 }
 
 // TriggerDream runs a Dream consolidation pass on demand, blocking until it
@@ -2317,7 +2658,7 @@ func (c *Controller) TriggerDream(ctx context.Context) (agent.DreamRun, bool) {
 	if c.executor == nil {
 		return agent.DreamRun{Status: "error", Error: "no active session"}, false
 	}
-	return agent.RunDreamOnce(ctx, c.sessionDir, c.executor.Provider(), c.reg, c.executor.Session(), c.sink)
+	return agent.RunDreamOnce(ctx, c.sessionDir, c.profileForDream(), c.dreamProv(), c.reg, c.executor.Session(), c.sink)
 }
 
 // TriggerDistill runs a Distill workflow-extraction pass on demand. See TriggerDream.
@@ -2325,7 +2666,7 @@ func (c *Controller) TriggerDistill(ctx context.Context) (agent.DreamRun, bool) 
 	if c.executor == nil {
 		return agent.DreamRun{Status: "error", Error: "no active session"}, false
 	}
-	return agent.RunDistillOnce(ctx, c.sessionDir, c.executor.Provider(), c.reg, c.executor.Session(), c.sink)
+	return agent.RunDistillOnce(ctx, c.sessionDir, c.dreamProv(), c.reg, c.executor.Session(), c.sink)
 }
 
 // LastDreamRun exposes the most recent recorded run of a kind for this session,
@@ -2605,6 +2946,7 @@ func (c *Controller) Close() {
 	if started {
 		c.hooks.SessionEnd(context.Background())
 	}
+	c.stopIdleDream() // cancel any pending idle-dream so it can't fire into a closing store
 	if c.jobs != nil {
 		c.jobs.Close() // cancel any still-running background jobs
 	}
@@ -2748,7 +3090,7 @@ func (c *Controller) SetMode(plan, autoApproveTools bool) {
 func (c *Controller) drainApprovalsLocked(includeExplicitAsk bool) []chan approvalReply {
 	pending := make([]chan approvalReply, 0, len(c.approvals))
 	for id, approval := range c.approvals {
-		if approval.tool == planApprovalTool {
+		if approval.tool == PlanApprovalTool || approval.tool == composeReplanTool {
 			continue
 		}
 		if !includeExplicitAsk && !approval.autoDrain {
@@ -2841,37 +3183,6 @@ func (c *Controller) ForgetMemory(name string) error {
 	return nil
 }
 
-// PromoteMemory confirms an auto-captured "pending" memory, flipping it to
-// "active" so it enters the prompt/profile. Returns false (no error) when the
-// record is missing or not pending, so the UI treats it as idempotent.
-func (c *Controller) PromoteMemory(name string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.mem == nil {
-		return false
-	}
-	ok := c.mem.Store.PromoteMemory(name)
-	if ok {
-		c.refreshMemoryLocked()
-	}
-	return ok
-}
-
-// RejectMemory dismisses an auto-captured "pending" memory, deleting it. Only
-// pending records are affected — confirmed/historical facts are untouched.
-func (c *Controller) RejectMemory(name string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.mem == nil {
-		return false
-	}
-	ok := c.mem.Store.RejectMemory(name)
-	if ok {
-		c.refreshMemoryLocked()
-	}
-	return ok
-}
-
 // QueueMemory implements memory.Queue: when the model runs the remember/forget
 // tool, the tool calls this with a note that rides the next turn so the change
 // applies this session without touching the cache-stable prefix. It also
@@ -2892,13 +3203,36 @@ func (c *Controller) Memory() *memory.Set {
 	return c.mem
 }
 
+// ProfileView is the payload the workspace preference panel reads: the path of
+// the active mode's portrait file and its current contents. Path is "" when the
+// user config dir is unresolvable; Content is "" when the file does not exist
+// yet (a fresh mode the user has never written to).
+type ProfileView struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+// Profile returns the active mode's portrait for the preference panel. Read-only
+// — saves go through SaveDoc (the profile path is whitelisted). The panel calls
+// this on open to populate its editor.
+func (c *Controller) Profile() ProfileView {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.mem == nil {
+		return ProfileView{}
+	}
+	return ProfileView{Path: c.mem.ProfilePath(), Content: c.mem.ProfileContent()}
+}
+
 // refreshMemoryLocked re-discovers memory from disk so a later Memory() reflects
-// a just-applied write. Caller holds c.mu.
+// a just-applied write. Caller holds c.mu. ProfileName is carried through so a
+// reload keeps the mode partition — without it, a mid-session remember/forget
+// would re-load under the default profile and drop the dev/cowork isolation.
 func (c *Controller) refreshMemoryLocked() {
 	if c.mem == nil {
 		return
 	}
-	c.mem = memory.Load(memory.Options{CWD: c.mem.CWD, UserDir: c.mem.UserDir})
+	c.mem = memory.Load(memory.Options{CWD: c.mem.CWD, UserDir: c.mem.UserDir, Profile: c.mem.ProfileName})
 }
 
 // --- approval bridge (agent gate → events) ---
@@ -2932,7 +3266,7 @@ type seedTodo struct {
 // The model still flips item status as it works (only it knows its own
 // progress); this just makes the list exist. No-op when the plan has no list.
 func (c *Controller) seedPlanTodos(plan string) string {
-	args := PlanTodosJSON(plan)
+	args := planTodosJSON(plan)
 	if args == "" {
 		return ""
 	}
@@ -2957,12 +3291,10 @@ func (c *Controller) completePlanTodos(args string) {
 	c.sink.Emit(event.Event{Kind: event.ToolResult, Tool: t})
 }
 
-// PlanTodosJSON parses an approved plan's markdown into todo_write-shaped args
-// JSON ({"todos":[...]}), or "" when the plan has no list items. The exit_plan_mode
-// path seeds via seedPlanTodos (an event); a frontend whose own approval flow
-// bypasses exit_plan_mode (the chat TUI's text-plan approval) calls this directly
-// to render the same starter checklist. Shared parsing keeps the two consistent.
-func PlanTodosJSON(plan string) string {
+// planTodosJSON parses an approved plan's markdown into todo_write-shaped args
+// JSON ({"todos":[...]}), or "" when the plan has no list items. Used by
+// seedPlanTodos to turn the approved plan into a starter checklist.
+func planTodosJSON(plan string) string {
 	items := parsePlanTodos(plan)
 	if len(items) == 0 {
 		return ""
@@ -3165,13 +3497,13 @@ func (c *Controller) requestApproval(ctx context.Context, tool, subject string) 
 	case r := <-reply:
 		// Plan approvals are one-shot — never persist a session grant for them, or
 		// every future plan would auto-approve.
-		if r.allow && r.session && tool != planApprovalTool {
+		if r.allow && r.session && tool != PlanApprovalTool && tool != composeReplanTool {
 			rule := permission.SessionGrantRuleForScope(tool, subject)
 			c.mu.Lock()
 			c.granted[rule] = true
 			c.mu.Unlock()
 		}
-		if r.allow && r.persist && tool != planApprovalTool && c.onRemember != nil {
+		if r.allow && r.persist && tool != PlanApprovalTool && tool != composeReplanTool && c.onRemember != nil {
 			c.emitRememberResult(c.onRemember(permission.RememberRuleForScope(tool, subject)))
 		}
 		return r.allow, false, nil
@@ -3184,11 +3516,16 @@ func (c *Controller) requestApproval(ctx context.Context, tool, subject string) 
 }
 
 func (c *Controller) approvalBypassAllowsLocked(tool string) bool {
-	return tool != planApprovalTool && (c.toolApprovalMode == ToolApprovalYolo || c.approvedPlanAutoApproveTools)
+	// Plan approval and compose replan are user decisions that must never be
+	// bypassed by YOLO or the approved-plan execution window.
+	if tool == PlanApprovalTool || tool == composeReplanTool {
+		return false
+	}
+	return c.toolApprovalMode == ToolApprovalYolo || c.approvedPlanAutoApproveTools
 }
 
 func (c *Controller) autoApprovalWouldAllowLocked(tool, subject string) bool {
-	if tool == planApprovalTool {
+	if tool == PlanApprovalTool || tool == composeReplanTool {
 		return false
 	}
 	policy := c.policy

@@ -32,7 +32,6 @@ const maxToolOutputBytes = 32 * 1024
 const maxFinalReadinessBlocks = 3
 const maxEmptyFinalBlocks = 3
 const maxStreamRecoveries = 1
-const maxExecutorHandoffNudges = 1
 
 // Renderer redraws the assistant's final-answer text as styled output. It is
 // applied only after a turn's text stream completes, so the user sees raw
@@ -58,20 +57,18 @@ type parentSessionContextKey struct{}
 
 // callContext is the per-call context a tool can read. parentID is the call being
 // executed and sink is the agent's event sink (the `task` tool uses both to nest
-// a sub-agent's events under this call); asker lets the `ask` tool reach the user;
-// planMode lets tools introspect whether they are running under plan mode.
+// a sub-agent's events under this call); asker lets the `ask` tool reach the user.
 type callContext struct {
 	parentID string
 	sink     event.Sink
 	asker    Asker
-	planMode bool
 }
 
-// withCallContext stamps ctx with the executing call's ID, the agent's sink, the
-// asker, and plan mode. executeOne sets this before every Execute; `task` reads
-// it (via CallContext) to nest sub-agent events, and `ask` reads the asker to prompt.
-func withCallContext(ctx context.Context, parentID string, sink event.Sink, asker Asker, planMode bool) context.Context {
-	return context.WithValue(ctx, callContextKey{}, callContext{parentID: parentID, sink: sink, asker: asker, planMode: planMode})
+// withCallContext stamps ctx with the executing call's ID, the agent's sink, and
+// the asker. executeOne sets this before every Execute; `task` reads it (via
+// CallContext) to nest sub-agent events, and `ask` reads the asker to prompt.
+func withCallContext(ctx context.Context, parentID string, sink event.Sink, asker Asker) context.Context {
+	return context.WithValue(ctx, callContextKey{}, callContext{parentID: parentID, sink: sink, asker: asker})
 }
 
 // CallContext returns the executing call's ID, the agent's sink, and the asker,
@@ -83,14 +80,6 @@ func CallContext(ctx context.Context) (parentID string, sink event.Sink, asker A
 		return "", nil, nil, false
 	}
 	return cc.parentID, cc.sink, cc.asker, true
-}
-
-// PlanModeFromContext reports whether the current tool call is executing under
-// plan mode. Tools can use this to adjust their behavior (e.g. suppress
-// writer-only follow-up surfaces during planning).
-func PlanModeFromContext(ctx context.Context) bool {
-	cc, ok := ctx.Value(callContextKey{}).(callContext)
-	return ok && cc.planMode
 }
 
 // WithParentSession stamps the active parent session ID onto a turn context so
@@ -147,11 +136,8 @@ type Agent struct {
 	sessMu      sync.Mutex // guards the session pointer for external Session()/SetSession
 	maxSteps    int
 	maxStepsKey string
-	// executorHandoffGuard is enabled by Coordinator for the executor agent. The
-	// per-turn marker check in Run keeps ordinary single-model turns unaffected.
-	executorHandoffGuard bool
-	temperature          float64
-	pricing              *provider.Pricing
+	temperature float64
+	pricing     *provider.Pricing
 
 	// sink receives the turn's typed event stream (reasoning/text deltas, tool
 	// dispatch/results, usage, notices). The agent no longer formats output
@@ -186,6 +172,13 @@ type Agent struct {
 	// the outside via SetPlanMode.
 	planMode atomic.Bool
 
+	// skipReadiness, when true, disables the final-answer readiness gate
+	// (finalReadinessCheck) for the current Run. compose sets this during its
+	// implement/verify/review phases so the gate doesn't force "finish
+	// everything in one turn" and conflict with compose's own retry loop.
+	// Toggled via SetSkipReadiness; default false preserves existing behavior.
+	skipReadiness atomic.Bool
+
 	// gate, when non-nil, is the per-call permission gate consulted after the
 	// plan-mode check. nil disables gating entirely.
 	gate Gate
@@ -205,9 +198,17 @@ type Agent struct {
 	// Set via SetPreEditHook.
 	onPreEdit func(diff.Change)
 
+	// contextFilter, when non-nil, projects the session messages into the
+	// context sent to the model — a read-side transform that can rewrite or
+	// summarize specific messages (e.g. swap a full expert-collab transcript
+	// for its synthesis-only view) without mutating the stored session. nil
+	// means the raw session messages go through verbatim. Set via
+	// SetContextFilter.
+	contextFilter func([]provider.Message) []provider.Message
+
 	// jobs, when non-nil, is the session's background-job manager. executeOne
 	// stamps it onto each tool call's context so the background tools (bash
-	// run_in_background, task run_in_background, bash_output/kill_shell/wait) can
+	// run_in_background, task run_in_background, background_job) can
 	// reach it. nil leaves those tools to degrade gracefully.
 	jobs *jobs.Manager
 
@@ -228,10 +229,10 @@ type Agent struct {
 	// the current step finish, then freezes the agent with full state intact so
 	// a Resume continues from exactly where it stopped. Guarded by pauseMu so
 	// Pause/Resume/IsPaused can be called from any goroutine safely.
-	pauseMu   sync.Mutex
-	pauseCh   chan struct{} // closed = pause requested; recreated per Run
-	resumeCh  chan struct{} // closed = resume signaled; recreated per pause
-	paused    bool          // true while blocked on resumeCh (for IsPaused)
+	pauseMu  sync.Mutex
+	pauseCh  chan struct{} // closed = pause requested; recreated per Run
+	resumeCh chan struct{} // closed = resume signaled; recreated per pause
+	paused   bool          // true while blocked on resumeCh (for IsPaused)
 
 	// evidence is a per-user-turn ledger of host-observed tool receipts. It lets
 	// complete_step validate that cited evidence happened before the claim.
@@ -307,6 +308,28 @@ type Agent struct {
 // history — are left untouched, so the toggle costs nothing in cache hits.
 func (a *Agent) SetPlanMode(v bool) { a.planMode.Store(v) }
 
+// SetSkipReadiness toggles the final-answer readiness gate. compose uses this
+// to suppress the gate during its phased implement/verify/review runs, where
+// the gate would otherwise force the model to complete all todos in a single
+// turn or hard-error after maxFinalReadinessBlocks. See audit finding C3.
+func (a *Agent) SetSkipReadiness(v bool) { a.skipReadiness.Store(v) }
+
+// planModeReadOK reports whether a tool call may proceed under plan mode.
+// Statically read-only tools (ReadOnly()==true) always pass. A tool that
+// implements tool.ReadOnlyCallChecker gets a per-call vote so a nominally
+// writer tool can still let a specific read-only invocation through — bash is
+// the reason this exists: "git log" and "find ." are safe, "rm" and "> file"
+// are not, and the static ReadOnly() can't tell them apart.
+func planModeReadOK(t tool.Tool, args json.RawMessage) bool {
+	if t.ReadOnly() {
+		return true
+	}
+	if rc, ok := t.(tool.ReadOnlyCallChecker); ok {
+		return rc.ReadOnlyCall(args)
+	}
+	return false
+}
+
 // SetGate installs the per-call permission gate. Used by `momapeer chat` to swap the
 // headless gate built in setup for an interactive one that prompts the user;
 // nil disables gating. Safe to call before the run loop starts.
@@ -332,6 +355,15 @@ func (a *Agent) SetMemoryQueue(q memory.Queue) { a.memQueue = q }
 // SetPreEditHook installs the pre-edit snapshot hook (see onPreEdit). The
 // controller wires it to its per-session checkpoint store; nil disables capture.
 func (a *Agent) SetPreEditHook(fn func(diff.Change)) { a.onPreEdit = fn }
+
+// SetContextFilter installs a read-side transform applied to session messages
+// before they're sent to the model. It lets a caller (e.g. the experts engine)
+// keep a full-fidelity message in the transcript while showing the model a
+// compact projection of it, so the context window isn't bloated. nil (the
+// default) passes messages through unchanged.
+func (a *Agent) SetContextFilter(fn func([]provider.Message) []provider.Message) {
+	a.contextFilter = fn
+}
 
 // Session returns the agent's current conversation, useful for persistence
 // hooks that need to read the message log between turns. sessMu serialises this
@@ -641,10 +673,8 @@ func (a *Agent) Run(ctx context.Context, input any) error {
 
 	finalReadinessBlocks := 0
 	emptyFinalBlocks := 0
-	handoffNudges := 0
-	usedAnyTool := false
 	streamRecoveries := 0
-	executorHandoff := a.executorHandoffGuard && strings.Contains(provider.ContentString(input), executorHandoffMarker)
+
 	for step := 0; a.maxSteps <= 0 || step < a.maxSteps; step++ {
 		// Graceful pause point: if the user requested a pause, finish any prior
 		// step (we got here because the last iteration completed), then block
@@ -653,6 +683,14 @@ func (a *Agent) Run(ctx context.Context, input any) error {
 		// is persisted — pause never interrupts a streaming response, it only
 		// gates entry to the next one. State is fully preserved across the pause.
 		if err := a.awaitPause(ctx); err != nil {
+			return err
+		}
+		// Stop gate: if the turn was cancelled while a prior step was winding
+		// down (e.g. between a tool call returning and the next stream), exit
+		// now instead of starting another LLM call. runGuarded maps a cancelled
+		// ctx to a clean TurnDone (ctx.Err()!=nil → nil Err) so the UI treats
+		// this as a normal stop, not a failure.
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		// Consume a queued steer and persist it to the session so it
@@ -743,13 +781,6 @@ func (a *Agent) Run(ctx context.Context, input any) error {
 				a.maybeCompact(ctx, usage)
 				continue
 			}
-			if executorHandoff && !usedAnyTool && handoffNudges < maxExecutorHandoffNudges {
-				handoffNudges++
-				a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "executor answered without taking any action; nudging it to use its tools"})
-				a.session.Add(provider.Message{Role: provider.RoleUser, Content: executorHandoffRetryMessage()})
-				a.maybeCompact(ctx, usage)
-				continue
-			}
 			if readiness.applies {
 				event.RecordReadinessAudit(a.sink, readiness.audit(evidence.ReadinessAllowed, finalReadinessBlocks > 0))
 			}
@@ -763,7 +794,6 @@ func (a *Agent) Run(ctx context.Context, input any) error {
 			return nil // model gave a final answer
 		}
 		emptyFinalBlocks = 0
-		usedAnyTool = true
 
 		results := a.executeBatch(ctx, calls)
 		for i, call := range calls {
@@ -808,6 +838,12 @@ func (c finalReadinessCheck) audit(result evidence.ReadinessAuditResult, recover
 
 func (a *Agent) finalReadinessCheck() finalReadinessCheck {
 	if a.evidence == nil {
+		return finalReadinessCheck{}
+	}
+	// compose phases set skipReadiness so their phased implement/verify/review
+	// runs aren't forced to finish all todos in one turn (which would either
+	// derail the retry loop or hard-error after maxFinalReadinessBlocks).
+	if a.skipReadiness.Load() {
 		return finalReadinessCheck{}
 	}
 	var missing []string
@@ -1032,13 +1068,6 @@ func finalReadinessRetryMessage(reason string) string {
 	return "Host final-answer readiness check failed. Before giving a final answer, address the missing host-observable receipts: " + reason + ". Run the required tool calls, then answer when readiness is satisfied."
 }
 
-func executorHandoffRetryMessage() string {
-	return `You are already in the executor phase. The planner's read-only limitations do not apply to you.
-
-Do not answer as the planner and do not ask how to trigger the executor.
-Use your available tools now to carry out the task. If a write or command is blocked by permissions or workspace boundaries, state that specific blocker and ask for the needed approval/path.`
-}
-
 func hasVisibleFinalAnswer(text string) bool {
 	return strings.TrimSpace(text) != ""
 }
@@ -1075,8 +1104,16 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 	ctx = provider.WithRetryNotify(ctx, func(info provider.RetryInfo) {
 		a.sink.Emit(event.Event{Kind: event.Retrying, RetryAttempt: info.Attempt, RetryMax: info.Max})
 	})
+	// Build the context: the stored session messages, optionally projected by
+	// a read-side filter (e.g. expert-collab messages reduced to their synthesis
+	// so a multi-expert transcript never bloats the window). The session itself
+	// is never mutated — only this per-call copy.
+	msgs := a.session.Messages
+	if a.contextFilter != nil {
+		msgs = a.contextFilter(msgs)
+	}
 	ch, err := a.prov.Stream(ctx, provider.Request{
-		Messages:    a.session.Messages,
+		Messages:    msgs,
 		Tools:       a.tools.Schemas(),
 		Temperature: a.temperature,
 	})
@@ -1425,7 +1462,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			errMsg:  "blocked by loop guard",
 		}
 	}
-	if a.planMode.Load() && !t.ReadOnly() {
+	if a.planMode.Load() && !planModeReadOK(t, json.RawMessage(call.Arguments)) {
 		return toolOutcome{
 			output:  fmt.Sprintf("blocked: %q is a writer tool and plan mode is read-only. Keep exploring with read-only tools, then write your plan as your reply — the user will be asked to approve it before any changes are made.", call.Name),
 			blocked: true,
@@ -1474,7 +1511,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			}
 		}
 	}
-	cctx := withCallContext(ctx, call.ID, a.sink, a.asker, a.planMode.Load())
+	cctx := withCallContext(ctx, call.ID, a.sink, a.asker)
 	if a.evidence != nil {
 		cctx = evidence.WithLedger(cctx, a.evidence)
 		cctx = evidence.WithSessionMessages(cctx, a.session.Snapshot())
@@ -1571,7 +1608,7 @@ func (a *Agent) repeatedSuccessBlock(call provider.ToolCall, t tool.Tool) (strin
 		return "", false
 	}
 	return fmt.Sprintf(
-		"blocked: [loop guard] %q has already succeeded %d times with the same write-like arguments in this user turn. Re-running it is unlikely to help and may burn tokens or repeat file writes. Change approach: use edit_file or multi_edit for file changes, verify with a read/test command, or explain the blocker in your final answer.",
+		"blocked: [loop guard] %q has already succeeded %d times with the same write-like arguments in this user turn. Re-running it is unlikely to help and may burn tokens or repeat file writes. Change approach: use edit_file for file changes, verify with a read/test command, or explain the blocker in your final answer.",
 		call.Name, count), true
 }
 
@@ -1591,7 +1628,7 @@ func repeatSuccessSignature(call provider.ToolCall, t tool.Tool) (string, bool) 
 		return "", false
 	}
 	switch call.Name {
-	case "write_file", "edit_file", "multi_edit", "move_file", "notebook_edit":
+	case "write_file", "edit_file":
 		return call.Name + "\x00" + canonicalToolArgs(call.Arguments), true
 	case "bash":
 		var p struct {
