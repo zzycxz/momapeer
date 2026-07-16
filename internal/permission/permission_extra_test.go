@@ -140,14 +140,12 @@ func TestSubjectPriority(t *testing.T) {
 	}
 }
 
-// --- rememberRule ---
-
 func TestRememberRuleWithBashSubjectUsesPrefixWhenAvailable(t *testing.T) {
 	// Bash commands with a safe prefix prefer the prefix over the exact command
 	// so "always allow" covers similar invocations (e.g. different search terms).
-	got := rememberRule("bash", "go test ./...")
+	got := RememberRuleForScope("bash", "go test ./...")
 	if got != "Bash(go test:*)" {
-		t.Errorf("rememberRule = %q, want Bash(go test:*)", got)
+		t.Errorf("RememberRuleForScope = %q, want Bash(go test:*)", got)
 	}
 	if r, ok := ParseRule(got); !ok || r.Literal || r.Tool != "Bash" || r.Subject != "go test:*" {
 		t.Errorf("ParseRule(%q) = {%q,%q,lit=%v,ok=%v}", got, r.Tool, r.Subject, r.Literal, ok)
@@ -195,9 +193,9 @@ func TestRememberRuleForBashUsesPrefixWhenAvailable(t *testing.T) {
 func TestRememberRuleWithFileSubjectIsToolWide(t *testing.T) {
 	// File mutation tools are remembered tool-wide so "always allow editing"
 	// covers any file, matching the session-grant behaviour.
-	got := rememberRule("edit_file", "src/app.go")
+	got := RememberRuleForScope("edit_file", "src/app.go")
 	if got != "Edit" {
-		t.Errorf("rememberRule = %q, want Edit", got)
+		t.Errorf("RememberRuleForScope = %q, want Edit", got)
 	}
 	if r, ok := ParseRule(got); !ok || r.Literal || r.Tool != "Edit" || r.Subject != "" {
 		t.Errorf("ParseRule(%q) = {%q,%q,lit=%v,ok=%v}", got, r.Tool, r.Subject, r.Literal, ok)
@@ -209,14 +207,14 @@ func TestRememberRuleWithFileSubjectIsToolWide(t *testing.T) {
 // "Edit" — tool-wide, with no path restriction.  This means approving one
 // edit_file call and choosing "Always allow (save to config)" grants blanket
 // edit permission for every file, across sessions, for every file-mutation
-// tool (write_file, multi_edit, etc.).  Deny rules still take precedence.
+// tool (write_file, edit_file).  Deny rules still take precedence.
 func TestPersistedEditRuleIsToolWide(t *testing.T) {
 	rule := RememberRuleForScope("edit_file", "src/app.go")
 	if rule != "Edit" {
 		t.Fatalf("persisted rule = %q, want tool-wide Edit (no path restriction)", rule)
 	}
 	// The tool-wide Edit rule matches any file-mutation tool on any file.
-	allMutationTools := []string{"write_file", "edit_file", "multi_edit", "notebook_edit", "delete_range", "delete_symbol"}
+	allMutationTools := []string{"write_file", "edit_file"}
 	for _, tm := range allMutationTools {
 		if !RuleMatchesString(rule, tm, "any/path/at/all.txt") {
 			t.Errorf("tool-wide Edit should match %s on any path", tm)
@@ -230,9 +228,9 @@ func TestPersistedEditRuleIsToolWide(t *testing.T) {
 }
 
 func TestRememberRuleWithoutSubject(t *testing.T) {
-	got := rememberRule("ls", "")
+	got := RememberRuleForScope("ls", "")
 	if got != "ls" {
-		t.Errorf("rememberRule = %q", got)
+		t.Errorf("RememberRuleForScope = %q", got)
 	}
 }
 
@@ -308,8 +306,8 @@ func TestFileMutationRuleMatchesMutationToolsByPath(t *testing.T) {
 	if got := p.Decide("write_file", false, json.RawMessage(`{"path":"src/app.go"}`)); got != Allow {
 		t.Errorf("write_file same path = %v, want Allow", got)
 	}
-	if got := p.Decide("multi_edit", false, json.RawMessage(`{"path":"src/app.go"}`)); got != Allow {
-		t.Errorf("multi_edit same path = %v, want Allow", got)
+	if got := p.Decide("edit_file", false, json.RawMessage(`{"path":"src/app.go"}`)); got != Allow {
+		t.Errorf("edit_file same path = %v, want Allow", got)
 	}
 	if got := p.Decide("edit_file", false, json.RawMessage(`{"path":"src/other.go"}`)); got == Allow {
 		t.Errorf("edit_file different path = %v, want not Allow", got)
@@ -352,4 +350,63 @@ func TestNewGate(t *testing.T) {
 	if g.Approver != nil {
 		t.Error("Approver should be nil")
 	}
+}
+
+// --- emailSubjects cc/bcc coverage (security regression A1) ---
+
+// TestEmailSubjectsIncludesCCBCC confirms that deny rules scoped to a domain
+// cannot be bypassed by hiding a recipient in cc or bcc. Before the fix,
+// emailSubjects only inspected the "to" field, so a message with
+// to=colleague@company.com + bcc=exfil@evil.com would only surface company.com
+// and an allow(company.com) rule would wrongly permit delivery to evil.com.
+func TestEmailSubjectsIncludesCCBCC(t *testing.T) {
+	args := json.RawMessage(`{"to":"colleague@company.com","cc":"peer@corp.org","bcc":"exfil@evil.com"}`)
+	got := emailSubjects(args)
+	want := map[string]bool{"company.com": true, "corp.org": true, "evil.com": true}
+	if len(got) != len(want) {
+		t.Fatalf("emailSubjects = %v, want all of %v", got, want)
+	}
+	for _, d := range got {
+		if !want[d] {
+			t.Errorf("unexpected domain %q in %v", d, got)
+		}
+	}
+}
+
+// TestEmailSubjectsArrayCC confirms cc/bcc accept JSON array form too.
+func TestEmailSubjectsArrayCC(t *testing.T) {
+	args := json.RawMessage(`{"to":["a@x.com"],"cc":["b@y.com","c@z.com"],"bcc":"d@y.com"}`)
+	got := emailSubjects(args)
+	gotSet := map[string]bool{}
+	for _, d := range got {
+		gotSet[d] = true
+	}
+	for _, want := range []string{"x.com", "y.com", "z.com"} {
+		if !gotSet[want] {
+			t.Errorf("missing domain %q in %v", want, got)
+		}
+	}
+	// y.com appears in both cc and bcc but must be deduped.
+	yCount := 0
+	for _, d := range got {
+		if d == "y.com" {
+			yCount++
+		}
+	}
+	if yCount != 1 {
+		t.Errorf("y.com should appear once (deduped), got %d", yCount)
+	}
+}
+
+// TestEmailSubjectsBCCDefeatsDeny is the end-to-end attack scenario: a deny
+// rule on evil.com must still fire when evil.com is only in bcc.
+func TestEmailSubjectsBCCDefeatsDeny(t *testing.T) {
+	args := json.RawMessage(`{"to":"colleague@company.com","bcc":"exfil@evil.com"}`)
+	got := emailSubjects(args)
+	for _, d := range got {
+		if d == "evil.com" {
+			return // good: bcc domain surfaced, deny rule will match
+		}
+	}
+	t.Fatalf("bcc domain evil.com missing from subjects %v — deny(exvil.com) would be bypassed", got)
 }

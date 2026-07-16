@@ -112,10 +112,18 @@ type Policy struct {
 	Allow []Rule
 	Ask   []Rule
 	Deny  []Rule
+	// HardDeny is an immutable deny layer that cannot be overridden by user
+	// config. It is checked FIRST, before Allow/Ask/Deny, so even a user who
+	// configures "*": "allow" cannot bypass these rules. Used by plan mode to
+	// guarantee writer tools stay blocked during planning regardless of
+	// session/runtime permission changes. Set via SetHardDeny (not New, which
+	// leaves it nil = no hard rules).
+	HardDeny []Rule
 }
 
 // New builds a Policy from config string slices and a mode string ("ask" by
-// default). Malformed rule strings are dropped.
+// default). Malformed rule strings are dropped. HardDeny is left empty; call
+// SetHardDeny to install immutable rules (e.g. for plan mode).
 func New(mode string, allow, ask, deny []string) Policy {
 	return Policy{
 		Mode:  ParseDecision(mode),
@@ -125,14 +133,160 @@ func New(mode string, allow, ask, deny []string) Policy {
 	}
 }
 
+// SetHardDeny installs immutable deny rules. These are checked before all
+// other rules and cannot be overridden. Returns the modified Policy for
+// chaining. Used by the controller to enforce plan-mode read-only as a
+// data-layer guarantee (not just a runtime boolean).
+func (p Policy) SetHardDeny(rules []string) Policy {
+	p.HardDeny = parseRules(rules)
+	return p
+}
+
 // Decide evaluates a tool call. readOnly is the tool's own classification; args
 // is the raw JSON the model sent, from which the call's subject is extracted
-// for glob matching. Calls with multiple subjects, such as move_file's source
-// and destination paths, must be safe for every subject before the call is
-// allowed. Precedence: deny > ask > allow > fallback (Allow for readers, Mode
-// for writers).
+// for glob matching. Calls with multiple subjects must be safe for every subject
+// before the call is allowed. Precedence: deny > ask > allow > fallback (Allow
+// for readers, Mode for writers).
 func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Decision {
-	return p.DecideSubjects(toolName, readOnly, Subjects(args))
+	return p.DecideSubjects(toolName, readOnly, subjectsFor(toolName, args))
+}
+
+// subjectsFor extracts the approval subject(s) for a tool call. For most tools
+// this is the generic key-based Subjects() (command/path/pattern). A few tools
+// whose subject isn't one of those keys get bespoke extraction:
+//   - email_send: subject is the recipient domains (e.g. "gmail.com"), so a
+//     user can allow-list their company domain once and only get prompted for
+//     unfamiliar recipients. "to" can be a string or an array.
+//   - rag_delete: subject is the collection name, so a user can approve
+//     deleting a scratch collection while still being prompted for production
+//     knowledge bases.
+//
+// These are the IRREVERSIBLE, outward-facing coWork operations where HITL
+// adds real value (an email sent or a KB deleted can't be undone). Read-only
+// and reversible operations fall through to the generic path and their normal
+// policy.
+func subjectsFor(toolName string, args json.RawMessage) []string {
+	switch toolName {
+	case "email_send":
+		return emailSubjects(args)
+	case "rag_delete":
+		return ragDeleteSubjects(args)
+	}
+	return Subjects(args)
+}
+
+// emailSubjects extracts recipient domains from email_send's "to", "cc", and
+// "bcc" fields. Each field may be a single string ("a@x.com"), a comma-
+// separated string ("a@x.com, b@y.com"), or a JSON array (["a@x.com"]). We
+// collapse each to its domain so a bare "email_send" ask rule (no subject)
+// still prompts, while a "email_send:example.com" rule allows a whole domain.
+// Duplicates are dropped.
+//
+// SECURITY: cc and bcc MUST be included alongside "to" — email_send actually
+// delivers to all three, so a deny rule scoped to a domain is bypassable if we
+// only inspect "to" (an attacker sets to=colleague@company.com while hiding
+// exfil@evil.com in bcc). See internal audit finding A1.
+func emailSubjects(args json.RawMessage) []string {
+	if len(args) == 0 {
+		return nil
+	}
+	var p struct {
+		To  json.RawMessage `json:"to"`
+		Cc  json.RawMessage `json:"cc"`
+		Bcc json.RawMessage `json:"bcc"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return nil
+	}
+
+	var addrs []string
+	for _, raw := range []json.RawMessage{p.To, p.Cc, p.Bcc} {
+		addrs = append(addrs, parseRecipientField(raw)...)
+	}
+
+	seen := map[string]bool{}
+	var out []string
+	for _, a := range addrs {
+		d := emailDomain(a)
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		out = append(out, d)
+	}
+	// If no domains parsed, return a single empty-subject marker so a bare
+	// "email_send" rule still matches and prompts.
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
+}
+
+// parseRecipientField decodes one recipient field (to/cc/bcc) — a JSON array
+// of addresses, a single string, or a comma-separated string — into a flat
+// list of address strings.
+func parseRecipientField(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	// Try array first.
+	var addrs []string
+	if err := json.Unmarshal(raw, &addrs); err == nil {
+		return addrs
+	}
+	// Fall back to a single string (possibly comma-separated).
+	var single string
+	if err := json.Unmarshal(raw, &single); err != nil {
+		return nil
+	}
+	return splitRecipients(single)
+}
+
+// splitRecipients splits a comma-separated recipient string, tolerating
+// whitespace and stray separators.
+func splitRecipients(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if a := strings.TrimSpace(p); a != "" {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// emailDomain extracts the lowercase domain from an email address
+// ("user@example.com" → "example.com"). Returns "" for malformed input.
+func emailDomain(addr string) string {
+	addr = strings.TrimSpace(addr)
+	at := strings.LastIndex(addr, "@")
+	if at < 0 || at == len(addr)-1 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(addr[at+1:]))
+}
+
+// ragDeleteSubjects extracts the collection name from rag_delete's args. An
+// empty collection (delete-everything) maps to the wildcard subject so a bare
+// "rag_delete" rule still prompts.
+func ragDeleteSubjects(args json.RawMessage) []string {
+	if len(args) == 0 {
+		return nil
+	}
+	var p struct {
+		Collection string `json:"collection"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return nil
+	}
+	if strings.TrimSpace(p.Collection) == "" {
+		return []string{"*"}
+	}
+	return []string{p.Collection}
 }
 
 // DecideSubjects evaluates a tool call when the caller already extracted one or
@@ -159,6 +313,11 @@ func (p Policy) DecideSubjects(toolName string, readOnly bool, subjects []string
 // stable approval subject from args.
 func (p Policy) DecideSubject(toolName string, readOnly bool, subject string) Decision {
 	switch {
+	// HardDeny is checked FIRST and cannot be overridden by any other rule.
+	// This is the data-layer guarantee that plan mode (and any future
+	// security boundary) relies on: even "*": "allow" can't bypass it.
+	case matchAny(p.HardDeny, toolName, subject):
+		return Deny
 	case matchAny(p.Deny, toolName, subject):
 		return Deny
 	case matchAny(p.Ask, toolName, subject):
@@ -250,13 +409,12 @@ func bashRulePrefixBaseMatches(existing, candidate Rule) bool {
 // subjectKeys are the JSON argument keys, in priority order, that carry a tool
 // call's "subject" — the thing a Subject glob matches against. Generic so tools
 // need not implement a permission-specific method: bash exposes command, the
-// file tools expose path / file_path, grep & glob expose pattern. Multi-endpoint
-// tools like move_file expose source_path + destination_path.
-var subjectKeys = []string{"command", "file_path", "path", "source_path", "destination_path", "pattern"}
+// file tools expose path / file_path, grep exposes pattern.
+var subjectKeys = []string{"command", "file_path", "path", "pattern"}
 
 // Subjects extracts all matchable subject strings from a call's raw JSON args.
-// Multi-endpoint tools (e.g. move_file with source_path + destination_path)
-// return multiple entries so permission evaluation can check every endpoint.
+// A call may return multiple entries when several keys are present, so
+// permission evaluation can check every endpoint.
 func Subjects(args json.RawMessage) []string {
 	if len(args) == 0 {
 		return nil
@@ -387,15 +545,6 @@ func (g *Gate) Check(ctx context.Context, toolName string, args json.RawMessage,
 	}
 }
 
-// rememberRule builds the rule string persisted when the user picks "always
-// allow". Bash commands prefer a safe command prefix (e.g. go test:*) so
-// "always allow" covers similar invocations with different arguments. File
-// mutation tools are remembered tool-wide ("Edit") so approving one file edit
-// covers all files. Other tools are remembered by tool name. Deny and ask rules keep their higher precedence.
-func rememberRule(toolName, subject string) string {
-	return RememberRuleForScope(toolName, subject)
-}
-
 // RememberRuleForScope builds the rule string persisted when the user chooses
 // an always-allow option. Bash commands prefer a safe prefix (go test:*) so
 // similar invocations (different search terms, different test packages) match;
@@ -475,7 +624,7 @@ func isPackageManagerRun(base string) bool {
 // IsFileMutationTool reports whether a built-in tool mutates workspace files.
 func IsFileMutationTool(toolName string) bool {
 	switch toolName {
-	case "write_file", "edit_file", "multi_edit", "move_file", "notebook_edit", "delete_range", "delete_symbol":
+	case "write_file", "edit_file":
 		return true
 	default:
 		return false
