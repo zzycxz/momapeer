@@ -504,6 +504,32 @@ func saveAttachmentsFromRaw(raw []byte, dir string) int {
 	return saved
 }
 
+// sensitiveAttachmentSubdirs lists path segments that, if they appear in a
+// save_attachments target, mark it as too dangerous to write attacker-controlled
+// email attachment bytes into. The attachment filename is set by the sender
+// (Content-Disposition), so a path like ~/.ssh/ lets a malicious email overwrite
+// authorized_keys.
+var sensitiveAttachmentSubdirs = []string{
+	".ssh", ".aws", ".gnupg", ".config",
+	"Windows", "System32", "Startup", "Start Menu",
+	"etc", "bin", "sbin", "usr/bin",
+}
+
+// guardAttachmentDir rejects save_attachments targets that point at or into
+// well-known sensitive directories. It is a denylist guard, not a full workspace
+// confine (which would require boot-time root injection); it blocks the
+// known-dangerous paths an injected prompt would target. See security review #3.
+func guardAttachmentDir(dir string) error {
+	dir = filepath.Clean(dir)
+	lower := strings.ToLower(dir)
+	for _, seg := range sensitiveAttachmentSubdirs {
+		if strings.Contains(lower, strings.ToLower(seg)) {
+			return fmt.Errorf("save_attachments directory %q is in or under a sensitive location (%s); choose a workspace subdirectory instead", dir, seg)
+		}
+	}
+	return nil
+}
+
 // formatAddresses renders an imap.Address slice as "Name <addr>, Name2 <addr2>".
 func formatAddresses(addrs []*imap.Address) string {
 	var parts []string
@@ -583,6 +609,17 @@ func (emailReadTool) Execute(ctx context.Context, args json.RawMessage) (string,
 	}
 	// Download attachments if requested.
 	if p.SaveAttachments != "" {
+		// SECURITY: save_attachments comes straight from the agent and controls
+		// where attachment bytes (attacker-controlled via email) get written.
+		// Without this check an injected prompt could direct attachments to
+		// ~/.ssh/authorized_keys or similar sensitive paths. ConfineWriters does
+		// not cover email_read (it's not a generic writer), so we guard here.
+		// See security review finding #3. Full workspace confine via boot
+		// injection is tracked separately; this blocks the known-dangerous
+		// targets.
+		if err := guardAttachmentDir(p.SaveAttachments); err != nil {
+			return "", err
+		}
 		saved, err := downloadAttachments(ctx, cfg, p.Limit, p.UnreadOnly, since, before, p.SaveAttachments)
 		if err != nil {
 			return "", fmt.Errorf("download attachments: %w", err)
