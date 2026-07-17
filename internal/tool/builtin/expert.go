@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/zzycxz/momapeer/internal/experts"
 	"github.com/zzycxz/momapeer/internal/tool"
@@ -102,9 +103,23 @@ func (expertTeamRun) Execute(ctx context.Context, args json.RawMessage) (string,
 	}
 	// Synchronous: blocks until the team finishes. The orchestrator emits
 	// CollabEvents to the live channel as it runs, so a user watching the Expert
-	// panel sees streamed rounds. We return only the final synthesis.
-	res, err := o.Run(ctx, teamID, p.Task, p.Mode, p.Rounds)
+	// panel sees streamed rounds. We return only the final synthesis — the agent
+	// reasons from the conclusion, and the full per-expert transcript is visible
+	// in the Expert panel and (for panel-initiated runs) persisted as a folded
+	// block in the main session.
+	// Bound the run so a hung LLM call or a slow pipeline can't block the
+	// agent's tool call indefinitely (the parent turn ctx may itself lack a
+	// deadline). 10 minutes covers a 3-expert debate + synthesis at low RPM;
+	// the Expert panel already streams progress so a timeout lands gracefully.
+	// See audit finding E7.
+	const expertRunTimeout = 10 * time.Minute
+	runCtx, cancel := context.WithTimeout(ctx, expertRunTimeout)
+	defer cancel()
+	res, err := o.Run(runCtx, teamID, p.Task, p.Mode, p.Rounds)
 	if err != nil {
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			return "", errors.New("专家团运行超时（超过 10 分钟），请在 Expert 面板查看部分进度后缩小任务范围重试")
+		}
 		return "", err
 	}
 	// Surface the synthesis plus a compact transcript so the agent has the full
