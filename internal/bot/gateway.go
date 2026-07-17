@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -504,8 +505,13 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 	state.sink.setTarget(sink)
 	defer state.sink.setTarget(nil)
 
-	// 创建带取消的 context
-	turnCtx, cancel := context.WithCancel(ctx)
+	// 创建带取消和超时的 context。Bot 没有交互式 UI 让用户感知一个永久
+	// running 的 turn，且 IM 会话被 SessionManager 锁定直到 Release——一个卡死
+	// 的 turn（模型 hang / 死循环 / 审批无人响应）会永久占住该 session key，
+	// 后续消息全部排队等待。10 分钟兜底让卡死的 turn 自动释放。/stop 仍可
+	// 即时取消（cancel 是 WithTimeout 返回的，外部调用兼容）。见审计 E5。
+	const botTurnTimeout = 10 * time.Minute
+	turnCtx, cancel := context.WithTimeout(ctx, botTurnTimeout)
 	defer cancel()
 
 	gw.mu.Lock()
@@ -518,6 +524,9 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 	err := state.ctrl.RunTurn(turnCtx, input)
 	sink.Emit(event.Event{Kind: event.TurnDone, Err: err})
 	if err != nil {
+		if errors.Is(turnCtx.Err(), context.DeadlineExceeded) {
+			_ = gw.sendText(ctx, adapter, msg, "本轮对话超时（超过 10 分钟），已自动停止。可用 /new 重开会话。")
+		}
 		gw.logger.Warn("turn error", "session", key[:8], "err", err)
 	}
 }
