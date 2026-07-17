@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"time"
 
 	"github.com/zzycxz/momapeer/internal/config"
 )
@@ -78,6 +79,11 @@ func (a *App) sendStartupPing() {
 }
 
 func postStartupPing(ctx context.Context, c *http.Client, endpoint string, p startupPing) error {
+	// Bound the ping so a hung endpoint can't block the startup goroutine. ctx
+	// comes from bootContext() (Wails ctx / Background), neither has a deadline.
+	// See audit finding E6.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	body, err := json.Marshal(p)
 	if err != nil {
 		return err

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"runtime"
+	"time"
 )
 
 // crash_app.go is the crash/feedback reporting surface. Reports are sent only on
@@ -57,6 +58,11 @@ func (a *App) ReportCrash(kind, detail string) error {
 }
 
 func postCrashReport(ctx context.Context, c *http.Client, endpoint string, r crashReport) error {
+	// Bound the upload so a hung/slow endpoint can't pin the user's crash-report
+	// click forever (ctx comes from Wails app ctx with no deadline). 10s is ample
+	// for a <16KB payload. See audit finding E6.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	body, err := json.Marshal(r)
 	if err != nil {
 		return err
