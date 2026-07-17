@@ -31,21 +31,22 @@ import (
 	"github.com/zzycxz/momapeer/internal/boot"
 	"github.com/zzycxz/momapeer/internal/bot"
 	"github.com/zzycxz/momapeer/internal/builtinmcp"
+	calendarpkg "github.com/zzycxz/momapeer/internal/calendar"
 	"github.com/zzycxz/momapeer/internal/config"
 	"github.com/zzycxz/momapeer/internal/control"
 	"github.com/zzycxz/momapeer/internal/event"
+	expertspkg "github.com/zzycxz/momapeer/internal/experts"
 	"github.com/zzycxz/momapeer/internal/fileref"
 	fileenc "github.com/zzycxz/momapeer/internal/fileutil/encoding"
 	"github.com/zzycxz/momapeer/internal/i18n"
 	"github.com/zzycxz/momapeer/internal/mcpdiag"
 	"github.com/zzycxz/momapeer/internal/memory"
 	"github.com/zzycxz/momapeer/internal/plugin"
-	schedulerpkg "github.com/zzycxz/momapeer/internal/scheduler"
-	ragpkg "github.com/zzycxz/momapeer/internal/rag"
-	expertspkg "github.com/zzycxz/momapeer/internal/experts"
-	"github.com/zzycxz/momapeer/internal/tool/builtin"
 	"github.com/zzycxz/momapeer/internal/provider"
+	ragpkg "github.com/zzycxz/momapeer/internal/rag"
+	schedulerpkg "github.com/zzycxz/momapeer/internal/scheduler"
 	"github.com/zzycxz/momapeer/internal/skill"
+	"github.com/zzycxz/momapeer/internal/tool/builtin"
 )
 
 // eventChannel is the Wails runtime event name the frontend subscribes to for the
@@ -84,8 +85,8 @@ type App struct {
 	mediaTokens *mediaTokenStore
 	botInstalls map[string]*botInstallSession
 	botGW       atomic.Pointer[bot.BotGateway] // nil when bot is disabled or not started; atomic for lock-free reads from Push/hotkey
-	hotkeyMgr   *hotkeyManager  // screenshot hotkey manager; nil when feature off/stopped
-	estopMgr    *estopManager   // emergency-stop hotkey manager; nil when feature off/stopped
+	hotkeyMgr   *hotkeyManager                 // screenshot hotkey manager; nil when feature off/stopped
+	estopMgr    *estopManager                  // emergency-stop hotkey manager; nil when feature off/stopped
 
 	// sharedHosts shares one plugin.Host per workspace root across desktop tabs
 	// so opening N tabs on the same project spawns MCP subprocesses (CodeGraph,
@@ -98,15 +99,30 @@ type App struct {
 	// scheduled prompts fire into whichever tab is active. Persists tasks to
 	// ~/.config/momapeer/scheduled_tasks.json across restarts.
 	scheduler *schedulerpkg.Scheduler
+	// calendarStore is the cowork calendar store (SQLite). Created once at
+	// startup; persists to ~/.config/momapeer/calendar.db.
+	calendarStore  *calendarpkg.Store
+	calendarRemind *calendarpkg.ReminderEngine
+
 	// ragStore is the cowork knowledge-base store (FTS5 + structured entities).
 	// ragPipeline is the background deep-extraction engine (chunks → LLM →
 	// entity/relation graph). Both persist to the user config dir.
 	ragStore    *ragpkg.Store
 	ragPipeline *ragpkg.Pipeline
+	ragSession  *ragpkg.SessionRAGContext
+	// heService manages the Hyper-Extract Python server lifecycle.
+	heService *HEService
 	// expertStore + expertOrchestrator power the 专家团 (expert-team) panel:
 	// multi-model collaboration with persistent team rosters.
 	expertStore        *expertspkg.Store
 	expertOrchestrator *expertspkg.Orchestrator
+	// expertRuns tracks in-flight expert-team runs keyed by teamID, so a panel
+	// remounted after the CoWorkLayout was torn down (tab/profile switch) can
+	// query whether a run is still going and re-subscribe to its stream. The
+	// backend goroutine runs independent of the frontend, so this survives
+	// unmounting. Guarded by expertRunsMu.
+	expertRuns   map[string]*expertRunState
+	expertRunsMu sync.Mutex
 	// screenshotHwnd is the hidden message-only window receiving WM_HOTKEY for
 	// the global screenshot hotkey. 0 when the feature is off.
 	screenshotHwnd uintptr
@@ -281,7 +297,7 @@ func (a *App) workspaceMediaMiddleware() func(http.Handler) http.Handler {
 // NewApp constructs the bound object. Tabs are restored in startup from the
 // last session's desktop-tabs.json.
 func NewApp() *App {
-	return &App{tabs: map[string]*WorkspaceTab{}, mediaTokens: newMediaTokenStore(), botInstalls: map[string]*botInstallSession{}}
+	return &App{tabs: map[string]*WorkspaceTab{}, mediaTokens: newMediaTokenStore(), botInstalls: map[string]*botInstallSession{}, expertRuns: map[string]*expertRunState{}}
 }
 
 func (a *App) bootContext() context.Context {
@@ -302,6 +318,16 @@ func (a *App) Platform() string {
 // off the initialization in a background goroutine so the webview loads immediately.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// Relocate legacy un-profiled session/topic data into the "dev" partition
+	// BEFORE tabs are restored, so the sidebar lists sessions at their new
+	// paths. Idempotent (guarded by a marker) and best-effort: failures are
+	// logged inside, never crashing startup.
+	migrateToProfilePartition()
+	// Prune ghost projects left by the migration's workspace union: a project
+	// copied into BOTH profile files that has no topics/sessions in one of them
+	// should not appear in that profile's sidebar. Runs every startup (idempotent)
+	// so already-migrated disks are healed too.
+	pruneGhostProjects()
 	installSystemQuitHook()
 	a.startTray()
 
@@ -317,6 +343,7 @@ func (a *App) startup(ctx context.Context) {
 	// find them via os.Getenv without the user setting system env vars manually.
 	loadCoworkEnvAtStartup()
 	a.initScheduler()
+	a.initCalendar()
 	a.initRAG()
 	a.initExperts()
 	a.StartScreenshotHotkey()
@@ -341,7 +368,17 @@ func (a *App) initRAG() {
 		return
 	}
 	a.ragStore = store
+	a.ragSession = ragpkg.NewSessionRAGContext()
 	builtin.SetRAGStore(store)
+	// Bridge the desktop UI's "activate collection" control to the agent's
+	// rag_search calls: when the user narrows the session to one collection,
+	// LLM-driven rag_search (with no explicit collection arg) auto-scopes to it.
+	builtin.SetRAGSessionResolver(func() []string {
+		if a.ragSession == nil {
+			return nil
+		}
+		return a.ragSession.GetActiveCollections()
+	})
 
 	// Build the extraction pipeline from [cowork] extract_* settings (with
 	// conservative defaults: 1 concurrent chunk, 3s between chunks). When no
@@ -358,14 +395,43 @@ func (a *App) initRAG() {
 		if c.Cowork.ExtractConcurrency > 0 {
 			cfg.Concurrency = c.Cowork.ExtractConcurrency
 		}
-		// Only enable real extraction when an explicit extract_model is set —
-		// the jiutian extractor calls /chat/completions directly with a bare
-		// model name, so we can't safely fall back to "provider/model" refs.
-		if model := strings.TrimSpace(c.Cowork.ExtractModel); model != "" {
-			extractor = ragpkg.NewJiutianExtractor(ragpkg.JiutianExtractorConfig{
-				Model:    model,
-				TwoStage: true, // entities→relations seeded with known entities (cuts hallucinated edges); ~2× tokens
-			})
+		// Resolve which model the RAG extractor uses, in priority order:
+		//   1. [cowork] extract_model — explicit override (rarely needed);
+		//   2. [agent] fast_task_model — the "迅捷任务模型" from Settings → Model,
+		//      same one dream/distill use (designed for fast background work);
+		//   3. default_model — the main chat model.
+		// All three go through config.ResolveModel, which yields a ProviderEntry
+		// with the right base_url + api_key_env + bare model name — so the
+		// extractor always hits the correct endpoint with the correct key, no
+		// hardcoding. This mirrors exactly how the main agent and subagents
+		// resolve their models.
+		modelRef := strings.TrimSpace(c.Cowork.ExtractModel)
+		if modelRef == "" {
+			modelRef = strings.TrimSpace(c.Agent.FastTaskModel)
+		}
+		if modelRef == "" {
+			modelRef = strings.TrimSpace(c.DefaultModel)
+		}
+		if modelRef != "" {
+			extCfg := ragpkg.JiutianExtractorConfig{TwoStage: true}
+			if e, ok := c.ResolveModel(modelRef); ok {
+				// ResolveModel gives us the concrete provider (base_url, api_key_env)
+				// + bare model name. This is the same resolution the main agent uses.
+				extCfg.BaseURL = e.BaseURL
+				extCfg.APIKey = e.APIKeyEnv
+				extCfg.Model = e.Model
+				slog.Info("rag: extraction model resolved", "ref", modelRef, "model", e.Model, "provider", e.Name)
+			} else {
+				// Fallback: send the ref as-is to the default 九天 endpoint.
+				extCfg.Model = modelRef
+				slog.Warn("rag: could not resolve model ref, using as-is", "ref", modelRef)
+			}
+			extractor = ragpkg.NewJiutianExtractor(extCfg)
+			if bs, ok := extractor.(ragpkg.BudgetSetter); ok {
+				if budget := boot.GlobalBudget(); budget != nil {
+					bs.SetBudget(budget, "rag-extractor")
+				}
+			}
 		}
 	}
 	if extractor == nil {
@@ -380,6 +446,29 @@ func (a *App) initRAG() {
 		slog.Debug("rag: "+format, args...)
 	})
 	a.ragPipeline.Start()
+	// Rehydrate any extraction jobs interrupted by a prior shutdown. Pending/
+	// extracting jobs are re-enqueued from their FTS5 chunk text so restarts no
+	// longer silently drop in-flight work.
+	if n := a.ragPipeline.Resume(); n > 0 {
+		slog.Info("rag: resumed interrupted extraction", "chunks", n)
+	}
+
+	// Start Hyper-Extract Python server (optional — failure is non-fatal).
+	// The port defaults to 18900 but can be overridden via [cowork] he_port.
+	scriptPath := FindScript()
+	if scriptPath != "" {
+		hePort := 0
+		if c, err := config.Load(); err == nil && c.Cowork.HEPort > 0 {
+			hePort = c.Cowork.HEPort
+		}
+		a.heService = NewHEService("", scriptPath, hePort)
+		if err := a.heService.Start(); err != nil {
+			slog.Warn("Hyper-Extract service not started", "err", err)
+			a.heService = nil
+		}
+	} else {
+		slog.Info("Hyper-Extract script not found — HE extraction unavailable")
+	}
 }
 
 // initScheduler creates the app-level scheduled-task engine, loads persisted
@@ -431,18 +520,30 @@ func (r schedulerRunner) Run(ctx context.Context, profile, prompt string) (strin
 	r.app.mu.RLock()
 	tab := r.app.tabs[r.app.activeTabID]
 	r.app.mu.RUnlock()
-	if tab == nil || tab.Ctrl == nil {
-		return "", fmt.Errorf("no active tab to run scheduled prompt (open a cowork tab)")
+	if tab != nil && tab.Ctrl != nil && tab.Ready {
+		return runScheduledPrompt(ctx, tab.Ctrl, prompt)
 	}
-	if !tab.Ready {
-		return "", fmt.Errorf("active tab not ready yet")
-	}
-	if err := tab.Ctrl.Run(ctx, prompt); err != nil {
+	// No usable active tab — previously this returned an error and the scheduled
+	// task silently failed (scheduler.runOne records the error but does not
+	// retry, so the prompt was lost). The scheduler package comment explicitly
+	// promises tasks "must fire even when no chat tab is open"; build a temporary
+	// headless cowork controller so the task still runs. See audit finding C7.
+	//
+	// Headless mode is STRICTER than interactive: boot installs a headless
+	// permission gate (deny-by-default for unconfigured writers), so email_send
+	// and other irreversible ops fail closed (no UI to ask) rather than silently
+	// proceeding. The A1/A2/A3 policy hardening we just landed applies here too.
+	return r.app.runHeadlessScheduled(ctx, profile, prompt)
+}
+
+// runScheduledPrompt runs a prompt on the given controller and returns a short
+// summary of the result (the last assistant message text), shared by the
+// active-tab and headless paths.
+func runScheduledPrompt(ctx context.Context, ctrl *control.Controller, prompt string) (string, error) {
+	if err := ctrl.Run(ctx, prompt); err != nil {
 		return "", err
 	}
-	// Return a short summary from the final assistant message so schedule_list
-	// shows what the run produced, not just "ok".
-	hist := tab.Ctrl.History()
+	hist := ctrl.History()
 	if len(hist) == 0 {
 		return "ran (no output)", nil
 	}
@@ -451,6 +552,51 @@ func (r schedulerRunner) Run(ctx context.Context, profile, prompt string) (strin
 		return txt, nil
 	}
 	return "ran", nil
+}
+
+// runHeadlessScheduled builds a throwaway headless cowork controller, runs the
+// prompt, then tears the controller down (releasing the shared plugin host).
+// WorkspaceRoot is the global cowork root (~/.momapeer) since scheduled tasks
+// are not bound to a specific project. See C7.
+func (a *App) runHeadlessScheduled(ctx context.Context, profileName, prompt string) (string, error) {
+	root := globalTabWorkspaceRoot()
+	cfg, err := config.LoadForRoot(root)
+	if err != nil {
+		return "", fmt.Errorf("scheduled task: load config: %w", err)
+	}
+	// Resolve the product profile (default cowork for scheduled tasks). Empty
+	// or "dev" yields a nil profile → unprofiled coding behaviour; any other
+	// name resolves against config + builtins, mirroring tabs.go.
+	var profile *config.Profile
+	name := strings.TrimSpace(profileName)
+	if name == "" {
+		name = config.ProfileCowork
+	}
+	if !strings.EqualFold(name, config.ProfileDev) {
+		if p, perr := cfg.ResolveProfile(name); perr == nil {
+			profile = p
+		}
+	}
+	sharedHost := a.acquireSharedHost(root)
+	ctrl, err := boot.Build(a.bootContext(), boot.Options{
+		Model:         "", // config default_model
+		RequireKey:    false,
+		WorkspaceRoot: root,
+		Host:          sharedHost,
+		Profile:       profile,
+	})
+	if err != nil {
+		a.releaseSharedHost(root) // Build failed: drop the acquire
+		return "", fmt.Errorf("scheduled task: build headless controller: %w", err)
+	}
+	// Headless gate is the boot default (no EnableInteractiveApproval), so writes
+	// and irreversible ops resolve via config policy — fail-closed for anything
+	// not explicitly allowed. Do NOT enable plan/goal (no UI to exit them).
+	defer func() {
+		ctrl.Close()
+		a.releaseSharedHost(root)
+	}()
+	return runScheduledPrompt(ctx, ctrl, prompt)
 }
 
 // assistantText extracts the text content of an assistant message (empty for
@@ -571,10 +717,13 @@ func (a *App) restoreOrBuildTabs() {
 			a.mu.Unlock()
 
 			var tab *WorkspaceTab
-			if entry.Scope == "project" {
-				tab = a.createTabEntryWithID(entry.Scope, entry.WorkspaceRoot, entry.TopicID, id)
+			if entry.IsExpertSession {
+				// Expert-session tabs are their own scope; restore verbatim.
+				tab = a.createTabEntryWithID("expert", "", entry.Profile, "", id)
+			} else if entry.Scope == "project" {
+				tab = a.createTabEntryWithID(entry.Scope, entry.WorkspaceRoot, entry.Profile, entry.TopicID, id)
 			} else {
-				tab = a.createTabEntryWithID("global", globalTabWorkspaceRoot(), entry.TopicID, id)
+				tab = a.createTabEntryWithID("global", globalTabWorkspaceRoot(), entry.Profile, entry.TopicID, id)
 			}
 			tab.model = entry.Model
 			tab.effort = cloneStringPtr(entry.Effort)
@@ -586,6 +735,9 @@ func (a *App) restoreOrBuildTabs() {
 			}
 			tab.profile = strings.TrimSpace(entry.Profile)
 			tab.SessionPath = strings.TrimSpace(entry.SessionPath)
+			tab.IsExpertSession = entry.IsExpertSession
+			tab.ExpertTeamID = strings.TrimSpace(entry.ExpertTeamID)
+			tab.ExpertTeamName = strings.TrimSpace(entry.ExpertTeamName)
 			tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: ctx}
 			a.mu.Lock()
 			a.tabs[tab.ID] = tab
@@ -610,7 +762,7 @@ func (a *App) restoreOrBuildTabs() {
 	}
 
 	// First launch: create a default Global tab.
-	tab := a.createTabEntry("global", globalTabWorkspaceRoot(), "")
+	tab := a.createTabEntry("global", globalTabWorkspaceRoot(), "", "")
 	tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: ctx}
 	tab.TopicTitle = "Global"
 	a.mu.Lock()
@@ -621,17 +773,18 @@ func (a *App) restoreOrBuildTabs() {
 	a.startTabControllerBuild(tab)
 }
 
-func (a *App) createTabEntry(scope, workspaceRoot, topicID string) *WorkspaceTab {
-	return a.createTabEntryWithID(scope, workspaceRoot, topicID, newTabID())
+func (a *App) createTabEntry(scope, workspaceRoot, profile, topicID string) *WorkspaceTab {
+	return a.createTabEntryWithID(scope, workspaceRoot, profile, topicID, newTabID())
 }
 
-func (a *App) createTabEntryWithID(scope, workspaceRoot, topicID, id string) *WorkspaceTab {
+func (a *App) createTabEntryWithID(scope, workspaceRoot, profile, topicID, id string) *WorkspaceTab {
 	return &WorkspaceTab{
 		ID:               id,
 		Scope:            scope,
 		WorkspaceRoot:    workspaceRoot,
 		TopicID:          topicID,
-		TopicTitle:       topicTitleForTab(scope, workspaceRoot, topicID),
+		TopicTitle:       topicTitleForTab(scope, workspaceRoot, normalizeProfileName(profile), topicID),
+		profile:          normalizeProfileName(profile),
 		mode:             "normal",
 		toolApprovalMode: control.ToolApprovalAsk,
 		disabledMCP:      map[string]ServerView{},
@@ -662,6 +815,16 @@ func (a *App) shutdown(context.Context) {
 	a.StopScreenshotHotkey()
 	// Stop the emergency-stop hotkey loop likewise.
 	a.StopEStopHotkey()
+	// Stop the RAG extraction pipeline so its worker goroutines exit cleanly
+	// (pending chunks are durable — Resume() rehydrates them on next launch).
+	if a.ragPipeline != nil {
+		a.ragPipeline.Stop()
+	}
+	// Kill the Hyper-Extract Python subprocess so it doesn't leak as an orphan
+	// when the app exits (Windows especially leaves it running otherwise).
+	if a.heService != nil {
+		a.heService.Stop()
+	}
 	// Save window geometry synchronously from Go so it's persisted even if the
 	// frontend's beforeunload promise hasn't resolved yet.
 	a.saveWindowStateSync()
@@ -785,6 +948,18 @@ func (a *App) bindControllerDisplayRecorder(ctrl *control.Controller) {
 		}
 		_ = recordSessionDisplay(dir, ctrl.SessionPath(), content, display)
 	})
+}
+
+// bindControllerContextFilter wires the expert-collab context projection onto a
+// freshly built controller, so a full-fidelity expert-collab message in the
+// transcript is shown to the model as its synthesis-only summary (keeping the
+// multi-expert transcript from bloating the context window). Called at every
+// controller build alongside bindControllerDisplayRecorder.
+func (a *App) bindControllerContextFilter(ctrl *control.Controller) {
+	if ctrl == nil {
+		return
+	}
+	ctrl.SetContextFilter(expertspkg.CollabContextMessages)
 }
 
 // Cancel aborts the in-flight turn.
@@ -1192,6 +1367,7 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 	model := sourceTab.model
 	effort := cloneStringPtr(sourceTab.effort)
 	mode := currentTabMode(sourceTab)
+	profileKey := normalizeProfileName(sourceTab.profile)
 	disabledMCP := cloneServerViewMap(sourceTab.disabledMCP)
 	mcpOrder := append([]string(nil), sourceTab.mcpOrder...)
 	a.mu.RUnlock()
@@ -1206,7 +1382,7 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 	if scope == "global" {
 		titleRoot = ""
 	}
-	if err := setTopicTitle(titleRoot, topicID, topicTitle); err != nil {
+	if err := setTopicTitle(titleRoot, profileKey, topicID, topicTitle); err != nil {
 		return TabMeta{}, err
 	}
 	m, _ := agent.EnsureBranchMeta(newPath)
@@ -1214,6 +1390,7 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 	m.WorkspaceRoot = workspaceRoot
 	m.TopicID = topicID
 	m.TopicTitle = topicTitle
+	m.Profile = profileKey
 	if err := agent.SaveBranchMeta(newPath, m); err != nil {
 		return TabMeta{}, err
 	}
@@ -1230,6 +1407,7 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 		model:         model,
 		effort:        effort,
 		mode:          mode,
+		profile:       profileKey,
 		disabledMCP:   disabledMCP,
 		mcpOrder:      mcpOrder,
 	}
@@ -1304,14 +1482,19 @@ func controllerSessionDir(ctrl *control.Controller) string {
 
 func tabSessionDir(tab *WorkspaceTab) string {
 	if tab != nil {
+		// The controller's session dir was fixed at boot.Build time from the
+		// tab's profile, so it is already profile-correct — prefer it.
 		if tab.Ctrl != nil {
 			if dir := tab.Ctrl.SessionDir(); dir != "" {
 				return dir
 			}
 		}
+		// Controller not built yet (tab is being constructed): derive from the
+		// workspace root + the tab's profile so even pre-build paths partition.
 		if tab.WorkspaceRoot != "" {
-			return desktopSessionDir(tab.WorkspaceRoot)
+			return desktopSessionDirFor(tab.WorkspaceRoot, tab.profile)
 		}
+		return desktopSessionDirFor("", tab.profile)
 	}
 	return desktopSessionDir("")
 }
@@ -1475,7 +1658,14 @@ func (a *App) RestoreSession(path string) error {
 	if err := restoreTrashedSessionFile(dir, path); err != nil {
 		return err
 	}
-	if err := restoreSessionTopicIndex(dir, filepath.Join(dir, key)); err != nil {
+	// Route the restored topic into the profile that originally owned the
+	// session (from its branch meta); a session with no profile falls back to
+	// dev, matching the legacy default.
+	profile := config.ProfileDev
+	if meta, ok, mErr := agent.LoadBranchMeta(filepath.Join(dir, key)); mErr == nil && ok {
+		profile = normalizeProfileName(meta.Profile)
+	}
+	if err := restoreSessionTopicIndex(profile, dir, filepath.Join(dir, key)); err != nil {
 		return err
 	}
 	a.emitProjectTreeChanged()
@@ -1611,7 +1801,8 @@ func nearestExistingDirectory(path string) string {
 }
 
 func (a *App) ListWorkspaces() []WorkspaceMeta {
-	migrateLegacyWorkspacesIntoProjects()
+	profileKey := a.activeProfileKey()
+	migrateLegacyWorkspacesIntoProjects(profileKey)
 	activeRoot := ""
 	cur, _ := os.Getwd()
 	a.mu.RLock()
@@ -1622,7 +1813,7 @@ func (a *App) ListWorkspaces() []WorkspaceMeta {
 	if activeRoot == "" {
 		activeRoot = normalizeProjectRoot(cur)
 	}
-	projects := loadProjectsFile().Projects
+	projects := loadProjectsFile(profileKey).Projects
 	out := make([]WorkspaceMeta, 0, len(projects))
 	for _, project := range projects {
 		out = append(out, WorkspaceMeta{
@@ -1638,15 +1829,16 @@ func (a *App) RemoveWorkspace(dir string) error {
 	if dir == "" {
 		return fmt.Errorf("workspace path is required")
 	}
+	profileKey := a.activeProfileKey()
 	dir = normalizeProjectRoot(dir)
 	forgetWorkspace(dir)
-	if err := removeProject(dir); err != nil {
+	if err := removeProject(profileKey, dir); err != nil {
 		return err
 	}
 	// If the removed workspace was the active one, clear the pointer
 	// so we don't leave a stale reference to a deleted project.
 	if loadWorkspace() == dir {
-		if remaining := loadProjectsFile(); len(remaining.Projects) > 0 {
+		if remaining := loadProjectsFile(profileKey); len(remaining.Projects) > 0 {
 			// Fall back to the first remaining project
 			saveWorkspace(remaining.Projects[0].Root)
 		} else {
@@ -1658,12 +1850,12 @@ func (a *App) RemoveWorkspace(dir string) error {
 	return nil
 }
 
-func migrateLegacyWorkspacesIntoProjects() {
+func migrateLegacyWorkspacesIntoProjects(profileKey string) {
 	legacy := loadWorkspaces()
 	if len(legacy) == 0 {
 		return
 	}
-	f := loadProjectsFile()
+	f := loadProjectsFile(profileKey)
 	seen := make(map[string]bool, len(f.Projects)+len(legacy))
 	for _, p := range f.Projects {
 		seen[p.Root] = true
@@ -1679,7 +1871,7 @@ func migrateLegacyWorkspacesIntoProjects() {
 		changed = true
 	}
 	if changed {
-		_ = saveProjectsFile(f)
+		_ = saveProjectsFile(profileKey, f)
 	}
 }
 
@@ -1712,12 +1904,14 @@ func (a *App) SwitchWorkspace(dir string) (string, error) {
 	saveWorkspace(dir)
 
 	// Open a registered topic so the new workspace appears in the project tree
-	// immediately instead of only existing as an in-memory tab.
-	topic, err := a.CreateTopic("project", dir, "")
+	// immediately instead of only existing as an in-memory tab. New workspaces
+	// open in the active tab's profile (dev by default).
+	profile := a.activeProfileKeyRaw()
+	topic, err := a.CreateTopic("project", dir, profile, "")
 	if err != nil {
 		return "", err
 	}
-	meta, err := a.OpenProjectTab(dir, topic.ID)
+	meta, err := a.OpenProjectTab(dir, topic.ID, profile)
 	if err != nil {
 		return "", err
 	}
@@ -2021,6 +2215,8 @@ type Meta struct {
 	ToolApprovalMode string `json:"toolApprovalMode"`
 	Goal             string `json:"goal,omitempty"`
 	GoalStatus       string `json:"goalStatus,omitempty"`
+	// ExpertSession is set when this tab is an expert-team collaboration session.
+	ExpertSession *ExpertSessionMeta `json:"expertSession,omitempty"`
 }
 
 // Meta reports the model label, readiness, any startup error, the working
@@ -2047,7 +2243,19 @@ func (a *App) MetaForTab(tabID string) Meta {
 	cwd := tab.WorkspaceRoot
 	goal := tab.goal
 	toolApprovalMode := tab.toolApprovalMode
+	isExpert := tab.IsExpertSession
+	expertTeamID := tab.ExpertTeamID
+	expertTeamName := tab.ExpertTeamName
 	a.mu.RUnlock()
+
+	// Resolve the team's current name (it may have been renamed since the tab
+	// was created/restored). Falls back to the persisted name if the team was
+	// deleted or the store is offline.
+	if isExpert && expertTeamID != "" {
+		if fresh := a.teamDisplayName(expertTeamID); fresh != expertTeamID {
+			expertTeamName = fresh
+		}
+	}
 
 	if cwd == "" {
 		cwd, _ = os.Getwd()
@@ -2068,6 +2276,10 @@ func (a *App) MetaForTab(tabID string) Meta {
 	if toolApprovalMode == "" {
 		toolApprovalMode = control.ToolApprovalAsk
 	}
+	var expertSession *ExpertSessionMeta
+	if isExpert {
+		expertSession = &ExpertSessionMeta{TeamID: expertTeamID, TeamName: expertTeamName}
+	}
 	return Meta{
 		Label:            label,
 		Ready:            ready,
@@ -2079,6 +2291,7 @@ func (a *App) MetaForTab(tabID string) Meta {
 		ToolApprovalMode: toolApprovalMode,
 		Goal:             goal,
 		GoalStatus:       goalStatus,
+		ExpertSession:    expertSession,
 	}
 }
 
@@ -2506,10 +2719,13 @@ func (a *App) Capabilities() CapabilitiesView {
 		})
 	}
 	out.SkillRoots = skillRootsView()
-	// Jiutian multimodal tools.
+	// Jiutian multimodal tools exposed in the skills page. image_understand
+	// is intentionally NOT listed here — it's now globally unified through the
+	// VLM degradation chain (qwen → 九天) configured via the model-page dropdown,
+	// so there's no per-skill toggle for it. Only the 九天-specific generation
+	// and video tools remain toggleable.
 	if loadedCfg != nil {
 		out.JiutianTools = []JiutianToolView{
-			{Name: "image_understand", Description: "图片理解 — 分析截图、UI、错误信息、架构图", Enabled: loadedCfg.Jiutian.ImageUnderstand},
 			{Name: "image_generate", Description: "图片生成 — 文生图、图生图", Enabled: loadedCfg.Jiutian.ImageGenerate},
 			{Name: "video_understand", Description: "视频理解 — 分析操作录屏、演示视频", Enabled: loadedCfg.Jiutian.VideoUnderstand},
 		}
@@ -2527,6 +2743,11 @@ func (a *App) SetJiutianTool(name string, enabled bool) error {
 	return a.applyConfigChange(func(cfg *config.Config) error {
 		switch name {
 		case "image_understand":
+			// No longer surfaced in the skills UI — image understanding is
+			// globally unified via the VLM chain. The field is kept for
+			// backward compat: it still toggles the in-conversation image
+			// degradation path (openai provider), which is the only remaining
+			// use. Future config schemas may rename it.
 			cfg.Jiutian.ImageUnderstand = enabled
 		case "image_generate":
 			cfg.Jiutian.ImageGenerate = enabled
@@ -3795,6 +4016,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		return err
 	}
 	a.bindControllerDisplayRecorder(newCtrl)
+	a.bindControllerContextFilter(newCtrl)
 	a.mu.Lock()
 	if tab.Ctrl == oldCtrl {
 		tab.Ctrl = newCtrl
@@ -3910,6 +4132,11 @@ func (a *App) SwitchProfileForTab(tabID, name string) error {
 	if tab == nil {
 		return nil
 	}
+	// Expert-session tabs are always cowork and cannot be switched to dev —
+	// switching would rebuild the controller and lose the IsExpertSession flag.
+	if tab.IsExpertSession {
+		return fmt.Errorf("cannot switch profile of an expert-session tab")
+	}
 	// Snapshot old controller + scalar fields under RLock to avoid TOCTOU.
 	a.mu.RLock()
 	oldCtrl := tab.Ctrl
@@ -3965,33 +4192,42 @@ func (a *App) SwitchProfileForTab(tabID, name string) error {
 		}
 	}
 
-	var carried []provider.Message
-	prevPath := ""
 	// Acquire the shared host BEFORE closing the old controller so the refcount
 	// never hits zero mid-switch (subprocess teardown). Same invariant as
 	// SetModelForTab — the matching release runs after the old Close.
 	sharedHost := a.acquireSharedHost(root)
 	if oldCtrl != nil {
-		prevPath = oldCtrl.SessionPath()
-		_ = oldCtrl.Snapshot()
-		carried = oldCtrl.History()
+		_ = oldCtrl.Snapshot() // flush the in-memory turn buffer to the old file
+		// Hard profile isolation: the old conversation is NOT carried across —
+		// it stays on disk under the old profile (see comment further down).
 	}
+
+	// We CANNOT use tabSessionDir(tab) here because it prefers
+	// tab.Ctrl.SessionDir(), and tab.Ctrl is still the OLD controller until the
+	// swap below — so it would resolve the OLD profile's dir and break hard
+	// isolation. Pass the new profile's dir explicitly. tab.profile itself is
+	// flipped inside a.mu below (not here) so concurrent readers never see a
+	// half-switched tab.
+	newSessionDir := desktopSessionDirFor(root, name)
 
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:          modelName,
 		RequireKey:     false,
 		Sink:           sink,
 		WorkspaceRoot:  root,
-		SessionDir:     tabSessionDir(tab),
+		SessionDir:     newSessionDir,
 		EffortOverride: effortOverride, // already cloned+normalized above; no double-clone
 		Host:           sharedHost,
 		Profile:        prof,
 	})
 	if err != nil {
+		// No state was mutated yet (tab.profile not flipped until the Lock below),
+		// so there's nothing to roll back — just release the acquired host.
 		a.releaseSharedHost(root)
 		return err
 	}
 	a.bindControllerDisplayRecorder(newCtrl)
+	a.bindControllerContextFilter(newCtrl)
 	a.mu.Lock()
 	if tab.Ctrl == oldCtrl {
 		tab.Ctrl = newCtrl
@@ -4005,23 +4241,56 @@ func (a *App) SwitchProfileForTab(tabID, name string) error {
 	tab.profile = name
 	tab.effort = cloneStringPtr(effortOverride) // persist the normalized effort
 	tab.Label = newCtrl.Label()
+	// Clear the goal on a profile switch (hard isolation): the goal belongs to
+	// the previous profile's conversation. The old goal remains in the old
+	// profile's session on disk and is restored when switching back; the new
+	// profile's fresh session starts goal-less.
+	tab.goal = ""
 	a.saveTabsLocked()
+	// Snapshot the post-switch scalar fields under the lock so the unlocked
+	// persist/index calls below don't race with a concurrent tabMeta/update*.
+	snapScope := tab.Scope
+	snapRoot := tab.WorkspaceRoot
+	snapTopicID := strings.TrimSpace(tab.TopicID)
+	snapTopicTitle := tab.TopicTitle
+	snapMode := tab.mode
+	snapToolApprovalMode := tab.toolApprovalMode
 	a.mu.Unlock()
 	newCtrl.EnableInteractiveApproval()
-	applyTabModeToController(newCtrl, tab.mode)
-	applyTabToolApprovalModeToController(newCtrl, tab.toolApprovalMode)
-	newCtrl.SetGoal(tab.goal)
+	applyTabModeToController(newCtrl, snapMode)
+	applyTabToolApprovalModeToController(newCtrl, snapToolApprovalMode)
+	// Hard isolation extends to the goal: a dev goal (e.g. "refactor auth.go")
+	// must NOT carry into the cowork controller, because Compose would inject it
+	// as an <active-goal> block on every cowork turn. The goal lives with the
+	// profile's conversation, so a fresh session starts goal-less. The old
+	// profile's goal stays recorded on disk in its own session and is restored
+	// when the user switches back (buildTabController re-reads it).
+	newCtrl.SetGoal("")
 
-	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
-	if len(carried) > 0 {
-		newCtrl.Resume(&agent.Session{Messages: carried}, path)
-	} else if path != "" {
+	// Hard isolation: a profile switch starts a FRESH session in the new
+	// profile's directory. The old conversation stays on disk under the old
+	// profile, fully preserved — switching back reveals it again. We never carry
+	// history across (that would leak dev context into cowork or vice versa) and
+	// never reuse the old session path (ContinueSessionPath would return it).
+	path := agent.NewSessionPath(newCtrl.SessionDir(), newCtrl.Label())
+	if path != "" {
 		newCtrl.SetSessionPath(path)
 	}
 	a.persistTabSessionPath(tab, path)
+	// Index the (existing) topic under the NEW profile so it shows up in the
+	// sidebar immediately, rather than waiting for the next restart's
+	// buildTabController → ensureTopicIndexed pass. Best-effort: a failure just
+	// means the topic appears after the first turn or restart.
+	if snapTopicID != "" {
+		if err := ensureTopicIndexed(snapScope, snapRoot, name, snapTopicID, snapTopicTitle, loadTopicTitleSource(topicTitleRoot(snapScope, snapRoot), name, snapTopicID)); err == nil {
+			a.emitProjectTreeChanged()
+		}
+	}
 
 	// Tell the frontend this tab's profile changed so it swaps the layout. The
-	// payload carries the tab id + normalized profile name.
+	// payload carries the tab id + normalized profile name. Emit agent:ready too
+	// so the frontend reloads (now-empty) history for the fresh session.
+	a.emitReady(a.ctx)
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "profile:changed", map[string]string{
 			"tabId":   tab.ID,
@@ -4113,6 +4382,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		return err
 	}
 	a.bindControllerDisplayRecorder(newCtrl)
+	a.bindControllerContextFilter(newCtrl)
 	a.mu.Lock()
 	if tab.Ctrl == oldCtrl {
 		tab.Ctrl = newCtrl
@@ -4830,11 +5100,11 @@ type MemoryDoc struct {
 // are populated from the store's Memory struct so the timeline view can show
 // when a fact became true, whether it has expired, and what superseded it.
 type MemoryFact struct {
-	Name        string   `json:"name"`
-	Title       string   `json:"title,omitempty"`
-	Description string   `json:"description"`
-	Type        string   `json:"type"`
-	Body        string   `json:"body"`
+	Name         string   `json:"name"`
+	Title        string   `json:"title,omitempty"`
+	Description  string   `json:"description"`
+	Type         string   `json:"type"`
+	Body         string   `json:"body"`
 	ValidFrom    string   `json:"validFrom,omitempty"`
 	ValidTo      string   `json:"validTo,omitempty"`
 	Status       string   `json:"status,omitempty"`
