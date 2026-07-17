@@ -130,8 +130,18 @@ func (m *Manager) resolve(path string) (*client, error) {
 
 	m.mu.Lock()
 	if c := m.clients[lang]; c != nil {
-		m.mu.Unlock()
-		return c, nil
+		if c.isDead() {
+			// The server process crashed (readLoop hit EOF). Discard the dead
+			// client and fall through to spawn a fresh one so the rest of the
+			// session recovers, instead of returning a client whose every call
+			// fails forever. Close reaps the dead process tree (idempotent via
+			// closeOnce). See audit finding E1.
+			delete(m.clients, lang)
+			go c.close()
+		} else {
+			m.mu.Unlock()
+			return c, nil
+		}
 	}
 	if ch := m.starting[lang]; ch != nil {
 		m.mu.Unlock()
@@ -244,6 +254,56 @@ func (m *Manager) Diagnostics(ctx context.Context, file string) (string, error) 
 	}
 	diags := c.waitDiagnostics(ctx, uri, c.docVersion(uri), 2*time.Second)
 	return formatDiagnostics(m.rel(path), diags), nil
+}
+
+// WorkspaceSymbol searches for symbols across the whole workspace by name
+// (partial match). Unlike definition/references it doesn't need a file+line —
+// just a query string. Returns matching symbols with their location and kind.
+func (m *Manager) WorkspaceSymbol(ctx context.Context, query string) (string, error) {
+	if strings.TrimSpace(query) == "" {
+		return "", fmt.Errorf("query is required")
+	}
+	// Snapshot the clients under the lock, then iterate without holding it —
+	// iterating m.clients directly races with Close()/resolve() writing the map
+	// (concurrent map iteration and map write → fatal panic). Same pattern as
+	// Close(): copy out a slice, release the lock, do I/O on the snapshot.
+	m.mu.Lock()
+	targets := make([]*client, 0, len(m.clients))
+	for _, c := range m.clients {
+		targets = append(targets, c)
+	}
+	m.mu.Unlock()
+
+	var all []string
+	for _, c := range targets {
+		raw, err := c.callRetry(ctx, "workspace/symbol", map[string]any{
+			"query": query,
+		})
+		if err != nil {
+			continue // a server that doesn't support it just gets skipped
+		}
+		if formatted := formatSymbolInformation(raw, m); formatted != "" {
+			all = append(all, formatted)
+		}
+	}
+	if len(all) == 0 {
+		return "No symbols matched.", nil
+	}
+	return strings.Join(all, "\n"), nil
+}
+
+// Implementation finds the concrete implementations of an interface method
+// (or interface type). Uses the same file+line+symbol pattern as Definition.
+func (m *Manager) Implementation(ctx context.Context, file string, line int, symbol string) (string, error) {
+	c, uri, pos, err := m.prepare(ctx, file, line, symbol)
+	if err != nil {
+		return "", err
+	}
+	raw, err := c.query(ctx, "textDocument/implementation", uri, pos)
+	if err != nil {
+		return indexingOr(err)
+	}
+	return m.formatLocations("implementation", parseLocations(raw)), nil
 }
 
 func (m *Manager) rel(path string) string {

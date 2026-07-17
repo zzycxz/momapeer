@@ -23,6 +23,7 @@ type docState struct {
 
 type client struct {
 	cmd    *exec.Cmd
+	job    uintptr // Windows Job Object handle (0 elsewhere); reaps the process tree on close so a launcher's surviving grandchild (e.g. node → tsserver) can't keep inherited stdio pipes open and block cmd.Wait forever.
 	conn   *conn
 	root   string
 	langID string
@@ -32,6 +33,20 @@ type client struct {
 	docs    map[string]*docState
 	diags   map[string][]Diagnostic
 	diagVer map[string]int
+}
+
+// isDead reports whether the LSP server process has crashed and this client's
+// conn is permanently closed (readLoop saw EOF/error and called fail). The
+// manager checks this in resolve() so a crashed server is discarded and
+// respawned on the next request instead of returning a dead client forever.
+// See audit finding E1.
+func (c *client) isDead() bool {
+	select {
+	case <-c.conn.closed:
+		return true
+	default:
+		return false
+	}
 }
 
 // Diagnostic is one published problem for a document.
@@ -57,12 +72,19 @@ func startClient(ctx context.Context, bin string, args []string, env map[string]
 	if err != nil {
 		return nil, err
 	}
-	if err := cmd.Start(); err != nil {
+	// Start the server tracked in a process group / Windows Job Object so close()
+	// can reap the whole tree. A plain cmd.Start + Process.Kill only kills the
+	// direct child; many LSP servers are launchers (cmd→node→tsserver,
+	// java→jdtls) whose grandchildren inherit the stdio pipes and keep
+	// cmd.Wait() blocking forever after we kill the launcher.
+	job, err := proc.StartTracked(cmd)
+	if err != nil {
 		return nil, err
 	}
 
 	c := &client{
 		cmd:     cmd,
+		job:     job,
 		root:    root,
 		langID:  langID,
 		docs:    map[string]*docState{},
@@ -254,15 +276,25 @@ func (c *client) references(ctx context.Context, uri string, pos Position) (json
 	})
 }
 
+// close performs a graceful LSP shutdown (shutdown → exit) then reaps the
+// process tree. KillTracked kills the launcher AND its grandchildren (via Job
+// Object on Windows / process-group signal on Unix), so inherited stdio pipes
+// close and cmd.Wait returns. We bound the wait so a wedged process can't hang
+// session teardown indefinitely.
 func (c *client) close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	_, _ = c.conn.call(ctx, "shutdown", nil)
 	_ = c.conn.notify("exit", nil)
 	if c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
+		proc.KillTracked(c.cmd, c.job)
+		done := make(chan struct{})
+		go func() { _ = c.cmd.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
 	}
-	_ = c.cmd.Wait()
 }
 
 func envSlice(env map[string]string) []string {
