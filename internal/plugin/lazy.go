@@ -57,6 +57,12 @@ type lazySpawn struct {
 	real     map[string]tool.Tool // namespaced name → real tool, populated on success
 	spawnErr error
 	swapped  bool
+	// failedAt records when state transitioned to spawnFailed. Execute uses it
+	// to cool down: after spawnFailureCooldown elapses, a failed server gets one
+	// fresh spawn attempt instead of returning the cached error forever. Without
+	// this, a transient spawn failure (slow binary, race with install) dooms the
+	// server for the entire session. See audit finding E2.
+	failedAt time.Time
 	// removePrefix is set for cache-miss placeholders so trySwap drops the
 	// single "<server>__connect" stub before re-registering the real tools
 	// under their actual namespaced names. Cache-hit placeholders use the
@@ -76,6 +82,7 @@ func (s *lazySpawn) kick() {
 	if !s.host.beginDeferredSpawn() {
 		s.state = spawnFailed
 		s.spawnErr = fmt.Errorf("plugin host is closed")
+		s.failedAt = time.Now()
 		return
 	}
 	s.state = spawnInFlight
@@ -94,6 +101,7 @@ func (s *lazySpawn) run() {
 	if err != nil {
 		s.state = spawnFailed
 		s.spawnErr = err
+		s.failedAt = time.Now()
 		s.host.RecordFailure(s.spec, err)
 		return
 	}
@@ -166,6 +174,20 @@ func (lt *lazyTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 		return real.Execute(ctx, args)
 
 	case spawnFailed:
+		// Cooldown: a transient spawn failure (binary still installing, a race
+		// with host teardown) shouldn't doom the server for the whole session.
+		// After spawnFailureCooldown elapses since failedAt, reset to spawnIdle
+		// and re-enter so the next call triggers a fresh spawn attempt. Within
+		// the cooldown window we still return the cached error to avoid a
+		// tight retry loop hammering a broken server. See audit finding E2.
+		const spawnFailureCooldown = 30 * time.Second
+		if !sp.failedAt.IsZero() && time.Since(sp.failedAt) > spawnFailureCooldown {
+			sp.state = spawnIdle
+			sp.spawnErr = nil
+			sp.failedAt = time.Time{}
+			sp.mu.Unlock()
+			return lt.Execute(ctx, args) // re-enter via the spawnIdle branch
+		}
 		err := sp.spawnErr
 		sp.mu.Unlock()
 		return "", fmt.Errorf("MCP server %q failed to start: %w", sp.spec.Name, err)
@@ -183,6 +205,7 @@ func (lt *lazyTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 			if !sp.host.beginDeferredSpawn() {
 				sp.state = spawnFailed
 				sp.spawnErr = fmt.Errorf("plugin host is closed")
+				sp.failedAt = time.Now()
 				sp.mu.Unlock()
 				return "", fmt.Errorf("MCP server %q failed to start: %w", sp.spec.Name, sp.spawnErr)
 			}
@@ -204,6 +227,7 @@ func (lt *lazyTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 		if err != nil {
 			sp.state = spawnFailed
 			sp.spawnErr = err
+			sp.failedAt = time.Now()
 			sp.host.RecordFailure(sp.spec, err)
 			return "", fmt.Errorf("MCP server %q failed to start: %w", sp.spec.Name, err)
 		}
