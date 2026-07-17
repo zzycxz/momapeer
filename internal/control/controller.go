@@ -2212,6 +2212,23 @@ func (c *Controller) restoreModeFromMeta(path string) {
 	if meta.ToolApprovalMode != "" {
 		c.SetToolApprovalMode(meta.ToolApprovalMode)
 	}
+	// Tell the user what was restored so a resumed plan/YOLO mode isn't a
+	// silent surprise ("why can't I write files?"). Only emit when something
+	// non-default was actually restored — empty legacy sidecars stay quiet.
+	// See UX review finding P1.
+	var parts []string
+	if meta.PlanMode {
+		parts = append(parts, "plan mode (Shift+Tab to exit)")
+	}
+	if meta.ToolApprovalMode != "" && meta.ToolApprovalMode != "ask" {
+		parts = append(parts, meta.ToolApprovalMode+" approval mode")
+	}
+	if len(parts) > 0 {
+		c.notice("resumed session with " + strings.Join(parts, " + ") + " still active")
+	}
+}
+		c.SetToolApprovalMode(meta.ToolApprovalMode)
+	}
 }
 
 // cacheColdAfter approximates how long the provider keeps a prompt prefix
