@@ -1,6 +1,7 @@
 package permission
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 )
@@ -461,5 +462,43 @@ func TestPathNormalizationKeepsBashCommandVerbatim(t *testing.T) {
 	got := Subjects(json.RawMessage(`{"command":"cat ./secrets/x"}`))
 	if len(got) != 1 || got[0] != "cat ./secrets/x" {
 		t.Errorf("bash command subject should be verbatim, got %v", got)
+	}
+}
+
+// --- headless irreversible-operation deny (security review #1) ---
+
+// TestHeadlessDeniesIrreversibleOutward confirms that in headless mode
+// (Approver=nil), email_send and rag_delete are DENIED by default rather than
+// silently allowed. Without explicit allow rules, an unattended scheduled task
+// must not be able to send email or delete a knowledge base with no human to
+// confirm. See security review finding #1.
+func TestHeadlessDeniesIrreversibleOutward(t *testing.T) {
+	p := New("ask", nil, nil, nil) // default mode, no allow/deny rules
+	g := NewGate(p, nil)           // Approver=nil → headless
+	for _, tool := range []string{"email_send", "rag_delete"} {
+		t.Run(tool, func(t *testing.T) {
+			var args json.RawMessage
+			if tool == "email_send" {
+				args = json.RawMessage(`{"to":"x@y.com"}`)
+			} else {
+				args = json.RawMessage(`{"collection":"test"}`)
+			}
+			allow, _, _ := g.Check(context.Background(), tool, args, false)
+			if allow {
+				t.Errorf("headless %s should be denied (no approver, irreversible outward op), got allow", tool)
+			}
+		})
+	}
+}
+
+// TestHeadlessAllowsOrdinaryWriter confirms headless mode still allows ordinary
+// write tools (write_file etc.) so a scheduled task can still do useful work
+// inside the workspace — only the irreversible outward ops are blocked.
+func TestHeadlessAllowsOrdinaryWriter(t *testing.T) {
+	p := New("ask", nil, nil, nil)
+	g := NewGate(p, nil)
+	allow, _, _ := g.Check(context.Background(), "write_file", json.RawMessage(`{"path":"x.txt"}`), false)
+	if !allow {
+		t.Error("headless write_file should be allowed (ordinary writer, not irreversible outward)")
 	}
 }

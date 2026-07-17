@@ -176,6 +176,21 @@ func subjectsFor(toolName string, args json.RawMessage) []string {
 	return Subjects(args)
 }
 
+// isIrreversibleOutwardTool reports whether a tool performs an irreversible,
+// outward-facing action (sending email, deleting a knowledge base) that cannot
+// be undone and affects the world outside the workspace. In headless mode
+// (no interactive approver), Gate.Check denies these by default rather than
+// silently allowing them — an unattended scheduled task silently sending email
+// or wiping a KB is too risky without explicit human-configured consent.
+// Mirrors the tools that get bespoke subjectsFor extraction.
+func isIrreversibleOutwardTool(toolName string) bool {
+	switch toolName {
+	case "email_send", "rag_delete":
+		return true
+	}
+	return false
+}
+
 // emailSubjects extracts recipient domains from email_send's "to", "cc", and
 // "bcc" fields. Each field may be a single string ("a@x.com"), a comma-
 // separated string ("a@x.com, b@y.com"), or a JSON array (["a@x.com"]). We
@@ -534,6 +549,17 @@ func (g *Gate) Check(ctx context.Context, toolName string, args json.RawMessage,
 		return false, "denied by permission policy — this tool/command is on the deny list. Do not retry it; choose another approach or stop and explain.", nil
 	case Ask:
 		if g.Approver == nil {
+			// Headless / non-interactive mode (no UI to prompt the user).
+			// For ordinary tools we allow (preserve autonomy — the agent can
+			// still read/grep/build freely). But for irreversible outward-facing
+			// operations (email_send, rag_delete) we deny: there is no human to
+			// confirm, and silently sending email or deleting a knowledge base
+			// from an unattended scheduled task is too risky to default-allow.
+			// A user who wants these in headless mode must add an explicit
+			// allow/deny rule in config. See security review finding #1.
+			if isIrreversibleOutwardTool(toolName) {
+				return false, "denied in headless mode — " + toolName + " is an irreversible outward operation and there is no interactive user to approve it; add an explicit allow rule in config to permit it unattended", nil
+			}
 			return true, "", nil // non-interactive: preserve autonomy
 		}
 		subject := Subject(args)
