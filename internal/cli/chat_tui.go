@@ -1223,6 +1223,19 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.host = msg.host
 			m.modelRef = msg.ref
 			m.refreshEffortStatus()
+			// Preserve the user's runtime mode across the switch. buildController
+			// (cli.go) reconstructs with defaults (plan off, ask, no goal), so
+			// without this a Shift+Tab plan or Ctrl+Y YOLO would silently vanish
+			// after /model, /effort, OR /provider — they all funnel through this
+			// one modelSwitchMsg handler, so migrating here covers all three.
+			// See audit finding C2 (and the /effort gap caught in re-review).
+			if msg.oldCtrl != nil {
+				msg.ctrl.SetPlanMode(msg.oldCtrl.PlanMode())
+				msg.ctrl.SetToolApprovalMode(msg.oldCtrl.ToolApprovalMode())
+				if g := msg.oldCtrl.Goal(); g != "" {
+					msg.ctrl.SetGoal(g)
+				}
+			}
 			// Stash the old controller for cleanup at exit. It cannot be
 			// closed here or in the build goroutine — Close() runs
 			// SessionEnd hooks and kills plugin subprocesses, both of
