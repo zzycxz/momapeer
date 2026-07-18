@@ -494,6 +494,29 @@ func (a *App) initScheduler() {
 // which may be after the scheduler init), so we read it at push time. When the
 // bot isn't running, Push returns nil (best-effort — a scheduled task shouldn't
 // fail because IM is offline).
+// authNotifier implements builtin.AuthNotifier by emitting a Wails event.
+type authNotifier struct{ app *App }
+
+func (n authNotifier) NotifyAuthExpired(account string) {
+	if n.app.ctx != nil {
+		runtime.EventsEmit(n.app.ctx, "auth:expired", account)
+	}
+}
+
+// imapProber implements scheduler.AccountProber by probing IMAP connectivity.
+type imapProber struct{}
+
+func (imapProber) Probe(addr, user, password string) error {
+	// Future: actually probe IMAP. For now, return nil.
+	return nil
+}
+
+// ExpertSessionMeta holds metadata for an expert collaboration session.
+type ExpertSessionMeta struct {
+	TeamID   string `json:"teamId"`
+	TeamName string `json:"teamName"`
+}
+
 type schedulerIMPusher struct{ app *App }
 
 func (p schedulerIMPusher) Push(ctx context.Context, dest, text string) error {
@@ -778,7 +801,7 @@ func (a *App) createTabEntryWithID(scope, workspaceRoot, profile, topicID, id st
 		Scope:            scope,
 		WorkspaceRoot:    workspaceRoot,
 		TopicID:          topicID,
-		TopicTitle:       topicTitleForTab(scope, workspaceRoot, normalizeProfileName(profile), topicID),
+		TopicTitle:       topicTitleForTab(scope, workspaceRoot, topicID),
 		profile:          normalizeProfileName(profile),
 		mode:             "normal",
 		toolApprovalMode: control.ToolApprovalAsk,
@@ -1377,7 +1400,7 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 	if scope == "global" {
 		titleRoot = ""
 	}
-	if err := setTopicTitle(titleRoot, profileKey, topicID, topicTitle); err != nil {
+	if err := setTopicTitle(titleRoot, topicID, topicTitle); err != nil {
 		return TabMeta{}, err
 	}
 	m, _ := agent.EnsureBranchMeta(newPath)
@@ -1653,14 +1676,7 @@ func (a *App) RestoreSession(path string) error {
 	if err := restoreTrashedSessionFile(dir, path); err != nil {
 		return err
 	}
-	// Route the restored topic into the profile that originally owned the
-	// session (from its branch meta); a session with no profile falls back to
-	// dev, matching the legacy default.
-	profile := config.ProfileDev
-	if meta, ok, mErr := agent.LoadBranchMeta(filepath.Join(dir, key)); mErr == nil && ok {
-		profile = normalizeProfileName(meta.Profile)
-	}
-	if err := restoreSessionTopicIndex(profile, dir, filepath.Join(dir, key)); err != nil {
+	if err := restoreSessionTopicIndex(dir, filepath.Join(dir, key)); err != nil {
 		return err
 	}
 	a.emitProjectTreeChanged()

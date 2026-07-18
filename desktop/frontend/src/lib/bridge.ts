@@ -2967,7 +2967,7 @@ function makeMockApp(): AppBindings {
         lastResult: "",
         outputMode: input.outputMode,
         outputDest: input.outputDest,
-        outputDir: input.outputDir,
+        outputDir: input.outputDir ?? "",
         humanSchedule: input.expression,
       };
       mockSchedulerTasks.unshift(view);
@@ -2983,7 +2983,7 @@ function makeMockApp(): AppBindings {
         prompt: input.prompt,
         outputMode: input.outputMode,
         outputDest: input.outputDest,
-        outputDir: input.outputDir,
+        outputDir: input.outputDir ?? "",
         humanSchedule: input.expression,
       };
       return cloneTask(mockSchedulerTasks[idx]);
@@ -3164,5 +3164,39 @@ function makeMockApp(): AppBindings {
         ],
       };
     },
+    // Calendar mock bindings
+    async ListCalendarEvents() { return []; },
+    async SearchCalendarEvents() { return []; },
+    async CreateCalendarEvent(event: CalendarEventView) { return event; },
+    async UpdateCalendarEvent(event: CalendarEventView) { return event; },
+    async DeleteCalendarEvent() {},
+    async ImportCalendarEvents() { return 0; },
+    async ExportCalendarEvents() { return ""; },
+    async GetChineseHolidays() { return []; },
+    async ListScheduledTasksAsEvents() { return []; },
+    // Mail mock bindings
+    async ProbeMailAccount() { return { ok: false, status: "unconfigured", message: "" }; },
+    async InboxPreview() { return []; },
+    // RAG extended mock bindings
+    async GetSessionCollections() { return []; },
+    async SetSessionCollections() {},
+    async RagSummarize() { return { summary: "", themes: [] }; },
+    async RagCleanCollection() {},
+    async RagListHETemplates() { return []; },
+    async HEHealth() { return { ready: false }; },
+    async RagExtractResult() { return { hasData: false, entityCount: 0, relationCount: 0, doneCount: 0, jobCount: 0, topEntities: [], topRelations: [] }; },
+    async RagEmbedEntities() {},
+    async RagFindMergeCandidates() { return []; },
+    async RagMergeEntities() {},
+    async GetDocumentPreview() { return { path: "", content: "" }; },
+    async GetEntityDetail() { return { name: "", type: "", description: "" }; },
+    // Expert extended mock bindings
+    async GetActiveExpertRun() { return null; },
+    async ExpertSessionHistory() { return []; },
+    async ExpertSearchTeams() { return []; },
+    // Other missing bindings
+    async PortraitProfile() { return { path: "", content: "" }; },
+    async UpdateEntity() {},
+    async RagClear() {},
   };
 }

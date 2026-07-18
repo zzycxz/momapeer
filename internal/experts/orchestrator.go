@@ -300,3 +300,9 @@ func modeLabel(mode string) string {
 	}
 	return mode
 }
+
+// PriorRun carries the compact context from a previous collaboration run.
+type PriorRun struct {
+	Task      string `json:"task"`
+	Synthesis string `json:"synthesis"`
+}

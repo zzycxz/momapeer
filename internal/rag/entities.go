@@ -532,3 +532,25 @@ func boolToInt(b bool) int {
 	}
 	return 0
 }
+
+// EntityRelationView is the JSON-friendly projection for entity detail views.
+type EntityRelationView struct {
+	Source      string  `json:"source"`
+	Target      string  `json:"target"`
+	Type        string  `json:"type"`
+	Description string  `json:"description,omitempty"`
+	Direction   string  `json:"direction,omitempty"`
+	Peer        string  `json:"peer,omitempty"`
+	Strength    float64 `json:"strength,omitempty"`
+}
+
+// MergeCandidate represents two entities that might be aliases of each other.
+type MergeCandidate struct {
+	Name      string  `json:"name"`
+	Raw       string  `json:"raw,omitempty"`
+	Score     float64 `json:"score,omitempty"`
+	KeepName  string  `json:"keepName,omitempty"`
+	KeepRaw   string  `json:"keepRaw,omitempty"`
+	MergeName string  `json:"mergeName,omitempty"`
+	MergeRaw  string  `json:"mergeRaw,omitempty"`
+}

@@ -550,6 +550,9 @@ type CoworkConfig struct {
 	// like the screenshot hotkey. Default "Ctrl+Shift+Pause". Set to "off" to
 	// disable the feature entirely.
 	EStopHotkey string `toml:"estop_hotkey"`
+	// HEPort is the port for the Hyper-Extract Python server. Default 0 means
+	// use the built-in default (18900).
+	HEPort int `toml:"he_port"`
 }
 
 // LLMConfig holds the global LLM request budget (rate limiting). It applies

@@ -213,6 +213,16 @@ func (s *Scheduler) SetNotifier(n Notifier) {
 	s.mu.Unlock()
 }
 
+// AccountProber probes the connectivity of an IMAP/SMTP account.
+type AccountProber interface {
+	Probe(addr, user, password string) error
+}
+
+// SetAccountProber binds the account connectivity prober.
+func (s *Scheduler) SetAccountProber(p AccountProber) {
+	// Future: store and use for scheduled health checks.
+}
+
 // Load reads persisted tasks. Called by New-equivalent flows; also re-read after
 // external edits. Safe to call before Start.
 func (s *Scheduler) Load() error {

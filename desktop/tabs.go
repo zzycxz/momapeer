@@ -69,6 +69,10 @@ type WorkspaceTab struct {
 	profile         string
 	disabledMCP      map[string]ServerView
 	mcpOrder         []string
+	// Expert session tracking.
+	IsExpertSession bool
+	ExpertTeamID    string
+	ExpertTeamName  string
 }
 
 const (
@@ -1279,6 +1283,9 @@ type desktopTabEntry struct {
 	Goal             string  `json:"goal,omitempty"`
 	ToolApprovalMode string  `json:"toolApprovalMode,omitempty"`
 	Profile          string  `json:"profile,omitempty"`
+	IsExpertSession  bool    `json:"isExpertSession,omitempty"`
+	ExpertTeamID     string  `json:"expertTeamId,omitempty"`
+	ExpertTeamName   string  `json:"expertTeamName,omitempty"`
 }
 
 type desktopTabsFile struct {

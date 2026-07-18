@@ -676,3 +676,32 @@ const EdgeExtractionPrompt = `你是关系抽取助手。下面已给出本段�
 
 ### 文本：
 %s`
+
+// Resume re-enqueues any extraction jobs that were interrupted by a prior
+// shutdown. Returns the number of paths re-enqueued.
+func (p *Pipeline) Resume() int {
+	if p.store == nil {
+		return 0
+	}
+	jobs, err := p.store.AllJobs()
+	if err != nil {
+		return 0
+	}
+	// Collect unique paths that were extracting or pending.
+	paths := map[string]string{} // path -> collection
+	for _, j := range jobs {
+		if j.Status == JobExtracting || j.Status == JobPending {
+			paths[j.Path] = j.Collection
+		}
+	}
+	if len(paths) == 0 {
+		return 0
+	}
+	count := 0
+	for path, collection := range paths {
+		if _, err := p.EnqueuePaths(collection, []string{path}); err == nil {
+			count++
+		}
+	}
+	return count
+}

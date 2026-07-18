@@ -81,3 +81,9 @@ cua-vlm-trace/
 
 # Windows reserved-name stray file (empty artifact, not project content)
 nul
+
+# Build/CI binary artifacts and tool dirs (not project source)
+/desktop.exe
+/.momapeer.zip
+/.claude/
+/test_silent.wav
