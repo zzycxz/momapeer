@@ -299,8 +299,9 @@ type StatuslineConfig struct {
 type CodegraphConfig struct {
 	Enabled     bool   `toml:"enabled"`
 	AutoInstall bool   `toml:"auto_install"`
-	Path        string `toml:"path"`
+	Path        string `toml:"path"`         // local binary path (skips download)
 	Tier        string `toml:"tier"`
+	DownloadURL string `toml:"download_url"` // custom download base URL for air-gapped/intranet (replaces GitHub default)
 }
 
 func (c CodegraphConfig) ShouldAutoStart() bool {
@@ -323,9 +324,17 @@ type BuiltInMCPConfig struct {
 // These are standalone API tools (not chat-model features) that consume
 // tokens from the Jiutian platform separately from the chat model.
 type JiutianConfig struct {
-	ImageUnderstand bool `toml:"image_understand"` // image_understand tool (LLMImage2Text)
-	ImageGenerate   bool `toml:"image_generate"`   // image_generate tool (cntxt2image)
-	VideoUnderstand bool `toml:"video_understand"` // video_understand tool (video_to_text)
+	ImageUnderstand bool   `toml:"image_understand"` // image_understand tool (LLMImage2Text)
+	ImageGenerate   bool   `toml:"image_generate"`   // image_generate tool (cntxt2image)
+	VideoUnderstand bool   `toml:"video_understand"` // video_understand tool (video_to_text)
+	BaseDomain      string `toml:"base_domain"`      // override the Jiutian API root (private deployment/proxy); empty = default
+}
+
+// BaseDomainOrDefault returns the configured Jiutian base URL, or "" when unset
+// so the caller (boot → jiutian.SetBaseDomain) resets to the default rather
+// than forcing an empty override.
+func (j JiutianConfig) BaseDomainOrDefault() string {
+	return strings.TrimSpace(j.BaseDomain)
 }
 
 // DreamConfig controls the background self-evolution agents: Dream consolidates
@@ -336,10 +345,49 @@ type DreamConfig struct {
 	Enabled         bool `toml:"enabled"`          // master switch; false disables both background agents
 	DreamInterval   int  `toml:"dream_interval"`   // days between automatic Dream runs; 0 = default 7
 	DistillInterval int  `toml:"distill_interval"` // days between automatic Distill runs; 0 = default 30
+	SkillColdDays   int  `toml:"skill_cold_days"`  // days a skill is unused before cold-retirement; 0 = default 90
+	IdleMinutes     int  `toml:"idle_minutes"`     // minutes of user inactivity before a Dream run may fire; 0 = default 10
 }
 
 // DefaultDreamInterval is the Dream run cadence when [dream].dream_interval is unset.
 const DefaultDreamInterval = 7
+
+// DefaultSkillColdDays is the inactivity threshold for skill retirement when
+// [dream].skill_cold_days is unset: 90 days mirrors memory's ColdDays default.
+const DefaultSkillColdDays = 90
+
+// DefaultIdleMinutes is how long the user must be inactive before an idle Dream
+// run may fire, when [dream].idle_minutes is unset. Dream is meant to run in the
+// user's downtime, not while they are actively working — this bounds resource
+// contention and matches the "consolidate when idle" intent.
+const DefaultIdleMinutes = 10
+
+// DefaultFastTaskModel is the model dream/distill run on out of the box
+// (agent.fast_task_model). It must be a model the built-in moma provider carries
+// (see BuiltinMoMAModels) so every fresh install gets a working lightweight
+// background model without configuration. Users override via
+// [agent].fast_task_model in config; clearing it falls back to the main model.
+const DefaultFastTaskModel = "moma/qwen/qwen3.6-35b"
+
+// IdleMinutesEffective returns the effective user-inactivity threshold in
+// minutes before an idle Dream run may fire, applying the default when the
+// configured value is non-positive. A negative value disables idle triggering
+// entirely (Dream then only runs via manual trigger).
+func (d DreamConfig) IdleMinutesEffective() int {
+	if d.IdleMinutes != 0 {
+		return d.IdleMinutes
+	}
+	return DefaultIdleMinutes
+}
+
+// SkillColdDaysEffective returns the effective skill-cold threshold in days,
+// applying the default when the configured value is non-positive.
+func (d DreamConfig) SkillColdDaysEffective() int {
+	if d.SkillColdDays > 0 {
+		return d.SkillColdDays
+	}
+	return DefaultSkillColdDays
+}
 
 // DefaultDistillInterval is the Distill run cadence when [dream].distill_interval is unset.
 const DefaultDistillInterval = 30
@@ -527,6 +575,7 @@ type IMAPConfig struct {
 	Port        int    `toml:"port"`         // IMAP port (993 for implicit TLS, 143 for STARTTLS/plain)
 	Username    string `toml:"username"`     // mailbox login
 	PasswordEnv string `toml:"password_env"` // env var holding the password
+	SkipTLSVerify bool  `toml:"skip_tls_verify"` // opt in to skip TLS cert verification (self-signed/corporate CAs). Verification stays ON unless this is true.
 }
 
 // SMTPConfig holds outbound mail server settings. Secrets come from the env via
@@ -906,6 +955,25 @@ type SandboxConfig struct {
 	// Network allows network egress from inside the bash sandbox. Defaults true
 	// so module/package downloads keep working; the boundary is then writes.
 	Network bool `toml:"network"`
+	// RequireAvailable, when true, makes bash mode "enforce" fail-closed (refuse
+	// all commands) if no OS sandbox is available on this platform, rather than
+	// silently degrading to unconfined. False (default) keeps the graceful
+	// fallback so momapeer stays usable on unsupported OSes.
+	RequireAvailable bool `toml:"require_available"`
+	// StrictWrites narrows the macOS Seatbelt toolchain-cache grants to true
+	// cache subdirs only (~/.cargo/registry/cache, ~/Library/Caches, …) so a
+	// prompt-injected command can't drop an executable in ~/.cargo/bin or
+	// ~/.npm. Default false: the broad grants are needed for `go install`/
+	// `cargo build`/`npm install` (they write to bin/pkg dirs). Turn on for
+	// high-security deployments that don't run build tools. Audit A8. macOS only.
+	StrictWrites bool `toml:"strict_writes"`
+	// ReadRoots confines read_file/grep to these directories (opt-in). Empty =
+	// unconfined reads (the default), because an agent legitimately reads /etc,
+	// system headers, ~/.gitconfig, package caches, etc. A high-security
+	// deployment that wants read/data isolation sets this; boot then wires
+	// ConfineReaders to override the unconfined defaults. Note: bash is NOT
+	// read-confined even when this is set, so this is defense-in-depth. Audit A7.
+	ReadRoots []string `toml:"read_roots"`
 }
 
 // WriteRoots returns the directories file-writer tools may modify: the
@@ -941,6 +1009,20 @@ func (c *Config) WriteRootsForRoot(fallbackRoot string) []string {
 	return roots
 }
 
+// ReadRoots returns the directories read_file/grep are confined to, with ${VAR}
+// expanded. Empty (the default) means reads are unconfined — the safe default
+// that preserves the agent's ability to read system files. boot passes this to
+// builtin.ConfineReaders only when non-empty. Audit A7.
+func (c *Config) ReadRoots() []string {
+	var out []string
+	for _, r := range c.Sandbox.ReadRoots {
+		if r = strings.TrimSpace(ExpandVars(r)); r != "" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // BashMode normalises the bash-sandbox mode: only an explicit "off" disables
 // it; empty or any other value resolves to "enforce", so the sandbox is on by
 // default and fails safe.
@@ -968,6 +1050,7 @@ type AgentConfig struct {
 	SubagentModels   map[string]string `toml:"subagent_models"`
 	SubagentEffort   string            `toml:"subagent_effort"`
 	SubagentEfforts  map[string]string `toml:"subagent_efforts"`
+	FastTaskModel    string            `toml:"fast_task_model"` // lightweight model for dream/distill background tasks
 	// OutputStyle selects a persona/tone block folded into the system prompt at
 	// startup (a built-in like "explanatory"/"learning"/"concise", or a custom
 	// .momapeer/output-styles/<name>.md). Empty = the unmodified prompt.
@@ -979,20 +1062,6 @@ type AgentConfig struct {
 	// AutoPlanClassifier optionally names a provider/model used to classify
 	// borderline auto-plan decisions. Empty keeps the zero-cost heuristic path.
 	AutoPlanClassifier string `toml:"auto_plan_classifier"`
-	// Verify enables an optional post-execution verification stage on the
-	// planner-executor Coordinator: after the executor finishes, run the
-	// workspace's verification commands (go vet/build/test for a Go project)
-	// and, on failure, hand the failures back to the executor for a bounded
-	// number of debug retries. "off" (the default) keeps the original
-	// plan->exec single-pass behaviour; "on" enables it.
-	Verify string `toml:"verify"`
-	// VerifyMaxRetries bounds the debug loop after a failed verify (default 1).
-	// 0 = verify once with no retry. Only meaningful when Verify = "on".
-	VerifyMaxRetries int `toml:"verify_max_retries"`
-	// Review enables an optional post-execution self-review stage: the executor
-	// re-reads its git diff and fixes any critical issues. "off" (the default)
-	// keeps the original behaviour; "on" enables it. Runs after verify.
-	Review string `toml:"review"`
 	// Compaction window fractions: soft = notice only, compact = trigger, force = hard ceiling.
 	SoftCompactRatio  float64 `toml:"soft_compact_ratio"`
 	CompactRatio      float64 `toml:"compact_ratio"`
@@ -1335,6 +1404,7 @@ func Default() *Config {
 			MaxSteps:          0,
 			PlannerMaxSteps:   12,
 			AutoPlan:          "off",
+			FastTaskModel:     DefaultFastTaskModel,
 			SoftCompactRatio:  0.5,
 			CompactRatio:      0.8,
 			CompactForceRatio: 0.9,
@@ -1358,7 +1428,7 @@ func Default() *Config {
 		// Jiutian multimodal tools — image understanding on by default; generation/video off.
 		Jiutian: JiutianConfig{ImageUnderstand: true, ImageGenerate: false, VideoUnderstand: false},
 		// Background self-evolution (Dream/Distill) on by default; 7/30 day cadence.
-		Dream: DreamConfig{Enabled: true, DreamInterval: DefaultDreamInterval, DistillInterval: DefaultDistillInterval},
+		Dream: DreamConfig{Enabled: true, DreamInterval: DefaultDreamInterval, DistillInterval: DefaultDistillInterval, SkillColdDays: DefaultSkillColdDays},
 		// LSP tools on by default, but dormant until a language server is on PATH;
 		// a missing server yields an install hint rather than an error.
 		LSP:     LSPConfig{Enabled: true},
@@ -1947,6 +2017,24 @@ func SessionDir() string {
 		return ""
 	}
 	return filepath.Join(dir, "sessions")
+}
+
+// SessionDirFor returns the session directory for a given profile. The default
+// profile (empty name, or the builtin "dev"/"default") shares the top-level
+// <userDir>/sessions so existing --continue/--resume history stays intact; a
+// named profile (e.g. "cowork") partitions under <userDir>/sessions/<key> so its
+// transcripts don't mix with the default's. Returns "" when the user dir can't
+// be resolved. boot.go uses this so --profile cowork lands in its own partition.
+func SessionDirFor(profile string) string {
+	base := SessionDir()
+	if base == "" {
+		return ""
+	}
+	key := ProfileNameKey(profile)
+	if key == "" || key == ProfileNameKey("") || key == "dev" || key == "default" {
+		return base // default partition — backward compatible with pre-profile sessions
+	}
+	return filepath.Join(base, key)
 }
 
 // ProjectSessionDir is the per-workspace session directory the desktop sidebar

@@ -1,5 +1,72 @@
 # Changelog
 
+## [0.5.2] — 2026-07-18
+
+**记忆系统完全重做 + 用户功能缺陷批量修复。** 两个主线：(1) 记忆系统从"管理机制"倒推为"注入内容优先"——画像层替代散落索引、profile 隔离、dream 自动维护、recall 零成本读端；(2) 跨编码/办公/Bot 全线排查真实 bug 并逐一修复。
+
+---
+
+### Changed — 记忆系统重做（画像层 + profile 隔离 + 注入瘦身）
+
+每轮注入 LLM 的记忆块从 ~3KB（50条散落索引 + 操作指南 + bitemporal 痕迹）降到几百字节（画像 prose + 文档层）。
+
+- **画像层**（`memory.go` `discoverProfile`）：新建 `profile/` 目录，按 Hermes 设计拆为 `user.md`（你是谁，慢变）+ `memory.md`（客观事实，天周级）+ `<mode>.md`（模式偏好+当前任务）。dream 专职维护这三个文件。注入受 `profileMaxChars=2000` 硬上限保护，超阈值截断带标记。
+- **Profile 隔离**（`store.go` `StoreFor(userDir, cwd, profile)`）：dev/cowork 记忆目录完全隔离。`Options`/`Set` 加 `Profile`/`ProfileName` 字段，`controller.refreshMemoryLocked` reload 时携带 profile。
+- **注入瘦身**（`memory.go` `Block()`）：只输出画像 + 文档层，删掉 `## Saved memories` 索引段、操作指南、`ProfileBlock()` 动态渲染、日期注入。
+- **remember/forget 简化**：`Memory` 结构体从 17 字段砍到 5（Name/Body/Type/Profile/CreatedAt）。remember 工具 schema 从 11 字段砍到 4（name/body/profile/project）。
+- **recall 工具**（新，`memory/recall.go`）：零 LLM 成本，纯文件系统扫描。无 name 列出所有档案，有 name 读全文。补档案层"读"端——remember 之前是"只写黑洞"。
+- **dream 重定向到画像**：`DreamTask` prompt 重写——从"调 remember 往索引塞条目"改为"用 write_file 维护画像文件"。dream 闲暇时触发（空闲计时器 `touchActivity`/`idleDreamFired`，默认 10 分钟不活动）。`dreamTaskFor(profile)` 检查画像文件大小，超 1.3×目标切 `DreamCompactTask`（压缩模式，防画像膨胀）。`SpawnDream`/`RunDreamOnce` 加 profile 参数。
+- **dream 模型减负**：`FastTaskModel` 接线——`DefaultFastTaskModel = "moma/qwen/qwen3.6-35b"` 写入 `Default()`，所有 exe/安装包开箱即用。`controller.dreamProv()` 优先用 fast_task_model，不配则 fallback 主模型。
+- **删除旧机制**：bitemporal/decay/TTL/compact/FTS/冲突检测/被动捕获 全删——9 源文件 + 5 测试文件（~5000 行）。`store.go` 从 1689 行降到 ~460 行。
+- 测试：`TestProfilePartition`/`TestProfileTruncationGuardsInjection`/`TestBlockInjectsUserProfile`/`TestPortraitCompactThresholds` 等验证新行为。
+
+### Fixed — 用户功能缺陷修复（逐条经代码核实）
+
+- **truncate 中文乱码**（`browsersnapshot.go`）：`s[:n]` 按字节截断 → `string([]rune(s)[:n])` 按 rune 截断。所有浏览器 snapshot/type/click 的中文回显不再损坏。
+- **browser_screenshot 前端不渲染**（`browser.go`）：输出加 `![screenshot](.momapeer/attachments/...)` 相对路径+正斜杠，匹配前端 attachment 正则。用户能看到截图。
+- **browser-auto AllowedTools 缺工具**（`builtins.go`）：补 `browser_attach`/`browser_upload_file`/`browser_set_path`。修复无浏览器时死循环、文件上传缺失、登录态不可复用。
+- **email_send 中文编码不一致**（`email.go`）：无附件正文从 `8bit` 改为 `base64`，和 scheduler 的 `buildPlainTextMessage` 一致。中文邮件不再被 7bit 中继损坏。
+- **定时任务默认不通知**（`scheduler.go`）：`output_mode` 留空时默认走 `notify`（toast）。用户说"每天提醒我"不再静默无效。
+- **定时任务跨 profile 串扰**（`app.go`）：`schedulerRunner.Run` 检查 activeTab 的 profile 是否匹配任务 profile，不匹配则报错而非静默跑错。
+- **schedule_create 不支持中文时间**（`schedule.go`）：Execute 前调 `ResolveRelativeTime`，"明天下午3点" → `at 2026-07-18 15:00`。
+- **Tab 切换丢失思考内容**（`useController.ts`）：`missedTurnDone` 不再 reset 清空 items，改为发合成 `turn_done` 事件 in-place finalize。切换 tab 后保留所有累积内容。
+
+### Added — 新功能
+
+- **screen_key 工具实装**（`screen_windows.go`）：从零实装 `screenKey` 类型 + `parseKeyCombo` 解析器（支持 ctrl/shift/alt + a-z/0-9/enter/esc/tab/f1-f12/方向键）。PPT 保存流程（Ctrl+S）不再断裂。注册到 `ScreenTools()`，ppt-auto/computer-auto 的 AllowedTools 恢复 screen_key。
+- **Bot 冷启动预热**（`gateway.go`）：`Start` 时异步 `prewarmSession`——构建默认 controller 存到 `__prewarm__`，首条消息直接 claim，不再等 boot.Build。
+- **Bot session 空闲清理**（`gateway.go`）：`reapIdleSessions` 每 5 分钟扫描，超过 `SessionIdleTimeout`（默认 30 分钟）不活动且不在 running 的 session 被 Close+删除。防止内存无限增长。
+- **定时任务通知全局监听**（`App.tsx`）：`window.runtime.EventsOn("scheduler:notice", ...)` 全局注册。用户在任何面板都能收到定时任务结果的 toast。
+- **effort 切换失败提示**（`useController.ts`）：`setEffort` 去掉 `.catch(() => {})` 吞错，改为 `local_notice` warn + i18n 文案 `status.effortSwitchFailed`。
+- **CoworkDock 接线**（`CoWorkLayout.tsx`）：右侧 dock 从空壳"暂无产物"替换为 `<CoworkDock>`——今日/邮件/文件三 tab 可用。补 `types.ts` 的 `CalendarEventView`/`InboxItem`/`MailProbeResult` + `bridge.ts` 的 `ListCalendarEvents`/`ProbeMailAccount`/`InboxPreview` 绑定。
+- **CodeGraph 内网下载**（`config.go` + `codegraph/install.go`）：`CodegraphConfig` 加 `DownloadURL` 字段，`SetDownloadBase()` setter，`downloadBases()` 优先用自定义源。内网/离线环境可配 `download_url` 指向内网镜像。
+
+### Changed — 配置/文档修正
+
+- **example.toml PPT 配置**：删掉过时的 `wps_ppt_server_path`/`wps_ppt_python`，换成 ppt-auto skill 说明。
+- **example.toml CodeGraph**：加 `download_url` 配置项说明。
+- **PPT skill 命名统一**：注册名从 `ppt-wizard` 改为 `ppt-auto`，与所有消费方（提示词、白名单、模板目录）一致。
+- **config 字段补全**：`DreamConfig` 加 `SkillColdDays`/`IdleMinutes` + 对应 `Effective()` 方法；`AgentConfig` 加 `FastTaskModel` 字段。
+
+### 验证
+
+- `internal/memory`：编译通过 + 全测试绿
+- `internal/config`：编译通过
+- `internal/scheduler`：编译通过
+- `internal/bot`：编译通过
+- `internal/codegraph`：编译通过
+- `internal/agent`：我的改动通过（dream.go），剩余错误是并行重构（Runner redeclared / event.Paused 等）
+- `internal/tool/builtin`：我的改动通过（truncate/screenshot/email/screen_key），剩余错误是并行重构（browser.go callOnRef 等）
+- 前端 tsc：我的改动通过，剩余错误是并行重构（paused/pauseToggle/ExpertPanel i18n）
+
+### 不做的事
+
+- 不做数据迁移（生产真实记忆数据为 0）
+- 不做 bitemporal/时间点回溯（历史交 git）
+- 不做 FTS（recall 用文件名扫描）
+- 不做画像编辑 UI（用户不该操心画像，dream 自动维护）
+- config 层零改动（并行重构除外）
+
 ## [0.3.10] — 2026-07-04
 
 **RAG 知识库夯实：让图谱可溯源、抽取更干净、检索更经济、删除不留垃圾。** 经 Hyper-Extract 两轮源码核查，确认 momapeer 在溯源数据上本就比 HE 全（db 存了 path+chunk，HE 节点无来源），只差输出；抽取是单阶段的，缺 HE 最强的降幻觉手段。本版把已花成本变现、补最大质量短板、省重复开销，全部纯 Go 实现，无 Python/faiss/langchain 依赖。

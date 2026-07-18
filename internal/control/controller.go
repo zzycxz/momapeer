@@ -2227,9 +2227,6 @@ func (c *Controller) restoreModeFromMeta(path string) {
 		c.notice("resumed session with " + strings.Join(parts, " + ") + " still active")
 	}
 }
-		c.SetToolApprovalMode(meta.ToolApprovalMode)
-	}
-}
 
 // cacheColdAfter approximates how long the provider keeps a prompt prefix
 // cached. A session idle longer than this resumes against a cold cache, so a

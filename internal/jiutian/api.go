@@ -16,11 +16,40 @@ import (
 	"time"
 )
 
-// BaseURL is the Jiutian v3 API root.
-const BaseURL = "https://jiutian.10086.cn/largemodel/moma/api/v3"
+// defaultBaseURL is the Jiutian v3 API root. Kept as a const so the original
+// BaseURL value is preserved for reference; BaseURL (a var) is what APICall
+// actually uses and is overridable via SetBaseDomain.
+const defaultBaseURL = "https://jiutian.10086.cn/largemodel/moma/api/v3"
+
+// BaseURL is the Jiutian v3 API root. It's a var (not a const) so a private
+// deployment or proxy can override it at boot via SetBaseDomain.
+var BaseURL = defaultBaseURL
 
 // Client is a shared HTTP client for all Jiutian API calls.
 var Client = &http.Client{Timeout: 120 * time.Second}
+
+// SetClient replaces the shared HTTP client. boot.go calls this so Jiutian API
+// calls go through the same configured client (proxy, timeouts) as the rest of
+// the app; without it APICall uses the default 120s client and may fail with
+// EOF in proxy-only environments.
+func SetClient(c *http.Client) {
+	if c != nil {
+		Client = c
+	}
+}
+
+// SetBaseDomain overrides the Jiutian API base URL. Pass the full base
+// (e.g. "https://jiutian.example.cn/largemodel/moma/api/v3"); an empty value
+// resets to the default. boot.go derives the value from config so a private
+// deployment or proxy can redirect Jiutian calls without code changes.
+func SetBaseDomain(base string) {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		BaseURL = defaultBaseURL
+		return
+	}
+	BaseURL = base
+}
 
 // APICall is a shared helper for calling Jiutian platform APIs.
 // It handles API key lookup, HTTP request creation, auth header, response

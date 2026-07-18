@@ -427,11 +427,6 @@ func (a *App) initRAG() {
 				slog.Warn("rag: could not resolve model ref, using as-is", "ref", modelRef)
 			}
 			extractor = ragpkg.NewJiutianExtractor(extCfg)
-			if bs, ok := extractor.(ragpkg.BudgetSetter); ok {
-				if budget := boot.GlobalBudget(); budget != nil {
-					bs.SetBudget(budget, "rag-extractor")
-				}
-			}
 		}
 	}
 	if extractor == nil {

@@ -504,6 +504,32 @@ export interface ProfileInfo {
 // "YYYY-MM-DD HH:MM" strings (empty when absent) so the UI renders directly
 // without a date library.
 
+// --- CoworkDock types (today/mail tabs) ---
+
+export interface CalendarEventView {
+  id: string;
+  title: string;
+  description: string;
+  location: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  color: string;
+}
+
+export interface InboxItem {
+  from: string;
+  subject: string;
+  date: string;
+  preview: string;
+}
+
+export interface MailProbeResult {
+  ok: boolean;
+  status: string;
+  message: string;
+}
+
 // One task row in the automation panel. humanSchedule is a friendly Chinese
 // rendering of expression (e.g. "工作日 09:00"); the UI may show both.
 export interface TaskView {
@@ -532,7 +558,7 @@ export interface TaskInput {
   prompt: string;
   outputMode: string;
   outputDest: string;
-  outputDir: string;
+  outputDir?: string;
 }
 
 // One run-history record (newest first when listed).
@@ -1079,4 +1105,57 @@ export interface UpdateProgress {
   received: number;
   total: number;
   err?: string;
+}
+
+// Document preview
+export interface DocPreviewView {
+  path: string;
+  content: string;
+  chunks?: Array<{ start: number; end: number; text: string }>;
+}
+
+// Expert collaboration
+export interface WireCollab {
+  runId: string;
+  teamId: string;
+  teamName: string;
+  task: string;
+  mode: string;
+  synthesis?: string;
+  createdAt?: number;
+  rounds: Array<Array<{ expertName: string; text: string }>>;
+}
+
+// Merge candidates
+export interface MergeCandidate {
+  name: string;
+  raw?: string;
+  score?: number;
+  keepName?: string;
+  keepRaw?: string;
+  mergeName?: string;
+  mergeRaw?: string;
+}
+
+// Entity detail view
+export interface EntityDetailView {
+  name: string;
+  nameRaw?: string;
+  type: string;
+  description?: string;
+  sources?: Array<{ path: string; chunk: number }>;
+  relations?: EntityRelationView[];
+  community?: number;
+  relationCnt?: number;
+}
+
+// Entity relation view
+export interface EntityRelationView {
+  source: string;
+  target: string;
+  type: string;
+  description?: string;
+  direction?: string;
+  peer?: string;
+  strength?: number;
 }

@@ -469,7 +469,7 @@ func builtinSkills() []Skill {
 			AllowedTools: []string{"screen_perceive", "screenshot", "screen_click", "screen_type", "screen_scroll", "screen_key", "get_ui_tree", "image_understand", "window_focus", "window_maximize", "window_restore", "window_move", "window_close", "read_file", "write_file"},
 		},
 		{
-			Name:        "ppt-wizard",
+			Name:        "ppt-auto",
 			Description: "Create a PowerPoint presentation by operating WPS 演示 as a human would — the subagent will open the app, interact with its UI, and build the slides fully visibly on screen. Best for: creating or editing PPT files when WPS Office is installed. Invoke this subagent with a clear description of the presentation you want.",
 			Body:        builtinPPTWizardBody,
 			Scope:       ScopeBuiltin,

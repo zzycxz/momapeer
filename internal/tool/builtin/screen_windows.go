@@ -13,6 +13,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -129,6 +130,7 @@ func ScreenTools() []tool.Tool {
 		screenClick{},
 		screenType{},
 		screenScroll{},
+		screenKey{},
 		getUITreeEnhanced{},
 		screenPerceive{},
 	}
@@ -695,4 +697,155 @@ func screenAttachmentsDir() string {
 		return filepath.Join(wd, ".momapeer", "attachments")
 	}
 	return filepath.Join(os.TempDir(), "momapeer-screen")
+}
+
+// screenKey implements the `screen_key` tool: send a keyboard shortcut (e.g.
+// "ctrl+s", "alt+tab", "shift+enter") or a single key (e.g. "enter", "esc",
+// "f5") to whatever window currently has keyboard focus. This is the save-PPT
+// path (Ctrl+S), the close-dialog path (Esc), the confirm path (Enter) — the
+// shortcuts screen_type cannot express (it types text, not modifiers).
+type screenKey struct{}
+
+func (screenKey) Name() string { return "screen_key" }
+
+func (screenKey) Description() string {
+	return "Send a keyboard shortcut or single key to the focused window. Use for actions screen_type can't do: Ctrl+S (save), Ctrl+A (select all), Ctrl+C/V (copy/paste), Enter (confirm), Esc (cancel/close dialog), Tab, arrow keys, F-keys. The keys string uses '+' to combine a modifier (ctrl/shift/alt) with a key: 'ctrl+s', 'alt+tab', 'shift+arrowleft'. Single keys: 'enter', 'esc', 'tab', 'f5', 'delete', 'backspace'. Keys go to whatever window has focus — call window_focus first to be sure."
+}
+
+func (screenKey) Schema() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"keys": {"type": "string", "description": "Key combination, e.g. \"ctrl+s\", \"alt+tab\", \"enter\", \"esc\". Modifiers: ctrl, shift, alt. Keys: a-z, 0-9, enter, esc, tab, space, delete, backspace, home, end, pageup, pagedown, arrowup/down/left/right, f1-f12."}
+		},
+		"required": ["keys"]
+	}`)
+}
+
+func (screenKey) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	var in struct {
+		Keys string `json:"keys"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return "", fmt.Errorf("invalid arguments: %w", err)
+	}
+	keys := strings.TrimSpace(in.Keys)
+	if keys == "" {
+		return "", fmt.Errorf("keys is required")
+	}
+	mod, key, err := parseKeyCombo(keys)
+	if err != nil {
+		return "", err
+	}
+	if mod != 0 {
+		if err := pressKeyCombo(mod, key); err != nil {
+			return "", fmt.Errorf("key combo %q failed: %w", keys, err)
+		}
+	} else {
+		if err := pressKey(key); err != nil {
+			return "", fmt.Errorf("key %q failed: %w", keys, err)
+		}
+	}
+	time.Sleep(50 * time.Millisecond) // let the app react
+	return fmt.Sprintf("Sent key %q.", keys), nil
+}
+
+func (screenKey) ReadOnly() bool { return false }
+
+// parseKeyCombo parses a key combination string like "ctrl+shift+s" or "enter"
+// into a Windows VK modifier code (0 if none) and a VK key code. Supported
+// modifiers: ctrl (0x11), shift (0x10), alt (0x12). Supported keys: a-z,
+// 0-9, enter/return, esc/escape, tab, space, delete/del, backspace, home, end,
+// pageup, pagedown, arrowup/down/left/right, f1-f12.
+func parseKeyCombo(s string) (mod, key uint16, err error) {
+	parts := strings.Split(strings.ToLower(strings.TrimSpace(s)), "+")
+	if len(parts) == 0 || parts[len(parts)-1] == "" {
+		return 0, 0, fmt.Errorf("empty key combo")
+	}
+	// All parts except the last are modifiers; the last is the key.
+	for _, p := range parts[:len(parts)-1] {
+		switch strings.TrimSpace(p) {
+		case "ctrl", "control":
+			mod |= 0x11
+		case "shift":
+			mod |= 0x10
+		case "alt":
+			mod |= 0x12
+		default:
+			return 0, 0, fmt.Errorf("unknown modifier %q (use ctrl, shift, or alt)", p)
+		}
+	}
+	key, err = parseVK(strings.TrimSpace(parts[len(parts)-1]))
+	if err != nil {
+		return 0, 0, err
+	}
+	return mod, key, nil
+}
+
+// parseVK maps a key name to its Windows virtual-key code.
+func parseVK(name string) (uint16, error) {
+	if len(name) == 1 {
+		c := name[0]
+		if c >= 'a' && c <= 'z' {
+			return uint16(c - 'a' + 0x41), nil // 'a'=0x41 ... 'z'=0x5A
+		}
+		if c >= '0' && c <= '9' {
+			return uint16(c - '0' + 0x30), nil // '0'=0x30 ... '9'=0x39
+		}
+	}
+	switch name {
+	case "enter", "return":
+		return 0x0D, nil
+	case "esc", "escape":
+		return 0x1B, nil
+	case "tab":
+		return 0x09, nil
+	case "space":
+		return 0x20, nil
+	case "delete", "del":
+		return 0x2E, nil
+	case "backspace":
+		return 0x08, nil
+	case "home":
+		return 0x24, nil
+	case "end":
+		return 0x23, nil
+	case "pageup":
+		return 0x21, nil
+	case "pagedown":
+		return 0x22, nil
+	case "arrowup", "up":
+		return 0x26, nil
+	case "arrowdown", "down":
+		return 0x28, nil
+	case "arrowleft", "left":
+		return 0x25, nil
+	case "arrowright", "right":
+		return 0x27, nil
+	case "f1":
+		return 0x70, nil
+	case "f2":
+		return 0x71, nil
+	case "f3":
+		return 0x72, nil
+	case "f4":
+		return 0x73, nil
+	case "f5":
+		return 0x74, nil
+	case "f6":
+		return 0x75, nil
+	case "f7":
+		return 0x76, nil
+	case "f8":
+		return 0x77, nil
+	case "f9":
+		return 0x78, nil
+	case "f10":
+		return 0x79, nil
+	case "f11":
+		return 0x7A, nil
+	case "f12":
+		return 0x7B, nil
+	}
+	return 0, fmt.Errorf("unknown key %q", name)
 }

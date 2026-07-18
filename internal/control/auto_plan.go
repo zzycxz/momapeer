@@ -16,8 +16,12 @@ const (
 // keep lowercase aliases for internal use
 const (
 	autoPlanOff = AutoPlanOff
-	autoPlanOn  = AutoPlanOn
+	autoPlanOn = AutoPlanOn
 )
+
+// planApprovalTool aliases the plan-approval Tool name so test fixtures in this
+// package can reference it without reaching across to the exported constant.
+var planApprovalTool = PlanApprovalTool
 
 var numberedListRE = regexp.MustCompile(`(?m)^\s*(?:[-*]|\d+[.)])\s+\S`)
 
@@ -63,7 +67,7 @@ func (c *Controller) shouldAutoPlan(ctx context.Context, input string) bool {
 	if score <= 0 {
 		return false
 	}
-	if classifier != nil && score <= 2 {
+	if classifier != nil && score <= 3 {
 		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		needsPlan, reason, err := classifier.NeedsPlan(ctx, input, score)
@@ -75,7 +79,11 @@ func (c *Controller) shouldAutoPlan(ctx context.Context, input string) bool {
 		}
 		c.notice("auto plan classifier failed; falling back to heuristic: " + err.Error())
 	}
-	return score >= 2
+	// Heuristic fallback. Was >= 2, but that over-triggered: any two weak shape
+	// signals (long text + a couple of newlines, or a pasted log with two .js
+	// mentions) fired plan mode. >= 3 requires a stronger cluster of signals,
+	// reducing false positives on discussion/explain prompts.
+	return score >= 3
 }
 
 func autoPlanScore(input string) int {
@@ -118,11 +126,23 @@ func autoPlanScore(input string) int {
 
 func isLowRiskQuestion(lower string) bool {
 	lower = strings.TrimSpace(lower)
+	// Directives that ask for an action (run/show) are low-risk even if they
+	// contain a complex-intent word, because the user is asking to execute one
+	// concrete thing, not to plan multi-step work.
+	if strings.HasPrefix(lower, "运行") || strings.HasPrefix(lower, "run ") ||
+		strings.HasPrefix(lower, "show ") {
+		return true
+	}
+	// Explain/discuss/evaluate prompts are low-risk UNLESS they pair with a
+	// hard action verb ("实现", "重构", "迁移"…). "解释一下重构方案" is
+	// discussion; "重构一下这个模块" is work. The verb list is complexIntentTerms.
 	if strings.HasPrefix(lower, "解释") || strings.HasPrefix(lower, "说明") ||
 		strings.HasPrefix(lower, "怎么看") || strings.HasPrefix(lower, "查一下") ||
-		strings.HasPrefix(lower, "运行") || strings.HasPrefix(lower, "run ") ||
-		strings.HasPrefix(lower, "show ") || strings.HasPrefix(lower, "what ") ||
-		strings.HasPrefix(lower, "why ") || strings.HasPrefix(lower, "how ") {
+		strings.HasPrefix(lower, "分析") || strings.HasPrefix(lower, "评估") ||
+		strings.HasPrefix(lower, "讨论") || strings.HasPrefix(lower, "对比") ||
+		strings.HasPrefix(lower, "what ") || strings.HasPrefix(lower, "why ") ||
+		strings.HasPrefix(lower, "how ") || strings.HasPrefix(lower, "explain ") ||
+		strings.HasPrefix(lower, "analyze") || strings.HasPrefix(lower, "compare") {
 		return !containsAny(lower, complexIntentTerms)
 	}
 	return false

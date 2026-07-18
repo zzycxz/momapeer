@@ -11,6 +11,28 @@ import (
 
 func init() { tool.RegisterBuiltin(editFile{}) }
 
+// postEditHook, when set, runs after a successful write/edit and may return
+// extra text (e.g. LSP diagnostics) appended to the tool result. Injected from
+// boot.go so the edit→diagnose→fix loop closes without a separate lsp_diagnostics
+// call. nil (the zero value) leaves write results unchanged, so tool tests that
+// don't wire a hook are unaffected. The hook receives the caller's turn context
+// so a slow LSP server is bounded by the same cancellation as the turn.
+var postEditHook func(ctx context.Context, path string) string
+
+// SetPostEditHook installs the post-write diagnostics hook. boot.go calls this
+// with a closure over the LSP manager; passing nil disables the hook.
+func SetPostEditHook(fn func(ctx context.Context, path string) string) { postEditHook = fn }
+
+// runPostEditHook returns the hook's extra text (empty when no hook or no
+// diagnostics), so callers can append it to the write result without sprinkling
+// nil checks at every return site.
+func runPostEditHook(ctx context.Context, path string) string {
+	if postEditHook == nil {
+		return ""
+	}
+	return postEditHook(ctx, path)
+}
+
 // editFile replaces an exact string in a file. roots confines the target to the
 // workspace when non-empty (see writeFile); workDir, when non-empty, is the
 // directory a relative path resolves against (see resolveIn).
@@ -79,7 +101,11 @@ func (e editFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 	if err := writeFileEncoded(p.Path, updated, enc); err != nil {
 		return "", fmt.Errorf("write %s: %w", p.Path, err)
 	}
-	return fmt.Sprintf("edited %s", p.Path), nil
+	msg := fmt.Sprintf("edited %s", p.Path)
+	if extra := runPostEditHook(ctx, p.Path); extra != "" {
+		msg += "\n" + extra
+	}
+	return msg, nil
 }
 
 // oldStringNotFoundError returns a "not found" error that, when possible,

@@ -35,13 +35,11 @@ func ConfineWebFetch(proxySpec netclient.ProxySpec) tool.Tool {
 // roots may be relative; they are resolved to absolute, symlink-free paths once
 // here. An empty roots slice yields unconfined writers.
 //
-// NOTE: confine is WRITE-only. read_file, grep, and bash are NOT confined to
-// roots — they can read any host path the OS permits. This is by design (an
-// agent legitimately needs to read /etc, system headers, ~/.gitconfig, etc.),
-// but it means the workspace boundary is a write boundary, NOT a read/data-
-// isolation boundary. Do not assume "confined to workspace" implies read
-// isolation when reasoning about security; bash + read_file can still exfiltrate
-// any readable host file. See security audit finding A7.
+// ConfineReaders is the read-side counterpart: when [sandbox] read_roots is
+// configured, it returns read_file/grep bound to those roots so the agent
+// can't read host files outside them. By default read tools are unconfined
+// (see ConfineReaders note). This keeps the workspace boundary a WRITE boundary
+// by default — read isolation is opt-in for high-security deployments. Audit A7.
 func ConfineWriters(roots []string) []tool.Tool {
 	rs := realRoots(roots)
 	return []tool.Tool{
@@ -56,6 +54,50 @@ func ConfineWriters(roots []string) []tool.Tool {
 		xlsxWrite{roots: rs},
 		docConvert{roots: rs},
 	}
+}
+
+// ConfineReaders returns read_file/grep bound to roots — the only directories
+// they may read from. Unlike ConfineWriters (always on), this is OPT-IN: by
+// default read tools are unconfined because an agent legitimately reads /etc,
+// system headers, ~/.gitconfig, package caches, etc. A deployment that wants a
+// read/data-isolation boundary (not just a write boundary) configures
+// [sandbox] read_roots and boot wires these in to override the unconfined
+// instances. An empty roots slice yields unconfined readers (no-op).
+//
+// NOTE: even with this on, bash is NOT read-confined (it can cat any readable
+// file), so this is a defense-in-depth measure, not a complete read isolation.
+// glob is also left unconfined because a glob pattern isn't a single path to
+// check. See security audit finding A7.
+func ConfineReaders(roots []string) []tool.Tool {
+	rs := realRoots(roots)
+	if len(rs) == 0 {
+		return nil // unconfined — caller should skip overriding the defaults
+	}
+	return []tool.Tool{
+		readFile{roots: rs},
+		grepTool{roots: rs},
+	}
+}
+
+// confineRead is the read-side analogue of confine: it rejects a read target
+// outside roots, but with a read-oriented error message (pointing at
+// [sandbox] read_roots rather than workspace_root). Empty roots = unconfined.
+func confineRead(roots []string, target string) error {
+	if len(roots) == 0 {
+		return nil
+	}
+	abs, err := realPath(target)
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", target, err)
+	}
+	for _, r := range roots {
+		if within(r, abs) {
+			return nil
+		}
+	}
+	return fmt.Errorf("path %q is outside the read boundary (reads are confined to %s); "+
+		"read inside it, or widen [sandbox] read_roots in momapeer.toml",
+		target, strings.Join(roots, ", "))
 }
 
 // realRoots resolves each root to an absolute, symlink-free path, dropping any

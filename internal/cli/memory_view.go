@@ -28,10 +28,7 @@ func renderMemory(width int, set *memory.Set) string {
 		b.WriteString(viewSubhead(viewCompactText(header, viewBudget(width, 2))))
 		b.WriteString("\n")
 		for _, f := range facts {
-			label := f.Title
-			if label == "" {
-				label = f.Description
-			}
+			label := strings.TrimSpace(f.Body)
 			meta := ""
 			if label != "" {
 				meta = "  " + viewMeta(viewCompactText(label, min(40, viewBudget(width, 2+visibleWidth(f.Name)+2))))

@@ -64,5 +64,9 @@ func (w writeFile) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if err := writeFileEncoded(p.Path, p.Content, enc); err != nil {
 		return "", fmt.Errorf("write %s: %w", p.Path, err)
 	}
-	return fmt.Sprintf("wrote %d bytes to %s", len(p.Content), p.Path), nil
+	msg := fmt.Sprintf("wrote %d bytes to %s", len(p.Content), p.Path)
+	if extra := runPostEditHook(ctx, p.Path); extra != "" {
+		msg += "\n" + extra
+	}
+	return msg, nil
 }

@@ -37,47 +37,70 @@ func TestComposeAppendsAfterBase(t *testing.T) {
 }
 
 // TestBlockInjectsUserProfile confirms the "always present" user profile: when
-// TypeUser facts exist, Compose folds a structured profile block into the
-// system prompt so the model knows the user without a tool call. With no user
-// facts, the block is omitted entirely (no empty section pollutes the prefix).
+// TestBlockInjectsUserProfile ensures the portrait layer (profile/user.md +
+// memory.md + profile/<mode>.md) folds into the system prompt so the model
+// knows the user without a tool call. The portrait is plain user/dream-authored
+// markdown; what is written is exactly what the model sees.
 func TestBlockInjectsUserProfile(t *testing.T) {
-	dir := t.TempDir()
-	store := Store{Dir: dir}
-	store.Save(Memory{
-		Name: "role", Description: "Backend engineer", Type: TypeUser,
-		Body: "Works on backend.", Category: "identity",
-	})
-	store.Save(Memory{
-		Name: "task", Description: "Ship Q2", Type: TypeProject, Body: "Ship by June.",
-	})
+	user := t.TempDir()
+	mustMkdir(t, filepath.Join(user, "profile"))
+	mustWrite(t, filepath.Join(user, "profile", "user.md"), "# 关于用户\n张三，后端工程师。")
+	mustWrite(t, filepath.Join(user, "profile", "memory.md"), "# 客观事实\n项目在 C:\\swarm。")
+	mustWrite(t, filepath.Join(user, "profile", "dev.md"), "偏好 Go。")
 
-	set := &Set{Store: store, CWD: dir}
+	set := Load(Options{CWD: user, UserDir: user, Profile: "dev"})
 	got := Compose("BASE", set)
 
-	// The user fact's description must appear in the profile block.
-	if !strings.Contains(got, "Backend engineer") {
-		t.Errorf("user profile not injected:\n%s", got)
+	if !strings.Contains(got, "张三，后端工程师。") {
+		t.Errorf("user portrait not injected:\n%s", got)
 	}
-	if !strings.Contains(got, "## User Profile") {
-		t.Errorf("profile section heading missing:\n%s", got)
+	if !strings.Contains(got, "项目在 C:\\swarm。") {
+		t.Errorf("global memory not injected:\n%s", got)
 	}
-	// The project fact must NOT be in the profile (profile is TypeUser only).
-	if strings.Contains(got, "Ship Q2") {
-		t.Errorf("project fact leaked into user profile:\n%s", got)
+	if !strings.Contains(got, "偏好 Go。") {
+		t.Errorf("mode portrait not injected:\n%s", got)
 	}
 }
 
-// TestBlockOmitsProfileWhenNoUserFacts ensures an empty profile adds nothing —
-// the cache-stable prefix stays maximal when there's nothing to say.
+// TestBlockOmitsProfileWhenNone ensures an empty portrait adds nothing — the
+// cache-stable prefix stays maximal when there's nothing to say.
 func TestBlockOmitsProfileWhenNoUserFacts(t *testing.T) {
-	dir := t.TempDir()
-	store := Store{Dir: dir}
-	store.Save(Memory{Name: "task", Description: "Ship Q2", Type: TypeProject, Body: "x"})
-
-	set := &Set{Store: store, CWD: dir}
+	user := t.TempDir()
+	set := Load(Options{CWD: user, UserDir: user, Profile: "dev"})
 	got := Compose("BASE", set)
-	if strings.Contains(got, "## User Profile") {
-		t.Errorf("profile section should be absent with no user facts:\n%s", got)
+	if got != "BASE" {
+		t.Errorf("empty portrait should leave base untouched, got:\n%s", got)
+	}
+}
+
+// TestProfilePartition ensures dev/cowork portraits are isolated: loading under
+// dev injects only the global files (user.md + memory.md) + dev, not cowork.
+func TestProfilePartition(t *testing.T) {
+	user := t.TempDir()
+	mustMkdir(t, filepath.Join(user, "profile"))
+	mustWrite(t, filepath.Join(user, "profile", "user.md"), "SHARED-USER")
+	mustWrite(t, filepath.Join(user, "profile", "memory.md"), "SHARED-MEMORY")
+	mustWrite(t, filepath.Join(user, "profile", "dev.md"), "DEV-ONLY")
+	mustWrite(t, filepath.Join(user, "profile", "cowork.md"), "COWORK-ONLY")
+
+	dev := Load(Options{CWD: user, UserDir: user, Profile: "dev"})
+	devBlock := dev.Block()
+	for _, want := range []string{"SHARED-USER", "SHARED-MEMORY", "DEV-ONLY"} {
+		if !strings.Contains(devBlock, want) {
+			t.Errorf("dev should see %s:\n%s", want, devBlock)
+		}
+	}
+	if strings.Contains(devBlock, "COWORK-ONLY") {
+		t.Errorf("dev must not see cowork portrait:\n%s", devBlock)
+	}
+
+	cow := Load(Options{CWD: user, UserDir: user, Profile: "cowork"})
+	cowBlock := cow.Block()
+	if strings.Contains(cowBlock, "DEV-ONLY") {
+		t.Errorf("cowork must not see dev portrait:\n%s", cowBlock)
+	}
+	if !strings.Contains(cowBlock, "COWORK-ONLY") {
+		t.Errorf("cowork should see cowork portrait:\n%s", cowBlock)
 	}
 }
 

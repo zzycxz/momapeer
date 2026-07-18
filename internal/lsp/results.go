@@ -90,6 +90,57 @@ func markedToText(raw json.RawMessage) string {
 	return ""
 }
 
+// symbolKindName maps LSP SymbolKind integers to short human labels. Mirrors the
+// LSP 3.17 enum; unknown kinds fall back to a generic "symbol".
+var symbolKindName = map[int]string{
+	1: "file", 2: "module", 3: "namespace", 4: "package", 5: "class",
+	6: "method", 7: "property", 8: "field", 9: "constructor", 10: "enum",
+	11: "interface", 12: "function", 13: "variable", 14: "constant",
+	15: "string", 16: "number", 17: "boolean", 18: "array", 19: "object",
+	20: "key", 21: "null", 22: "enum-member", 23: "struct", 24: "event",
+	25: "operator", 26: "type-parameter",
+}
+
+// formatSymbolInformation decodes the workspace/symbol result and renders each
+// match as "name (kind) — container  file:line" (container and file:line
+// omitted when absent). Returns "" when the response carries no symbols so the
+// caller can skip the server's result. m is accepted to match the call site and
+// reserve a hook for workspace-root-relative paths; it is not currently used.
+func formatSymbolInformation(raw json.RawMessage, m *Manager) string {
+	// workspace/symbol returns SymbolInformation[] (or DocumentSymbol[], but
+	// workspace/symbol is always the flat form).
+	var syms []struct {
+		Name          string   `json:"name"`
+		Kind          int      `json:"kind"`
+		ContainerName string   `json:"containerName"`
+		Location      Location `json:"location"`
+	}
+	if err := json.Unmarshal(raw, &syms); err != nil || len(syms) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, s := range syms {
+		kind := symbolKindName[s.Kind]
+		if kind == "" {
+			kind = "symbol"
+		}
+		name := strings.TrimSpace(s.Name)
+		if name == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "%s (%s)", name, kind)
+		if c := strings.TrimSpace(s.ContainerName); c != "" {
+			fmt.Fprintf(&b, " — %s", c)
+		}
+		if s.Location.URI != "" {
+			path := uriToPath(s.Location.URI)
+			fmt.Fprintf(&b, "  %s:%d", path, s.Location.Range.Start.Line+1)
+		}
+		b.WriteByte('\n')
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 var severityName = map[int]string{1: "error", 2: "warning", 3: "info", 4: "hint"}
 
 func formatDiagnostics(rel string, diags []Diagnostic) string {

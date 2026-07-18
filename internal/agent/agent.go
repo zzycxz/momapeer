@@ -33,6 +33,15 @@ const maxFinalReadinessBlocks = 3
 const maxEmptyFinalBlocks = 3
 const maxStreamRecoveries = 1
 
+// Runner executes one task turn. *Agent satisfies it; the controller and compose
+// hold a Runner so they're agnostic to the concrete executor. (The two-model
+// Coordinator that previously also satisfied Runner has been removed — momapeer
+// uses a single-model planner-executor path exclusively. The interface stays so
+// callers don't depend on the concrete *Agent type.)
+type Runner interface {
+	Run(ctx context.Context, input any) error
+}
+
 // Renderer redraws the assistant's final-answer text as styled output. It is
 // applied only after a turn's text stream completes, so the user sees raw
 // markdown stream live, then a single redraw replaces it with formatted

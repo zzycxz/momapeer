@@ -11,7 +11,7 @@ import (
 // is removed from the store.
 func TestForgetToolDeletes(t *testing.T) {
 	store := Store{Dir: t.TempDir()}
-	if _, err := store.Save(Memory{Name: "stale-fact", Description: "d", Type: TypeProject, Body: "b"}); err != nil {
+	if _, err := store.Save(Memory{Name: "stale-fact", Type: TypeProject, Body: "stale fact body"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -53,7 +53,7 @@ func (f *fakeQueue) QueueMemory(note string) { f.notes = append(f.notes, note) }
 // the model stops trusting the still-cached index line this session.
 func TestForgetToolQueuesDisregardNote(t *testing.T) {
 	store := Store{Dir: t.TempDir()}
-	if _, err := store.Save(Memory{Name: "old-fact", Description: "d", Type: TypeProject, Body: "b"}); err != nil {
+	if _, err := store.Save(Memory{Name: "old-fact", Type: TypeProject, Body: "old fact body"}); err != nil {
 		t.Fatal(err)
 	}
 	q := &fakeQueue{}

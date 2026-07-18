@@ -407,6 +407,7 @@ export const en = {
   "status.switchModel": "Switch model",
   "status.noModels": "no switchable models",
   "status.modelSwitchFailed": "Model switch failed: {err}",
+  "status.effortSwitchFailed": "Effort switch failed: {err}",
   "status.effort": "effort {level}",
   "status.effortTitle": "Reasoning effort",
   "status.effortAutoTitle": "Reasoning effort: auto (model default: {def})",
@@ -1682,6 +1683,17 @@ export const en = {
   "shortcuts.desc.screenshot": "Capture the screen and send it to the AI for recognition. System-level: works even when momapeer is in the background. Configurable in Settings → Office → Screenshot.",
   "shortcuts.action.estop": "Emergency stop",
   "shortcuts.desc.estop": "Immediately cancel the in-flight AI turn — the kill switch for desktop automation. System-level: works even when momapeer is in the background. Configurable in Settings → Office.",
+  "settings.plannerNone": "None",
+  "settings.plannerNoneHint": "No planner model",
+  "settings.plannerNoneHintShort": "Off",
+  "settings.plannerModel": "Planner model",
+  "settings.plannerMaxSteps": "Planner max steps",
+  "settings.plannerMaxStepsHint": "Maximum tool-call rounds for the planner. 0 = unlimited.",
+  "settings.plannerMaxStepsDisabledHint": "Cannot set max steps when the planner is disabled.",
+  "settings.metricsLabel": "Telemetry",
+  "settings.metricsHint": "Anonymous usage data helps improve momapeer.",
+  "cowork.expertBudget": "Expert budget",
+  "cowork.expertBudgetUnlimited": "Unlimited",
 };
 
 export type DictKey = keyof typeof en;

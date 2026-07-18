@@ -6,6 +6,7 @@ import { app } from "../lib/bridge";
 import { AutomationPanel } from "../components/cowork/AutomationPanel";
 import { RagPanel } from "../components/cowork/RagPanel";
 import { ExpertPanel } from "../components/cowork/ExpertPanel";
+import { CoworkDock } from "../components/cowork/CoworkDock";
 
 export type CoWorkPanel = "taskCenter" | "experts" | "automation" | "rag";
 
@@ -139,14 +140,13 @@ export function CoWorkLayout({
         )}
       </section>
 
-      {/* Right: artifacts / preview */}
+      {/* Right: dock — today/mail/files overview */}
       {rightDockOpen && (
-        <aside className="cowork-dock">
-          <section className="cowork-dock__group">
-            <h3>{t("cowork.artifacts") || "产物预览"}</h3>
-            <div className="cowork-empty">{t("cowork.noArtifacts") || "暂无产物"}</div>
-          </section>
-        </aside>
+        <CoworkDock
+          maximized={false}
+          onClose={() => {}}
+          onToggleMaximized={() => {}}
+        />
       )}
     </div>
   );

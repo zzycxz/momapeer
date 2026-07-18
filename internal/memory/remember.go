@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
+	"strings"
 
 	"github.com/zzycxz/momapeer/internal/tool"
 )
@@ -12,140 +12,124 @@ import (
 // rememberTool lets the model persist a durable fact to the auto-memory store.
 // It is stateful (bound to one project's Store), so boot constructs it and adds
 // it to the registry — the same pattern as the task tool — rather than
-// self-registering as a stateless built-in. When detector is set, new facts
-// that contradict existing ones automatically supersede the old record.
-type rememberTool struct {
-	store    Store
-	detector ConflictDetector
-}
+// self-registering as a stateless built-in.
+//
+// v0.4 rewrite: the schema is deliberately tiny — name + body + an optional
+// profile partition. The old 11-field taxonomy (type/category/importance/
+// valid_from/to/ttl/tags …), conflict detection, and supersede chaining were
+// removed because they made every save an effort for the model and every saved
+// row heavy to inject. Saved facts are no longer injected per turn anyway (only
+// the portrait layer is), so the metadata that existed to govern injection
+// (status/importance/decay) has no job. Same-name save overwrites; history is
+// the user's VCS.
+type rememberTool struct{ store Store }
 
 // NewRememberTool returns the `remember` tool bound to store. A zero/disabled
 // store yields a tool that reports the store is unavailable rather than silently
-// dropping saves. detector is optional — pass nil to skip conflict detection.
-func NewRememberTool(store Store, detector ConflictDetector) tool.Tool {
-	return rememberTool{store: store, detector: detector}
-}
+// dropping saves.
+func NewRememberTool(store Store) tool.Tool { return rememberTool{store: store} }
 
 func (rememberTool) Name() string { return "remember" }
 
 func (rememberTool) Description() string {
-	return "Save a durable fact to project memory so it survives across sessions. " +
-		"Use for things worth remembering long-term: who the user is and their preferences (type \"user\"); " +
-		"guidance on how to work, including the why (type \"feedback\"); ongoing goals or constraints not " +
-		"derivable from the code (type \"project\"); or pointers to external resources (type \"reference\"). " +
-		"For feedback/project, structure the body with a \"**Why:**\" line and a \"**How to apply:**\" line so the fact is actionable later; " +
-		"link related memories inline with [[their-name]]. " +
-		"Do NOT save what the repo already records (code structure, git history) or facts that only matter to the current conversation; " +
-		"if asked to remember one of those, save instead the non-obvious point behind it. " +
-		"Before saving, check the loaded memory index for an entry that already covers this — reuse that name to update it rather than create a near-duplicate, and use `forget` to drop one that is now wrong. " +
-		"When a fact has a time boundary (e.g. user says \"3月在北京\"), set valid_from/valid_to in YYYY-MM-DD format. " +
-		"The system will automatically supersede older conflicting records. " +
-		"The saved index loads into context at the start of each session."
+	return "Save a durable fact to memory so it survives across sessions. " +
+		"Use for things worth remembering long-term: who the user is and their preferences, " +
+		"guidance on how to work, ongoing goals or constraints not derivable from the code, " +
+		"or pointers to external resources. " +
+		"Do NOT save what the repo already records (code structure, git history) or facts that " +
+		"only matter to the current conversation. " +
+		"Reusing a name overwrites that memory — do that to update an existing fact rather than " +
+		"create a near-duplicate; use `forget` to drop one that is now wrong. " +
+		"The fact applies now; the portrait layer (maintained separately) is what loads into every turn. " +
+		"To read back a fact you saved earlier, use `recall` (saved facts are not injected automatically)."
 }
 
 func (rememberTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"name": {"type": "string", "description": "Short kebab-case slug identifying the fact, e.g. \"prefers-tabs\". Reusing a name overwrites that memory — do that to update an existing fact. Omit to derive one from the description."},
-			"title": {"type": "string", "description": "Short human-readable label shown in the memory index, e.g. \"Prefers tabs\". Omit to derive one from the name."},
-			"description": {"type": "string", "description": "One-line hook shown in the index — the phrase a future session reads to decide whether to open this memory. Make it specific."},
-			"type": {"type": "string", "enum": ["user", "feedback", "project", "reference"], "description": "Category of the fact."},
-			"body": {"type": "string", "description": "The fact itself (Markdown). For feedback/project, include a \"**Why:**\" line and a \"**How to apply:**\" line; link related memories with [[their-name]]."},
-			"valid_from": {"type": "string", "description": "When this fact becomes/became true, YYYY-MM-DD. E.g. user says '3月在北京' → '2026-03-01'. Omit for timeless facts."},
-			"valid_to": {"type": "string", "description": "When this fact stops/stopped being true, YYYY-MM-DD. Empty = currently true. The system auto-sets this when a newer fact supersedes this one."},
-			"ttl": {"type": "string", "description": "Auto-archive date, YYYY-MM-DD. The memory is automatically archived when this date passes. Use for time-bounded facts like weekly goals. Omit for durable facts."},
-			"importance": {"type": "string", "enum": ["high", "medium", "low"], "description": "Decay resistance: 'high' = never auto-decays, 'medium' = standard decay (default), 'low' = decays twice as fast."},
-			"category": {"type": "string", "enum": ["identity", "style", "belief", "temporal", "feedback"], "description": "Profile bucket for type=\"user\" facts, used by memory_profile to group the user's profile: identity (who they are: role, name, residence), style (work preferences, communication style), belief (technical opinions), temporal (time-sensitive attributes), feedback (guidance to you). Omit for non-user facts."},
-			"tags": {"type": "array", "items": {"type": "string"}, "description": "Free-form labels for grouping/filtering, e.g. [\"backend\", \"go\"]. Optional."}
+			"name": {"type": "string", "description": "Short kebab-case slug identifying the fact, e.g. \"prefers-tabs\". Reusing a name overwrites that memory — do that to update an existing fact. Omit to derive one from the body's first line."},
+			"body": {"type": "string", "description": "The fact itself (Markdown). The first line doubles as the index label shown in the memory panel."},
+			"profile": {"type": "string", "enum": ["global", "dev", "cowork"], "description": "Which mode this fact belongs to. \"global\" (default) is shared across dev and cowork; \"dev\"/\"cowork\" are only visible in that mode. Omit when the fact is not mode-specific."},
+			"project": {"type": "boolean", "description": "When true, store under the current project instead of the shared profile bucket. Use for project-specific goals, constraints, and decisions. Omit (false) for facts about the user."}
 		},
-		"required": ["description", "body"]
+		"required": ["body"]
 	}`)
 }
 
 func (t rememberTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var in struct {
-		Name        string   `json:"name"`
-		Title       string   `json:"title"`
-		Description string   `json:"description"`
-		Type        string   `json:"type"`
-		Body        string   `json:"body"`
-		ValidFrom   string   `json:"valid_from"`
-		ValidTo     string   `json:"valid_to"`
-		TTL         string   `json:"ttl"`
-		Importance  string   `json:"importance"`
-		Category    string   `json:"category"`
-		Tags        []string `json:"tags"`
+		Name    string `json:"name"`
+		Body    string `json:"body"`
+		Profile string `json:"profile"`
+		Project bool   `json:"project"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
-	if in.Description == "" || in.Body == "" {
-		return "", fmt.Errorf("description and body are required")
+	if strings.TrimSpace(in.Body) == "" {
+		return "", fmt.Errorf("body is required")
 	}
 	name := in.Name
 	if name == "" {
-		name = in.Title // Save slugifies; the title (or, below, the description) makes a serviceable slug
-	}
-	if name == "" {
-		name = in.Description
-	}
-
-	newMem := Memory{
-		Name:        name,
-		Title:       in.Title,
-		Description: in.Description,
-		Type:        NormalizeType(in.Type),
-		Body:        in.Body,
-		ValidFrom:   in.ValidFrom,
-		ValidTo:     in.ValidTo,
-		TTL:         in.TTL,
-		Importance:  in.Importance,
-		Category:    NormalizeCategory(in.Category),
-		Tags:        in.Tags,
+		// Derive a slug from the first non-empty line of the body so a bare-body
+		// save still gets a stable, human-readable file name.
+		name = firstLine(in.Body)
 	}
 
-	// Conflict detection via LLM. We scan ALL active memories of the same type,
-	// not just the same-name one, so that a different-name contradiction is
-	// caught — e.g. "住北京" (name=address) vs "住上海" (name=location) must not
-	// both stay active. The detector itself short-circuits non-user/project
-	// types (see conflict.go), so this loop is effectively bounded to the types
-	// that carry mutable real-world facts.
-	//
-	// We stop at the first detected conflict: one new fact should obsolete at
-	// most one old one in practice, and bounding the LLM calls keeps remember
-	// latency predictable. Save() still handles same-name supersede inline, so
-	// if the conflicting record shares the new name we skip it here to avoid
-	// double-processing.
-	if t.detector != nil {
-		newName := slug(name)
-		for _, old := range t.store.ListActiveByType(newMem.Type) {
-			if old.Name == newName {
-				continue // Save() handles same-name inline
-			}
-			if !t.detector.Detect(ctx, old, newMem) {
-				continue
-			}
-			validTo := newMem.ValidFrom
-			if validTo == "" {
-				validTo = time.Now().UTC().Format("2006-01-02")
-			}
-			// Force-set SupersededBy so the chain can never break (plan 1.5).
-			if err := t.store.Supersede(old.Name, validTo, newName); err == nil {
-				newMem.Supersedes = old.Name
-			}
-			break // first conflict wins
-		}
+	m := Memory{
+		Name:    name,
+		Body:    in.Body,
+		Profile: normalizeSaveProfile(in.Profile, in.Project),
 	}
-
-	path, err := t.store.Save(newMem)
+	path, err := t.store.Save(m)
 	if err != nil {
 		return "", err
 	}
 	if q, ok := QueueFromContext(ctx); ok {
-		q.QueueMemory("Saved memory \"" + slug(name) + "\": " + oneLine(in.Description))
+		q.QueueMemory("Saved memory \"" + slug(name) + "\": " + oneLine(firstLine(in.Body)))
 	}
-	return fmt.Sprintf("Saved memory to %s (it applies now and loads automatically in future sessions).", path), nil
+	return fmt.Sprintf("Saved memory to %s (it applies now and is reachable via the memory panel in future sessions).", path), nil
 }
 
 func (rememberTool) ReadOnly() bool { return false }
+
+// normalizeSaveProfile resolves the partition a save lands in. A project save
+// always goes to the project-scoped bucket (the Store's Dir already encodes the
+// active mode, so it stays mode-isolated). A non-project save honours an
+// explicit profile ("global"/"dev"/"cowork"), defaulting to "global" so a
+// bare-body remember is shared across modes rather than silently hidden in one.
+func normalizeSaveProfile(profile string, project bool) string {
+	if project {
+		return "project"
+	}
+	p := NormalizeProfileScope(profile)
+	if p == "" {
+		return "global"
+	}
+	return p
+}
+
+// NormalizeProfileScope coerces a save's profile argument to a known partition
+// or "" (caller defaults to "global"). Unlike NormalizeProfile (which defaults
+// unknowns to "dev" for *path* derivation), this returns "" for unknowns so the
+// caller can apply the "shared by default" rule distinct from the path floor.
+func NormalizeProfileScope(s string) string {
+	p := strings.ToLower(strings.TrimSpace(s))
+	switch p {
+	case "global", "dev", "cowork":
+		return p
+	}
+	return ""
+}
+
+// firstLine returns the first non-empty line of s, trimmed. Used to derive a
+// memory's name (and index label) from a bare-body save.
+func firstLine(s string) string {
+	for _, ln := range strings.Split(s, "\n") {
+		if t := strings.TrimSpace(ln); t != "" {
+			return t
+		}
+	}
+	return s
+}

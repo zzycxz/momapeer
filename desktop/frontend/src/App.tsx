@@ -888,6 +888,20 @@ export default function App() {
       showToast(e.message ?? "已紧急停止 AI 操作", "error");
     });
   }, [showToast]);
+
+  // Scheduled-task results: surface as a toast globally so the user sees the
+  // outcome even when they're not on the Automation panel. Without this, a
+  // task with output_mode="notify" fires its result into the void if the user
+  // is on another panel (experts/rag/chat).
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.runtime) return;
+    return window.runtime.EventsOn("scheduler:notice", (...data: unknown[]) => {
+      const e = (data?.[0] ?? {}) as { name?: string; result?: string };
+      const name = e.name ?? "定时任务";
+      const preview = (e.result ?? "").slice(0, 120);
+      showToast(`${name}: ${preview}`, "info");
+    });
+  }, [showToast]);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onResize = () => setViewportWidth(window.innerWidth);
@@ -2400,7 +2414,6 @@ export default function App() {
       )}
       <Composer
         running={state.running}
-        paused={state.paused}
         collaborationMode={collaborationMode}
         toolApprovalMode={toolApprovalMode}
         goal={goal}

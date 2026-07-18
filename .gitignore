@@ -78,3 +78,6 @@ cua-vlm-trace/
 /output.pptx
 /read-notepad.ps1
 /verify_notepad.py
+
+# Windows reserved-name stray file (empty artifact, not project content)
+nul

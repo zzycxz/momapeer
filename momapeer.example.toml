@@ -39,11 +39,6 @@ compact_force_ratio = 0.9   # force compacting at this high-water mark
 # subagent_models = { review = "moma/openai/gpt-oss-120b", security_review = "moma/openai/gpt-oss-120b" }   # per-skill overrides
 # output_style = "explanatory"   # persona/tone folded into the prompt: explanatory | learning | concise,
 #                                  or a custom .momapeer/output-styles/<name>.md ; empty = default
-# verify = "on"                 # optional (dev profile only): after the executor finishes, run
-#                                # go vet/build/test and retry on failure. off = original single-pass.
-# verify_max_retries = 1        # debug retries after a failed verify (default 1, 0 = no retry).
-# review = "on"                 # optional (dev profile only): after verify, the executor re-reads its
-#                                # git diff and fixes critical issues it finds. Runs after verify. off = skip.
 
 # A provider is a vendor endpoint (one base_url + key) that offers one or more
 # models. Use `models = [...]` to expose several under a single entry — switching
@@ -103,6 +98,7 @@ bash_timeout_seconds = 120   # foreground safety cap; set 0 for no tool-local ca
 # enabled      = false
 # auto_install = true
 # path         = ""   # empty = cache, then PATH, then a bundle beside momapeer
+# download_url = ""   # custom download mirror for the CodeGraph binary (intranet/air-gapped). When set, replaces the default GitHub source. Example: "https://internal-mirror.corp/codegraph/releases/download"
 
 # Skills are invokable playbooks (SKILL.md / <name>.md with frontmatter), found
 # under .momapeer/skills, .agents/skills, .agent/skills, .claude/skills (project)
@@ -188,14 +184,10 @@ bash_timeout_seconds = 120   # foreground safety cap; set 0 for no tool-local ca
 # # surfaces a clear error (and a browser_set_path tool) when nothing is found.
 # browser_path = ""
 #
-# # PPT generation via the wps-ppt-mcp-server (WPS COM automation). Set to the
-# # server's server.py to enable ppt_create / ppt_from_template / etc. Requires
-# # Python + `pip install fastmcp pywin32` and WPS Office installed. Empty = PPT
-# # capability off (the rest of cowork still works).
-# wps_ppt_server_path = ""
-# # Python interpreter to launch the server (default: "python" on PATH). Set when
-# # your fastmcp/pywin32 live in a venv.
-# wps_ppt_python = ""
+# # PPT generation: handled by the ppt-auto skill, which operates WPS 演示 as a
+# # human would (screen perception → click → type → save). Requires WPS Office
+# # installed. No additional server or Python setup needed — just run
+# # run_skill("ppt-auto", task) in cowork mode.
 #
 # # Outbound email (email_send). Nested under [cowork], so the table is
 # # [cowork.smtp] — NOT a top-level [smtp]. password_env names an env var holding

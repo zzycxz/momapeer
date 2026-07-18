@@ -24,6 +24,18 @@ type Spec struct {
 	// command cannot exfiltrate or fetch; many dev commands (module/package
 	// downloads) need it, so it defaults on at the config layer.
 	Network bool
+	// RequireAvailable, when true, makes Mode "enforce" fail-closed (refuse all
+	// commands) if no OS sandbox backend exists on this platform, rather than
+	// silently degrading to unconfined. Mirrors config.SandboxConfig.RequireAvailable.
+	RequireAvailable bool
+	// StrictWrites narrows the toolchain-cache write grants (macOS Seatbelt) to
+	// true cache subdirs only — e.g. ~/.cargo/registry/cache instead of all of
+	// ~/.cargo. Default (false) keeps the broad grants so `go install`/`cargo
+	// build`/`npm install` keep working (they write to bin/pkg dirs outside the
+	// cache). High-security deployments that don't expect build-tool execution
+	// turn this on to close the "drop a binary in ~/.cargo/bin" persistence
+	// vector. Audit A8.
+	StrictWrites bool
 }
 
 // enforce reports whether the spec asks for confinement.

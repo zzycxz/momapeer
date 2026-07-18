@@ -90,6 +90,7 @@ interface State {
   sessionTokens: number;
   retry?: { attempt: number; max: number };
   seq: number;
+  paused?: boolean;
 }
 
 export const initialState: State = {
@@ -612,11 +613,23 @@ export function useController() {
     if (!tab) return;
     const local = statesRef.current.get(tabId);
     const needsInitialLoad = !local?.meta;
+    // If the frontend thinks a turn is still running but the backend says it's
+    // done, the turn_done event was missed (rare — Wails IPC is synchronous).
+    // We used to reset items and rebuild from history here, but that discards
+    // the streaming content the user already saw (thinking, tool calls). Instead,
+    // finalize the state in-place: mark running=false, stop streaming, keep all
+    // accumulated items. The turn_done handler in applyEvent already does the
+    // right thing (live→item, streaming→false), so if the event truly arrives
+    // later it's a harmless no-op on already-finalized state.
     const missedTurnDone = Boolean(local?.running && !tab.running);
     dispatchTo(tabId, { type: "backend_status", running: Boolean(tab.running) });
-    if (needsInitialLoad || missedTurnDone) {
-      await loadSessionDataForTab(tabId, missedTurnDone);
+    if (needsInitialLoad) {
+      await loadSessionDataForTab(tabId);
       return;
+    }
+    if (missedTurnDone) {
+      // Finalize in-place without discarding items — trust the accumulated state.
+      dispatchTo(tabId, { type: "event", e: { kind: "turn_done" } as WireEvent });
     }
     const [jobs, effort] = await Promise.all([
       app.JobsForTab(tabId).catch(() => undefined),
@@ -753,6 +766,18 @@ export function useController() {
     return undefined;
   }, [activeTabId, dispatchTo]);
 
+  const paused = activeState.paused ?? false;
+
+  const pauseToggle = useCallback(() => {
+    const tabId = activeTabId;
+    if (!tabId) return;
+    if (paused) {
+      app.ResumeTurnTab(tabId).catch(() => {});
+    } else {
+      app.PauseTab(tabId).catch(() => {});
+    }
+  }, [activeTabId, paused]);
+
   const approve = useCallback((id: string, allow: boolean, session: boolean, persist: boolean) => {
     if (!activeTabId) return;
     dispatchTo(activeTabId, { type: "clearApproval" });
@@ -883,7 +908,12 @@ export function useController() {
 
   const setEffort = useCallback(async (level: string) => {
     if (!activeTabId) return;
-    await app.SetEffortForTab(activeTabId, level).catch(() => {});
+    try {
+      await app.SetEffortForTab(activeTabId, level);
+    } catch (err) {
+      dispatchTo(activeTabId, { type: "local_notice", level: "warn", text: t("status.effortSwitchFailed", { err: errorMessage(err) }) });
+      return;
+    }
     try {
       dispatchTo(activeTabId, { type: "meta", meta: await app.MetaForTab(activeTabId) });
       dispatchTo(activeTabId, { type: "context", context: await app.ContextUsageForTab(activeTabId) });
@@ -985,7 +1015,7 @@ export function useController() {
   return {
     state: activeState,
     activeTabId,
-    send, runShell, steer, notice, cancel, approve, answerQuestion, setControllerMode, setCollaborationMode, setToolApprovalMode, setGoal, clearGoal,
+    send, runShell, steer, notice, cancel, pauseToggle, paused, approve, answerQuestion, setControllerMode, setCollaborationMode, setToolApprovalMode, setGoal, clearGoal,
     newSession, clearSession, listSessions, listTrashedSessions, resumeSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession,
     refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, setModel, setEffort,
     fetchMemory, remember, forget, saveDoc,

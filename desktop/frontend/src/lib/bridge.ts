@@ -57,6 +57,9 @@ import type {
   TabMeta,
   TaskInput,
   TaskView,
+  CalendarEventView,
+  InboxItem,
+  MailProbeResult,
   TeamView,
   TemplateView,
   TopicMeta,
@@ -69,6 +72,10 @@ import type {
   WorkspaceView,
   HooksSettingsView,
   HookConfigView,
+  DocPreviewView,
+  WireCollab,
+  MergeCandidate,
+  EntityDetailView,
 } from "./types";
 
 const GLOBAL_PROJECT_ORDER_KEY = "__global__";
@@ -318,6 +325,10 @@ export interface AppBindings {
   // each component polling. "scheduler:notice" (onSchedulerNotice) carries a
   // fired task's {name, result} for an in-app toast.
   ListScheduledTasks(): Promise<TaskView[]>;
+  // CoworkDock today/mail tabs
+  ListCalendarEvents(since: string, before: string): Promise<CalendarEventView[]>;
+  ProbeMailAccount(): Promise<MailProbeResult>;
+  InboxPreview(limit: number): Promise<InboxItem[]>;
   CreateScheduledTask(input: TaskInput): Promise<TaskView>;
   UpdateScheduledTask(input: TaskInput): Promise<TaskView>;
   DeleteScheduledTask(id: string): Promise<void>;
@@ -354,6 +365,40 @@ export interface AppBindings {
   StopScreenshotHotkey(): Promise<void>;
   StartEStopHotkey(): Promise<void>;
   StopEStopHotkey(): Promise<void>;
+  // Calendar bindings
+  ListCalendarEvents(since: string, before: string): Promise<CalendarEventView[]>;
+  SearchCalendarEvents(query: string, limit?: number): Promise<CalendarEventView[]>;
+  CreateCalendarEvent(event: CalendarEventView): Promise<CalendarEventView>;
+  UpdateCalendarEvent(event: CalendarEventView): Promise<CalendarEventView>;
+  DeleteCalendarEvent(id: string): Promise<void>;
+  ImportCalendarEvents(events: CalendarEventView[]): Promise<number>;
+  ExportCalendarEvents(since: string, before: string): Promise<string>;
+  GetChineseHolidays(year: number): Promise<CalendarEventView[]>;
+  ListScheduledTasksAsEvents(since?: string, before?: string): Promise<CalendarEventView[]>;
+  // Mail bindings
+  ProbeMailAccount(): Promise<MailProbeResult>;
+  InboxPreview(limit: number): Promise<InboxItem[]>;
+  // RAG extended
+  GetSessionCollections(): Promise<string[]>;
+  SetSessionCollections(collections: string[]): Promise<void>;
+  RagSummarize(collection: string): Promise<{ summary: string; themes: string[] }>;
+  RagCleanCollection(collection: string): Promise<void>;
+  RagListHETemplates(): Promise<Array<{ name: string; displayName: string; description: string; category: string; available: boolean; templateType: string; entityFields: Array<{ name: string; description: string }>; relationFields: Array<{ name: string; description: string }> }>>;
+  HEHealth(): Promise<{ ready: boolean }>;
+  RagExtractResult(collection: string): Promise<{ hasData: boolean; entityCount: number; relationCount: number; doneCount: number; jobCount: number; topEntities: Array<{ name: string; nameRaw?: string; type: string; description?: string; relationCount: number }>; topRelations: Array<{ source: string; target: string; type: string }> }>;
+  RagEmbedEntities(collection: string): Promise<void>;
+  RagFindMergeCandidates(collection: string): Promise<MergeCandidate[]>;
+  RagMergeEntities(collection: string, names: string[]): Promise<void>;
+  GetDocumentPreview(collectionOrPath: string, path?: string): Promise<DocPreviewView>;
+  GetEntityDetail(collection: string, name: string): Promise<EntityDetailView>;
+  // Expert extended
+  GetActiveExpertRun(teamId: string): Promise<{ status: string; task: string; messages?: Array<{ kind: string; expertName?: string; round?: number; text: string }> } | null>;
+  ExpertSessionHistory(teamId: string): Promise<WireCollab[]>;
+  ExpertSearchTeams(query: string): Promise<TeamView[]>;
+  // Other missing bindings
+  PortraitProfile(): Promise<{ path: string; content: string }>;
+  UpdateEntity(collection: string, name: string, patch: { nameRaw?: string; type?: string; description?: string }): Promise<void>;
+  RagClear(collection: string): Promise<void>;
 }
 
 // Compile-time drift check. Exclude<A, B> extracts keys in A that are missing

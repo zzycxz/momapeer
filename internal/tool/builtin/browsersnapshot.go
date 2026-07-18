@@ -276,7 +276,9 @@ func truncate(s string, n int) string {
 // stored backendNodeId. This is the bridge between "ref e5" and an actual DOM
 // node the action can call functions on (click, set value, etc.) — the same
 // dom.ResolveNode + runtime.CallFunctionOn path Playwright uses.
-func resolveRefToObjectID(s *browserSession, ref string) (runtime.RemoteObjectID, error) {
+// ctx is the caller's turn context; resolution respects its cancellation and
+// is additionally bounded by browserActionTimeout.
+func resolveRefToObjectID(ctx context.Context, s *browserSession, ref string) (runtime.RemoteObjectID, error) {
 	refsPtr := s.refs.Load()
 	if refsPtr == nil {
 		return "", fmt.Errorf("no snapshot taken for session %q — call browser_snapshot first to get refs", s.id)
@@ -288,7 +290,11 @@ func resolveRefToObjectID(s *browserSession, ref string) (runtime.RemoteObjectID
 	if info.backendID == 0 {
 		return "", fmt.Errorf("ref %q has no DOM node (it may be a virtual node like a list container); target a concrete element", ref)
 	}
-	actx, cancel := context.WithTimeout(s.ctx, browserActionTimeout)
+	parent := s.ctx
+	if ctx != nil {
+		parent = ctx
+	}
+	actx, cancel := context.WithTimeout(parent, browserActionTimeout)
 	defer cancel()
 	var objID runtime.RemoteObjectID
 	err := chromedp.Run(actx, chromedp.ActionFunc(func(ctx context.Context) error {
@@ -311,12 +317,18 @@ func resolveRefToObjectID(s *browserSession, ref string) (runtime.RemoteObjectID
 // callOnRef resolves a ref to a DOM object and calls a function on it. The
 // functionDeclaration receives the element as `this`. Returns the function's
 // serialized result. Used by click/type/select to act on snapshot refs.
-func callOnRef(s *browserSession, ref string, fnDecl string, args ...any) (string, error) {
-	objID, err := resolveRefToObjectID(s, ref)
+// ctx is the caller's turn context; propagated to ref resolution and the CDP
+// call so a cancelled turn aborts promptly.
+func callOnRef(ctx context.Context, s *browserSession, ref string, fnDecl string, args ...any) (string, error) {
+	objID, err := resolveRefToObjectID(ctx, s, ref)
 	if err != nil {
 		return "", err
 	}
-	actx, cancel := context.WithTimeout(s.ctx, browserActionTimeout)
+	parent := s.ctx
+	if ctx != nil {
+		parent = ctx
+	}
+	actx, cancel := context.WithTimeout(parent, browserActionTimeout)
 	defer cancel()
 	argJSON := make([]*runtime.CallArgument, 0, len(args))
 	for _, a := range args {
@@ -353,4 +365,17 @@ func callOnRef(s *browserSession, ref string, fnDecl string, args ...any) (strin
 		return "", err
 	}
 	return resultJSON, nil
+}
+
+// scrollRefIntoView scrolls the ref's element into the viewport. Best-effort:
+// click/type call it so coordinates land on the element, but a scroll failure
+// is not fatal — the action proceeds regardless. Uses the "nearest" block
+// setting to avoid jarring full-page jumps when the element sits inside a
+// scroll container.
+func scrollRefIntoView(ctx context.Context, s *browserSession, ref string) {
+	const js = `function() {
+		if (!this || !this.scrollIntoView) return;
+		try { this.scrollIntoView({block: "nearest", inline: "nearest"}); } catch (e) {}
+	}`
+	_, _ = callOnRef(ctx, s, ref, js)
 }

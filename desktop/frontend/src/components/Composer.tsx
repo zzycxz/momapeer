@@ -359,6 +359,7 @@ export function Composer({
   // Returns the un-sent text when cancelling before the server replied (so it can
   // be restored to the input); undefined for a normal cancel.
   onCancel: () => string | undefined;
+  onPauseToggle?: () => void;
   onCycleMode: () => void;
   onSetMode: (mode: Mode) => void;
   onSetCollaborationMode: (mode: CollaborationMode) => void;

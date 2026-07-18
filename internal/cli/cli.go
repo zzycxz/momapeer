@@ -156,8 +156,8 @@ func configureCLIThemeFromConfigNoProbe() {
 
 // setup builds a ready-to-drive Controller from config via boot.Build. It is a
 // thin adapter kept so the subcommands below read the same as before; the actual
-// assembly (model resolution, tool registry, permission gate, two-model
-// Coordinator) lives in internal/boot, shared with the desktop frontend.
+// assembly (model resolution, tool registry, permission gate) lives in
+// internal/boot, shared with the desktop frontend.
 // requireKey forces the executor's API key to be present (used by run); chat
 // passes false so the session UI is reachable before a key is set. sink receives
 // the agent's typed event stream — runAgent passes a TextSink that renders to

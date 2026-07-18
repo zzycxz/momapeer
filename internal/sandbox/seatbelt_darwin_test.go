@@ -32,7 +32,7 @@ func TestSbplString(t *testing.T) {
 // --- writeAllowDirs ---
 
 func TestWriteAllowDirsDeduplication(t *testing.T) {
-	dirs := writeAllowDirs([]string{"/tmp", "/tmp", "/tmp"})
+	dirs := writeAllowDirs([]string{"/tmp", "/tmp", "/tmp"}, false)
 	seen := map[string]bool{}
 	for _, d := range dirs {
 		if seen[d] {
@@ -44,7 +44,7 @@ func TestWriteAllowDirsDeduplication(t *testing.T) {
 
 func TestWriteAllowDirsIncludesRoots(t *testing.T) {
 	root := t.TempDir()
-	dirs := writeAllowDirs([]string{root})
+	dirs := writeAllowDirs([]string{root}, false)
 	found := false
 	for _, d := range dirs {
 		real, _ := filepath.EvalSymlinks(root)
@@ -59,7 +59,7 @@ func TestWriteAllowDirsIncludesRoots(t *testing.T) {
 }
 
 func TestWriteAllowDirsIncludesTemp(t *testing.T) {
-	dirs := writeAllowDirs(nil)
+	dirs := writeAllowDirs(nil, false)
 	tmpDir := os.TempDir()
 	realTmp, _ := filepath.EvalSymlinks(tmpDir)
 	found := false
@@ -75,7 +75,7 @@ func TestWriteAllowDirsIncludesTemp(t *testing.T) {
 }
 
 func TestWriteAllowDirsSkipsEmpty(t *testing.T) {
-	dirs := writeAllowDirs([]string{"", "", ""})
+	dirs := writeAllowDirs([]string{"", "", ""}, false)
 	for _, d := range dirs {
 		if d == "" {
 			t.Error("writeAllowDirs should skip empty strings")
@@ -85,13 +85,49 @@ func TestWriteAllowDirsSkipsEmpty(t *testing.T) {
 
 func TestWriteAllowDirsNoDuplicates(t *testing.T) {
 	roots := []string{"/tmp", "/private/tmp", os.TempDir()}
-	dirs := writeAllowDirs(roots)
+	dirs := writeAllowDirs(roots, false)
 	seen := map[string]bool{}
 	for _, d := range dirs {
 		if seen[d] {
 			t.Errorf("duplicate: %s", d)
 		}
 		seen[d] = true
+	}
+}
+
+// TestWriteAllowDirsStrictExcludesBinDirs proves the strict grant list closes
+// the A8 persistence vector: ~/.cargo and ~/.npm (which hold bin/lifecycle
+// scripts) must NOT be writable, while the cache subdirs they decompose into
+// (~/.cargo/registry/cache, ~/Library/Caches) remain allowed.
+func TestWriteAllowDirsStrictExcludesBinDirs(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir: %v", err)
+	}
+	dirs := writeAllowDirs(nil, true)
+	allowed := map[string]bool{}
+	for _, d := range dirs {
+		allowed[d] = true
+	}
+	// Broad toolchain dirs that host executables/scripts must be excluded.
+	for _, dangerous := range []string{
+		filepath.Join(home, ".cargo"),
+		filepath.Join(home, ".npm"),
+		filepath.Join(home, "go"),
+	} {
+		if allowed[dangerous] {
+			t.Errorf("strict mode should NOT allow %s (persistence vector), but it did", dangerous)
+		}
+	}
+	// Cache subdirs must still be present so dependency fetches keep working.
+	for _, safe := range []string{
+		filepath.Join(home, ".cargo", "registry", "cache"),
+		filepath.Join(home, "Library", "Caches"),
+		filepath.Join(home, ".cache"),
+	} {
+		if !allowed[safe] {
+			t.Errorf("strict mode should allow cache dir %s, but it didn't", safe)
+		}
 	}
 }
 

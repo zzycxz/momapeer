@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -89,38 +90,155 @@ var dreamCoord = &spawnCoordinator{
 	lastAuto: make(map[DreamKind]time.Time),
 }
 
-// DreamTask is the prompt fed to a background agent for memory consolidation.
-const DreamTask = `You are a memory consolidation agent. Your job is to review recent session history and extract durable knowledge into project memory.
+// distillCompleteHook is the post-distill callback boot.go installs to retire
+// cold skills (hard-decay skills unused longer than the configured threshold).
+// It returns a status string the caller may log. Guarded by dreamCoord.mu so a
+// concurrent RegisterDistillComplete can't race the read in notifyDistillComplete.
+// nil = no callback (dream disabled, or boot hasn't wired one yet).
+var distillCompleteHook func() string
 
-## Instructions
+// RegisterDistillComplete installs the callback fired after a successful Distill
+// run. boot.go passes a closure that retires cold skills; passing nil disables
+// it (e.g. when [dream] is off). Safe to call at any time; the next Distill run
+// picks up the new hook.
+func RegisterDistillComplete(fn func() string) {
+	dreamCoord.mu.Lock()
+	distillCompleteHook = fn
+	dreamCoord.mu.Unlock()
+}
 
-1. Read the current MEMORY.md and any existing memory files to understand what's already saved.
-2. Review recent sessions for:
-   - Architecture decisions and their rationale
-   - Patterns discovered (coding conventions, project structure, gotchas)
-   - User preferences and feedback
-   - Solutions to problems that took significant effort
-3. For each piece of durable knowledge:
-   - Use the remember tool to save it with type "project" or "reference"
-   - Include WHY it matters and HOW to apply it
-   - Avoid duplicating existing memories
-4. If you find memories that are now outdated or contradicted by recent sessions, use the forget tool to archive them.
-5. Do NOT save transient information (specific file contents, temporary debugging notes).
-6. Focus on knowledge that would help a future session be more effective.
+// notifyDistillComplete fires the registered hook (if any) after a Distill run
+// completes, returning whatever status string the hook produced. Empty when no
+// hook is registered or the hook returned nothing.
+func notifyDistillComplete() string {
+	dreamCoord.mu.Lock()
+	fn := distillCompleteHook
+	dreamCoord.mu.Unlock()
+	if fn == nil {
+		return ""
+	}
+	return fn()
+}
 
-## What to save
-- Project architecture and key file locations
-- Build/test/lint commands and their quirks
-- Coding conventions specific to this project
-- Known issues and their workarounds
-- User's communication preferences and expertise level
-- External service integrations and their configurations
+// DreamTask is the prompt fed to a background agent for portrait consolidation.
+// The dream agent MAINTAINS THE PORTRAIT FILES directly — profile/user.md,
+// profile/memory.md, profile/<mode>.md — because those are the only memories
+// injected into every turn. Its output must be concise, human-prose, and merged,
+// not a list of scattered facts. It writes with write_file, NOT remember.
+const DreamTask = `You are a memory consolidation agent. Your single job is to keep the portrait files concise and current, because they are injected into EVERY future turn — bloat here costs tokens forever.
 
-## What NOT to save
-- File contents that can be re-read
-- Temporary debugging state
-- Information already in the codebase
-- Generic programming knowledge`
+## The portrait files
+
+Four files hold the always-injected memory (find them under the user config dir, in a "profile/" subdirectory). They are split by WHAT the fact is about (nature), not just which mode — because a fast-changing deadline shouldn't share a file with a slow-changing identity:
+
+- profile/user.md — WHO the user is, shared across all modes: identity, role, expertise, durable preferences, communication style, red lines. Changes slowly (months/years). Target ≤ 400 characters.
+- profile/memory.md — WHAT is true about the world, shared across all modes: system environment, project locations, commonly used tools, cross-project experience, deadlines. Changes faster (days/weeks). Target ≤ 400 characters.
+- profile/<mode>.md — mode-specific: coding preferences + the current coding tasks (dev), or office preferences + current office tasks (cowork). Target ≤ 300 characters.
+
+## What to do
+
+1. Read the portrait files (use read_file) to see what is already recorded.
+2. Review the recent session history for NEW durable knowledge:
+   - Who the user is, their role, expertise, communication style → user.md
+   - Stable technical or working preferences ("prefers Go", "结论优先") → user.md or the mode file
+   - Project-level decisions, constraints, deadlines, environment facts → memory.md or the mode file
+   - The mode's current goal/task state → <mode>.md
+3. MERGE the new knowledge into the right file — do NOT append bullet lists.
+   - Fold a new fact into an existing line when it refines it ("prefers Go" → "prefers Go; 缩进用空格").
+   - Drop or rewrite lines the session proved stale or wrong (a passed deadline, a changed decision).
+   - Keep it as tight, human prose — like a memo a colleague would write, not a log.
+4. Write the updated files with the write_file tool. Do NOT use the remember tool — remember is for the un-injected scattered archive; the portrait is what every turn sees.
+5. If nothing material changed, write nothing. A no-op run is correct.
+
+## Hard rules
+
+- NEVER exceed the character targets. If a file is full, compress by merging or cutting the least-valuable line — do not grow it.
+- NEVER save transient debug state (a current stack trace, file contents being inspected, today's throwaway todo) — those belong nowhere in the portrait.
+- NEVER duplicate the same fact across files. Mode-specific → <mode>.md; mode-agnostic identity → user.md; mode-agnostic world fact → memory.md.
+- Identity facts (user.md) are the most stable — only change them on strong evidence; prefer refining over rewriting.
+- Prefer concrete specifics over generic praise ("后端工程师，8年Go经验" not "experienced developer").`
+
+// Portrait file size targets (characters). dreamCompactThreshold is the HARD
+// trigger at which dream switches from "merge new knowledge" to "compress what's
+// there". A portrait that drifts past its target but under the threshold is
+// tolerated; past the threshold dream actively shrinks it.
+const (
+	portraitTargetUser   = 400 // user.md  — slow-changing identity
+	portraitTargetMemory = 400 // memory.md — faster world facts
+	portraitTargetMode   = 300 // dev.md / cowork.md — mode prefs + tasks
+	// dreamCompactThreshold is the fraction of a file's target at which dream
+	// switches to compression mode. 1.3 = 130%: a 400-char target compacts at
+	// 520 chars.
+	dreamCompactThreshold = 1.3
+)
+
+// DreamCompactTask is the prompt fed to dream when one or more portrait files
+// have grown past their compact threshold. This run's PRIMARY job is to SHRINK
+// the bloated files back under target — by merging redundant lines, dropping
+// stale facts, and rewriting verbose prose tighter.
+const DreamCompactTask = `You are a memory consolidation agent in COMPRESSION MODE. One or more portrait files have grown past their size budget, so this run's PRIMARY job is to SHRINK them back under target — not to add new content.
+
+## Why this matters
+
+The portrait files are injected into EVERY future turn. A bloated file means the tail gets truncated at injection, so anything past the budget is wasted disk the model never sees. Your job is to make every character count.
+
+## What to do
+
+1. Read the portrait files (use read_file).
+2. For each file that is over budget, COMPRESS it down to its target:
+   - Merge redundant or overlapping lines into one.
+   - DROP facts the session proved stale — do not keep them "just in case".
+   - Rewrite verbose prose tighter.
+   - Keep concrete identifiers (names, paths, versions) — compress phrasing, not specificity.
+3. Only AFTER compression, fold in genuinely new durable knowledge — and only if it still fits under the target.
+4. Write the updated files with write_file. Do NOT use remember.
+
+## Targets (characters, hard)
+
+- profile/user.md ≤ 400
+- profile/memory.md ≤ 400
+- profile/<mode>.md ≤ 300
+
+## Hard rules
+
+- The post-compression file MUST be at or under its target. If you can't get there by merging, cut the least-valuable line.
+- Never drop a fact to make room for a vaguer one — specifics beat generalities.
+- Never duplicate a fact across files.
+- If a file is already under target, leave its compression alone (you may still merge new knowledge into it).`
+
+// dreamTaskFor picks the dream prompt for this run. It sizes the active mode's
+// portrait files and returns DreamCompactTask when any has crossed its compact
+// threshold, DreamTask otherwise. This makes dream self-correcting: it
+// accumulates in normal runs and shrinks in compact runs. A missing userDir or
+// unreadable file is treated as size 0 (under threshold).
+func dreamTaskFor(profile string) string {
+	userDir := config.MemoryUserDir()
+	if userDir == "" {
+		return DreamTask
+	}
+	mode := strings.ToLower(strings.TrimSpace(profile))
+	if mode == "" {
+		mode = "dev"
+	}
+	root := filepath.Join(userDir, "profile")
+	type fc struct {
+		path string
+		tgt  int
+	}
+	checks := []fc{
+		{filepath.Join(root, "user.md"), portraitTargetUser},
+		{filepath.Join(root, "memory.md"), portraitTargetMemory},
+		{filepath.Join(root, mode+".md"), portraitTargetMode},
+	}
+	for _, c := range checks {
+		if info, err := os.Stat(c.path); err == nil {
+			if float64(info.Size()) > float64(c.tgt)*dreamCompactThreshold {
+				return DreamCompactTask
+			}
+		}
+	}
+	return DreamTask
+}
 
 // DistillTask is the prompt fed to a background agent for workflow extraction.
 const DistillTask = `You are a workflow distillation agent. Your job is to review recent sessions and identify repeated manual workflows that could be automated.
@@ -392,28 +510,50 @@ func runKind(ctx context.Context, sessionDir string, kind DreamKind, task string
 		run.Error = err.Error()
 	}
 	appendDreamRun(sessionDir, run)
+	// A successful Distill may have produced new skills or surfaced stale ones;
+	// fire the post-distill hook (boot uses it to retire cold skills). Best-effort
+	// — the hook's output is logged, never blocks the run's return.
+	if kind == KindDistill && run.Status == "ok" {
+		if note := notifyDistillComplete(); note != "" {
+			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: note})
+		}
+	}
 	return run, true
 }
 
 // SpawnDream kicks off a background dream agent if an automatic run is due. It
-// runs asynchronously — the caller does not block on completion. Returns true if
-// a dream agent was spawned.
-func SpawnDream(ctx context.Context, sessionDir string, prov provider.Provider, reg *tool.Registry, sess *Session, sink event.Sink) bool {
+// runs asynchronously — the caller does not block on completion. profile selects
+// the portrait sizing check (which determines compress vs merge mode). wg, when
+// non-nil, is Add(1)/Done()'d so a caller can drain it on shutdown.
+func SpawnDream(ctx context.Context, sessionDir, profile string, prov provider.Provider, reg *tool.Registry, sess *Session, sink event.Sink, wg *sync.WaitGroup) bool {
 	if !ShouldAutoDream(sessionDir) {
 		return false
 	}
+	if wg != nil {
+		wg.Add(1)
+	}
 	go func() {
-		_, _ = runKind(ctx, sessionDir, KindDream, DreamTask, dreamTimeout, prov, reg, sess, sink, TriggerAuto)
+		if wg != nil {
+			defer wg.Done()
+		}
+		_, _ = runKind(ctx, sessionDir, KindDream, dreamTaskFor(profile), dreamTimeout, prov, reg, sess, sink, TriggerAuto)
 	}()
 	return true
 }
 
 // SpawnDistill kicks off a background distill agent if an automatic run is due.
-func SpawnDistill(ctx context.Context, sessionDir string, prov provider.Provider, reg *tool.Registry, sess *Session, sink event.Sink) bool {
+// See SpawnDream for the wg draining contract.
+func SpawnDistill(ctx context.Context, sessionDir string, prov provider.Provider, reg *tool.Registry, sess *Session, sink event.Sink, wg *sync.WaitGroup) bool {
 	if !ShouldAutoDistill(sessionDir) {
 		return false
 	}
+	if wg != nil {
+		wg.Add(1)
+	}
 	go func() {
+		if wg != nil {
+			defer wg.Done()
+		}
 		_, _ = runKind(ctx, sessionDir, KindDistill, DistillTask, distillTimeout, prov, reg, sess, sink, TriggerAuto)
 	}()
 	return true
@@ -422,8 +562,8 @@ func SpawnDistill(ctx context.Context, sessionDir string, prov provider.Provider
 // RunDreamOnce triggers a manual Dream run. It blocks until the run completes
 // (or times out) and returns the resulting record + whether a run actually
 // executed. The caller (controller → desktop) surfaces the status to the user.
-func RunDreamOnce(ctx context.Context, sessionDir string, prov provider.Provider, reg *tool.Registry, sess *Session, sink event.Sink) (DreamRun, bool) {
-	return runKind(ctx, sessionDir, KindDream, DreamTask, dreamTimeout, prov, reg, sess, sink, TriggerManual)
+func RunDreamOnce(ctx context.Context, sessionDir, profile string, prov provider.Provider, reg *tool.Registry, sess *Session, sink event.Sink) (DreamRun, bool) {
+	return runKind(ctx, sessionDir, KindDream, dreamTaskFor(profile), dreamTimeout, prov, reg, sess, sink, TriggerManual)
 }
 
 // RunDistillOnce triggers a manual Distill run. See RunDreamOnce.

@@ -10,6 +10,12 @@ import (
 
 var reComposeBlock = regexp.MustCompile(`(?s)^\s*<(?:memory-update|background-jobs)>.*?</(?:memory-update|background-jobs)>\s*\n`)
 
+// planApprovedMessage is the exact user-role message the controller injects when
+// the user approves a plan (defined in controller.go as PlanApprovedMessage).
+// Aliased here so IsSyntheticUserMessage can match it exactly without importing
+// the controller constant into this lower-level file.
+var planApprovedMessage = PlanApprovedMessage
+
 // PlanModeMarker is prepended to every user turn while plan mode is on. It rides
 // in the user message (not the system prompt or tools), so the cache-stable
 // prompt prefix is left untouched and the toggle costs nothing in cache hits.
@@ -233,6 +239,32 @@ func ParseGoalCommand(input string) (GoalCommand, bool) {
 	default:
 		return GoalCommand{Action: GoalCommandSet, Text: args}, true
 	}
+}
+
+// PlanCommand is the parsed form of a /plan slash command. /plan with no args or
+// /plan <text> enters plan mode (text, when present, is sent as the planning
+// turn); /plan off exits. See Controller.applyPlanCommand for the dispatch.
+type PlanCommand struct {
+	Off  bool   // true for "/plan off"
+	Text string // the planning task for "/plan <text>"; empty for a bare toggle on
+}
+
+// ParsePlanCommand recognizes "/plan", "/plan off", and "/plan <text>". Returns
+// ok=false for anything that isn't a /plan command. Mirrors ParseGoalCommand's
+// tolerant spacing (matches "/plan", "/plan\t…", "/plan …").
+func ParsePlanCommand(input string) (PlanCommand, bool) {
+	trimmed := strings.TrimSpace(input)
+	if trimmed != "/plan" && !strings.HasPrefix(trimmed, "/plan ") && !strings.HasPrefix(trimmed, "/plan\t") {
+		return PlanCommand{}, false
+	}
+	args := strings.TrimSpace(trimmed[len("/plan"):])
+	if args == "" {
+		return PlanCommand{}, true // bare "/plan" — toggle on, no planning text
+	}
+	if strings.EqualFold(args, "off") {
+		return PlanCommand{Off: true}, true
+	}
+	return PlanCommand{Text: args}, true
 }
 
 // CustomCommand resolves a "/name args…" line against the loaded custom slash

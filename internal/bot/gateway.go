@@ -24,6 +24,11 @@ type GatewayConfig struct {
 	Allowlist     AllowlistConfig
 	Enabled       map[Platform]bool
 	Debounce      time.Duration
+	// SessionIdleTimeout controls how long a bot session can sit idle (no
+	// incoming messages) before its controller is closed to reclaim memory.
+	// A busy bot serving many users/-groups would otherwise keep every
+	// controller alive forever. Default 30m; 0 disables reaping.
+	SessionIdleTimeout time.Duration
 	// AllowlistSaver 当新用户被自动加入白名单时调用，用于持久化。
 	// 参数为更新后的完整 AllowlistConfig。nil 表示不持久化。
 	AllowlistSaver func(AllowlistConfig)
@@ -100,6 +105,9 @@ func NewGateway(cfg GatewayConfig, adapters map[Platform]Adapter, logger *slog.L
 	if cfg.Debounce <= 0 {
 		cfg.Debounce = 1500 * time.Millisecond
 	}
+	if cfg.SessionIdleTimeout <= 0 {
+		cfg.SessionIdleTimeout = 30 * time.Minute
+	}
 	gw := &BotGateway{
 		cfg:            cfg,
 		adapters:       adapters,
@@ -150,7 +158,90 @@ func (gw *BotGateway) Start(ctx context.Context) error {
 		go gw.dispatchLoop(ctx, plat, adapter)
 	}
 
+	// Idle-session reaper: periodically closes controllers whose sessions
+	// haven't received a message in SessionIdleTimeout. Prevents unbounded
+	// memory growth in long-running bot instances serving many users/groups.
+	if gw.cfg.SessionIdleTimeout > 0 {
+		go gw.reapIdleSessions(ctx)
+	}
+
+	// Pre-build a "default" session so the first incoming message doesn't
+	// block on boot.Build (which loads config, resolves the provider, and
+	// registers all tools — several seconds). The pre-built session is
+	// keyed to "" and claimed atomically by the first user; subsequent users
+	// build their own (warm now because config/provider caches are hot).
+	go gw.prewarmSession(ctx)
+
 	return nil
+}
+
+// prewarmSession builds a controller under a synthetic key and parks it so the
+// first real user's getOrCreateSession finds it ready. The session uses the
+// gateway's default model + workspace, so it works for any platform that
+// doesn't override those. Once claimed (renamed to the real session key), it's
+// indistinguishable from a normally-built session.
+func (gw *BotGateway) prewarmSession(ctx context.Context) {
+	model, workspaceRoot := gw.sessionOptionsForPlatform(PlatformFeishu) // any platform, just need defaults
+	sessionSink := &sessionEventSink{}
+	ctrl, err := boot.Build(ctx, boot.Options{
+		Model:         model,
+		MaxSteps:      gw.cfg.MaxSteps,
+		RequireKey:    true,
+		Sink:          sessionSink,
+		WorkspaceRoot: workspaceRoot,
+	})
+	if err != nil {
+		gw.logger.Warn("prewarm session build failed (first user will have cold start)", "err", err)
+		return
+	}
+	ctrl.EnableInteractiveApproval()
+	gw.mu.Lock()
+	// Only park if nobody claimed a prewarm slot yet.
+	if _, exists := gw.controllers["__prewarm__"]; !exists {
+		gw.controllers["__prewarm__"] = &sessionState{
+			ctrl:        ctrl,
+			sink:        sessionSink,
+			pendingAsks: make(map[string][]event.AskQuestion),
+			createdAt:   time.Now(),
+			lastActive:  time.Now(),
+		}
+		gw.mu.Unlock()
+		gw.logger.Info("prewarm session ready — first user will have instant response")
+	} else {
+		gw.mu.Unlock()
+		ctrl.Close() // someone already prewarmed; discard this one
+	}
+}
+
+// reapIdleSessions periodically scans for sessions past their idle timeout and
+// closes them. A session that is mid-turn (running) is never reaped — only
+// truly idle ones (lastActive > timeout AND not running) are cleaned up.
+func (gw *BotGateway) reapIdleSessions(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			gw.mu.Lock()
+			now := time.Now()
+			for key, state := range gw.controllers {
+				if key == "__prewarm__" {
+					continue // never reap the parked prewarm slot
+				}
+				if now.Sub(state.lastActive) > gw.cfg.SessionIdleTimeout && !state.ctrl.Running() {
+					gw.logger.Info("reaping idle bot session", "key", key, "idle", now.Sub(state.lastActive))
+					if state.cancel != nil {
+						state.cancel()
+					}
+					state.ctrl.Close()
+					delete(gw.controllers, key)
+				}
+			}
+			gw.mu.Unlock()
+		}
+	}
 }
 
 // Stop 停止所有适配器并关闭所有 session。
@@ -538,9 +629,19 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 		gw.mu.Unlock()
 		return state
 	}
+	// Claim the prewarmed session if one is available — avoids the 3-10s
+	// boot.Build cold-start for the first user.
+	if pre, ok := gw.controllers["__prewarm__"]; ok {
+		delete(gw.controllers, "__prewarm__")
+		pre.lastActive = time.Now()
+		gw.controllers[key] = pre
+		gw.mu.Unlock()
+		gw.logger.Info("claimed prewarmed session for new user", "key", key[:8])
+		return pre
+	}
 	gw.mu.Unlock()
 
-	// 创建新 Controller
+	// 没有预热 session 可用，正常创建
 	sessionSink := &sessionEventSink{}
 	model, workspaceRoot := gw.sessionOptionsForPlatform(msg.Platform)
 	ctrl, err := boot.Build(ctx, boot.Options{

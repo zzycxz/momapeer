@@ -88,6 +88,20 @@ const (
 	// wrapper prefix), so a frontend can display it to the user as confirmation.
 	// Frontends use Steer to know a queued message has been delivered.
 	Steer
+	// Paused fires when the agent suspends itself between steps (a pause
+	// request from the controller/frontend, e.g. "pause after the current
+	// step"). State is preserved; Resumed follows when the run continues.
+	// Appended last to keep the Kind values before it wire-stable.
+	Paused
+	// Resumed fires when a paused agent run continues. Clears a Paused
+	// indicator in the frontend. Appended last to keep the Kind values before
+	// it wire-stable.
+	Resumed
+	// ExpertCollab carries a finished expert-team collaboration record so the
+	// frontend renders an expandable card (per-round expert answers + the
+	// synthesis). Collab payload. Appended last to keep the Kind values before
+	// it wire-stable.
+	ExpertCollab
 )
 
 // Level classifies a Notice so sinks can style or filter it.
@@ -214,6 +228,30 @@ type CacheDiagnostics struct {
 	CacheHitTokens      int
 }
 
+// CollabAnswer is one expert's answer within one round of a multi-model
+// collaboration. ExpertName is the contributing team member; Text is its
+// answer. Mirrors experts.ExpertAnswer at the event boundary so the event
+// package doesn't depend on experts.
+type CollabAnswer struct {
+	ExpertName string
+	Text       string
+}
+
+// Collab is the payload of an ExpertCollab event: everything a frontend needs
+// to render a finished collaboration as an expandable card — provenance (team,
+// task, mode), the per-round expert answers, the synthesis, and when it ran.
+// Mirrors experts.CollabRecord (the persisted form) field-for-field.
+type Collab struct {
+	RunID     string
+	TeamID    string
+	TeamName  string
+	Task      string
+	Mode      string
+	Rounds    [][]CollabAnswer
+	Synthesis string
+	CreatedAt int64 // unix ms
+}
+
 // Event is one increment in a turn's event stream. Read the field(s) documented
 // for Kind; the others are zero.
 type Event struct {
@@ -237,6 +275,7 @@ type Event struct {
 	Compaction   Compaction // Compaction
 	RetryAttempt int        // Retrying: 1-based attempt about to be made
 	RetryMax     int        // Retrying: total attempts before giving up
+	Collab       Collab     // ExpertCollab
 }
 
 // ReadinessAuditSink is an optional sink capability. Sinks that do not care

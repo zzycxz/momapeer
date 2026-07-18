@@ -14,10 +14,9 @@ func TestStoreSaveAndIndex(t *testing.T) {
 	s := Store{Dir: filepath.Join(dir, "memory")}
 
 	path, err := s.Save(Memory{
-		Name:        "Prefers Tabs",
-		Description: "User prefers tabs over spaces",
-		Type:        TypeUser,
-		Body:        "Always indent with tabs in this project.",
+		Name: "Prefers Tabs",
+		Type: TypeUser,
+		Body: "User prefers tabs over spaces.\nAlways indent with tabs in this project.",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -48,8 +47,8 @@ func TestStoreSaveAndIndex(t *testing.T) {
 // replaces its index line rather than appending a second.
 func TestStoreOverwriteDoesNotDuplicateIndex(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
-	for _, desc := range []string{"first version", "second version"} {
-		if _, err := s.Save(Memory{Name: "note", Description: desc, Type: TypeProject, Body: "b"}); err != nil {
+	for _, body := range []string{"first version", "second version"} {
+		if _, err := s.Save(Memory{Name: "note", Type: TypeProject, Body: body}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -58,7 +57,7 @@ func TestStoreOverwriteDoesNotDuplicateIndex(t *testing.T) {
 		t.Fatalf("want exactly 1 index line for note, got %d:\n%s", n, idx)
 	}
 	if !strings.Contains(idx, "second version") || strings.Contains(idx, "first version") {
-		t.Fatalf("index not updated to latest description:\n%s", idx)
+		t.Fatalf("index not updated to latest body:\n%s", idx)
 	}
 }
 
@@ -66,10 +65,10 @@ func TestStoreOverwriteDoesNotDuplicateIndex(t *testing.T) {
 // user hand-editing MEMORY.md isn't clobbered when the model saves a new fact.
 func TestStoreIndexPreservesHandEdits(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
-	if _, err := s.Save(Memory{Name: "alpha", Description: "first", Type: TypeProject, Body: "x"}); err != nil {
+	if _, err := s.Save(Memory{Name: "alpha", Type: TypeProject, Body: "first"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Save(Memory{Name: "beta", Description: "second", Type: TypeProject, Body: "y"}); err != nil {
+	if _, err := s.Save(Memory{Name: "beta", Type: TypeProject, Body: "second"}); err != nil {
 		t.Fatal(err)
 	}
 	idx := s.Index()
@@ -78,36 +77,15 @@ func TestStoreIndexPreservesHandEdits(t *testing.T) {
 	}
 }
 
-// TestStoreSaveTitleInIndexAndFrontmatter verifies an explicit title becomes the
-// index link label and round-trips through the file's frontmatter.
-func TestStoreSaveTitleInIndexAndFrontmatter(t *testing.T) {
+// TestStoreIndexLabelFromFirstLine checks the index link label is the body's
+// first non-empty line (v0.4: Title/Description are gone, label derives from body).
+func TestStoreIndexLabelFromFirstLine(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
-	if _, err := s.Save(Memory{
-		Name:        "tabs-rule",
-		Title:       "Prefers tabs",
-		Description: "indent with tabs",
-		Type:        TypeUser,
-		Body:        "b",
-	}); err != nil {
+	if _, err := s.Save(Memory{Name: "likes-go", Type: TypeUser, Body: "Really likes Go."}); err != nil {
 		t.Fatal(err)
 	}
-	if idx := s.Index(); !strings.Contains(idx, "[Prefers tabs](tabs-rule.md)") {
-		t.Fatalf("index link should use the title label:\n%s", idx)
-	}
-	if got := s.List()[0].Title; got != "Prefers tabs" {
-		t.Fatalf("title not round-tripped: %q", got)
-	}
-}
-
-// TestStoreIndexLabelFallsBackToDeKebabbedName checks a title-less memory still
-// gets a readable label instead of a bare slug.
-func TestStoreIndexLabelFallsBackToDeKebabbedName(t *testing.T) {
-	s := Store{Dir: t.TempDir()}
-	if _, err := s.Save(Memory{Name: "likes-go", Description: "d", Type: TypeUser, Body: "b"}); err != nil {
-		t.Fatal(err)
-	}
-	if idx := s.Index(); !strings.Contains(idx, "[likes go](likes-go.md)") {
-		t.Fatalf("missing-title label should de-kebab the name:\n%s", idx)
+	if idx := s.Index(); !strings.Contains(idx, "[Really likes Go.](likes-go.md)") {
+		t.Fatalf("index label should be the body's first line:\n%s", idx)
 	}
 }
 
@@ -115,7 +93,7 @@ func TestStoreIndexLabelFallsBackToDeKebabbedName(t *testing.T) {
 func TestStoreDelete(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
 	for _, n := range []string{"alpha", "beta"} {
-		if _, err := s.Save(Memory{Name: n, Description: "d", Type: TypeProject, Body: "b"}); err != nil {
+		if _, err := s.Save(Memory{Name: n, Type: TypeProject, Body: "b"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -148,7 +126,7 @@ func TestStoreDeleteMissingIsNoError(t *testing.T) {
 
 func TestStoreDeleteRepairsReadOnlyMemoryFile(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
-	if _, err := s.Save(Memory{Name: "locked", Description: "d", Type: TypeProject, Body: "b"}); err != nil {
+	if _, err := s.Save(Memory{Name: "locked", Type: TypeProject, Body: "b"}); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(s.Dir, "locked.md")
@@ -178,7 +156,7 @@ func TestNormalizeType(t *testing.T) {
 
 // TestStoreForSlug ensures the project path becomes one filesystem-safe segment.
 func TestStoreForSlug(t *testing.T) {
-	s := StoreFor("/home/me/.config/momapeer", "/Users/me/proj")
+	s := StoreFor("/home/me/.config/momapeer", "/Users/me/proj", "dev")
 	if strings.Count(filepath.Base(filepath.Dir(s.Dir)), "/") != 0 {
 		t.Fatalf("slug should have no separators: %s", s.Dir)
 	}
@@ -194,7 +172,7 @@ func TestDisabledStoreIsNoOp(t *testing.T) {
 	if s.Index() != "" || s.List() != nil {
 		t.Fatal("disabled store should read empty")
 	}
-	if _, err := s.Save(Memory{Name: "x", Description: "d", Body: "b"}); err == nil {
+	if _, err := s.Save(Memory{Name: "x", Body: "b"}); err == nil {
 		t.Fatal("disabled store Save should error, not silently drop")
 	}
 }

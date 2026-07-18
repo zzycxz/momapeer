@@ -47,6 +47,9 @@ func init() { tool.RegisterBuiltin(grepTool{}) }
 type grepTool struct {
 	workDir string
 	rg      string
+	// roots confines the search path when non-empty (read-roots boundary).
+	// Empty = unconfined default. See readFile.roots / audit A7.
+	roots []string
 }
 
 func (grepTool) Name() string { return "grep" }
@@ -80,6 +83,9 @@ func (g grepTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 		p.Path = "."
 	}
 	p.Path = resolveIn(g.workDir, p.Path)
+	if err := confineRead(g.roots, p.Path); err != nil {
+		return "", err
+	}
 
 	to := grepTimeout(p.TimeoutSeconds)
 	ctx, cancel := context.WithTimeout(ctx, to)

@@ -15,6 +15,37 @@ import (
 	"github.com/zzycxz/momapeer/internal/provider"
 )
 
+// executorHandoffMarker is the header the (now-removed) two-model Coordinator
+// stamped on the message handing a task from planner to executor. HandoffTask
+// still recognizes it so historical session transcripts saved under the old
+// architecture surface the user's original words in previews/titles instead of
+// the handoff boilerplate (#3860).
+const executorHandoffMarker = "momapeer executor handoff"
+
+// HandoffTask returns the original user task embedded in an executor handoff
+// message, or s unchanged when it is not one. Session previews and auto-titles
+// use it so legacy dual-model sessions surface the user's words, not the handoff
+// boilerplate (#3860).
+func HandoffTask(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if !strings.HasPrefix(trimmed, "# "+executorHandoffMarker) {
+		return s
+	}
+	const header = "Original task:\n"
+	i := strings.Index(trimmed, header)
+	if i < 0 {
+		return s
+	}
+	rest := trimmed[i+len(header):]
+	if j := strings.Index(rest, "\n\nPlanner output:"); j >= 0 {
+		rest = rest[:j]
+	}
+	if task := strings.TrimSpace(rest); task != "" {
+		return task
+	}
+	return s
+}
+
 // Save writes the session's messages to path in JSONL — one provider.Message
 // per line — so a user can resume the conversation later. The file is
 // rewritten in full on every save: chat sessions are small (kilobytes), and

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zzycxz/momapeer/internal/config"
@@ -76,6 +77,67 @@ var globalIMAPConfig *config.IMAPConfig
 // SetIMAPConfig injects inbound-mail settings for email_read/search. Called
 // from boot.go; nil disables the read tools (they return a config error).
 func SetIMAPConfig(c *config.IMAPConfig) { globalIMAPConfig = c }
+
+// emailAccounts holds the multi-mailbox config injected at boot (and refreshed
+// by the desktop settings panel on save). It's the source of truth for
+// accountByName — the per-account lookup email tools/scheduler use. Guarded by
+// emailAccountsMu because boot writes it once and the settings panel can write
+// it again later while a tool reads concurrently.
+var (
+	emailAccountsMu sync.RWMutex
+	emailAccounts   []config.EmailAccount
+)
+
+// SetEmailAccounts injects the multi-mailbox config. Called from boot.go at
+// startup and from the desktop settings panel when the user saves a config
+// change, so tools pick up new/edited accounts without a restart.
+func SetEmailAccounts(accounts []config.EmailAccount) {
+	emailAccountsMu.Lock()
+	emailAccounts = append(emailAccounts[:0], accounts...)
+	emailAccountsMu.Unlock()
+}
+
+// accountByName resolves a named mailbox from the injected config. Empty name
+// selects the Default account (or the first when none is flagged Default).
+// Returns ok=false when no accounts are configured or the name doesn't match,
+// so callers can emit a clear "account not configured" error.
+func accountByName(name string) (config.EmailAccount, bool) {
+	emailAccountsMu.RLock()
+	defer emailAccountsMu.RUnlock()
+	name = strings.TrimSpace(name)
+	if name == "" {
+		for _, a := range emailAccounts {
+			if a.Default {
+				return a, true
+			}
+		}
+		if len(emailAccounts) > 0 {
+			return emailAccounts[0], true
+		}
+		return config.EmailAccount{}, false
+	}
+	for _, a := range emailAccounts {
+		if strings.EqualFold(strings.TrimSpace(a.Name), name) {
+			return a, true
+		}
+	}
+	return config.EmailAccount{}, false
+}
+
+// resolveIMAP picks the IMAP config an email_read/search call should use. The
+// multi-account path (accountByName) wins when a matching named account exists;
+// otherwise it falls back to the legacy single-account globalIMAPConfig injected
+// via SetIMAPConfig, so older configs that haven't migrated to [[cowork.email_accounts]]
+// still work. Returns a clear error when neither source is configured.
+func resolveIMAP(account string) (config.IMAPConfig, error) {
+	if a, ok := accountByName(account); ok && strings.TrimSpace(a.IMAP.Host) != "" {
+		return a.IMAP, nil
+	}
+	if globalIMAPConfig != nil && strings.TrimSpace(globalIMAPConfig.Host) != "" {
+		return *globalIMAPConfig, nil
+	}
+	return config.IMAPConfig{}, fmt.Errorf("email account %q not configured (no matching [[cowork.email_accounts]] entry and no legacy [cowork.imap])", account)
+}
 
 // EmailTools returns the email tools for cowork registration: send (SMTP) plus
 // read/search (IMAP) when configured.

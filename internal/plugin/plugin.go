@@ -52,6 +52,14 @@ type Spec struct {
 	// the server omits annotations.readOnlyHint. It is for first-party adapters
 	// with known semantics; user-configured plugins should rely on MCP metadata.
 	ReadOnlyToolNames map[string]bool
+	// ExposeToolNames, when non-empty, is a whitelist of model-visible tool names
+	// (post-namespacing, e.g. "mcp__codegraph__context") that the main loop's
+	// schema advertises; every other tool from this server is hidden (still
+	// callable by name via run_skill/subagents, but kept out of the system prompt
+	// to save tokens). Empty (the default) exposes all tools — the legacy
+	// behavior. Used by first-party adapters like CodeGraph to surface a compact
+	// 2–3 tool surface while keeping the rest reachable on demand.
+	ExposeToolNames map[string]bool
 	// StripRawPrefix, when non-empty, removes this prefix from each MCP tool's
 	// raw name before namespacing. For example, StripRawPrefix="codegraph_" turns
 	// "codegraph_context" into "context", yielding "mcp__codegraph__context"

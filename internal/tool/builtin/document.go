@@ -173,7 +173,7 @@ func formatJSON(data []byte) (string, error) {
 
 // --- doc_write --------------------------------------------------------------
 
-type docWrite struct{}
+type docWrite struct{ roots []string }
 
 func (docWrite) Name() string { return "doc_write" }
 
@@ -197,7 +197,7 @@ func (docWrite) Schema() json.RawMessage {
 
 func (docWrite) ReadOnly() bool { return false }
 
-func (docWrite) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+func (w docWrite) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct {
 		Path     string          `json:"path"`
 		Content  json.RawMessage `json:"content"`
@@ -207,6 +207,9 @@ func (docWrite) Execute(ctx context.Context, args json.RawMessage) (string, erro
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if err := confine(w.roots, p.Path); err != nil {
+		return "", err
 	}
 	abs, err := filepath.Abs(strings.TrimSpace(p.Path))
 	if err != nil {
@@ -326,7 +329,7 @@ func (csvRead) Execute(ctx context.Context, args json.RawMessage) (string, error
 	return docRead{}.Execute(ctx, args)
 }
 
-type csvWrite struct{}
+type csvWrite struct{ roots []string }
 
 func (csvWrite) Name() string { return "csv_write" }
 func (csvWrite) Description() string {
@@ -336,8 +339,8 @@ func (csvWrite) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"content":{"description":"array of arrays of strings (rows)"},"append":{"type":"boolean"}},"required":["path","content"]}`)
 }
 func (csvWrite) ReadOnly() bool { return false }
-func (csvWrite) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	return docWrite{}.Execute(ctx, args)
+func (w csvWrite) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	return docWrite{roots: w.roots}.Execute(ctx, args)
 }
 
 // --- xlsx_read / xlsx_write aliases for discoverability ---------------------
@@ -358,7 +361,7 @@ func (xlsxRead) Execute(ctx context.Context, args json.RawMessage) (string, erro
 	return docRead{}.Execute(ctx, args)
 }
 
-type xlsxWrite struct{}
+type xlsxWrite struct{ roots []string }
 
 func (xlsxWrite) Name() string { return "xlsx_write" }
 func (xlsxWrite) Description() string {
@@ -368,13 +371,13 @@ func (xlsxWrite) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"content":{"description":"array of arrays of strings (rows)"}},"required":["path","content"]}`)
 }
 func (xlsxWrite) ReadOnly() bool { return false }
-func (xlsxWrite) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	return docWrite{}.Execute(ctx, args)
+func (w xlsxWrite) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	return docWrite{roots: w.roots}.Execute(ctx, args)
 }
 
 // --- doc_convert (md↔html, json pretty) -------------------------------------
 
-type docConvert struct{}
+type docConvert struct{ roots []string }
 
 func (docConvert) Name() string { return "doc_convert" }
 
@@ -396,7 +399,7 @@ func (docConvert) Schema() json.RawMessage {
 
 func (docConvert) ReadOnly() bool { return false }
 
-func (docConvert) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+func (w docConvert) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct {
 		Path    string `json:"path"`
 		OutPath string `json:"out_path"`
@@ -404,6 +407,12 @@ func (docConvert) Execute(ctx context.Context, args json.RawMessage) (string, er
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if err := confine(w.roots, p.Path); err != nil {
+		return "", err
+	}
+	if err := confine(w.roots, p.OutPath); err != nil {
+		return "", err
 	}
 	src, err := filepath.Abs(strings.TrimSpace(p.Path))
 	if err != nil {

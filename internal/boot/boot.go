@@ -364,7 +364,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	sysPrompt = skill.ApplyIndex(sysPrompt, indexedSkills)
 
 	reg := tool.NewRegistry()
-	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: cfg.WriteRootsForRoot(root), Network: cfg.Sandbox.Network, RequireAvailable: cfg.Sandbox.RequireAvailable}
+	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: cfg.WriteRootsForRoot(root), Network: cfg.Sandbox.Network, RequireAvailable: cfg.Sandbox.RequireAvailable, StrictWrites: cfg.Sandbox.StrictWrites}
 	if bashSpec.Mode == "enforce" && !sandbox.Available() {
 		if cfg.Sandbox.RequireAvailable {
 			fmt.Fprintln(stderr, "warning: bash sandbox 'enforce' requested with require_available=true, but no OS sandbox is available on this platform. bash commands will be REFUSED (fail-closed) until an OS sandbox is available or require_available is disabled.")
@@ -377,7 +377,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	searchSpec := builtin.ResolveSearch(cfg.Tools.Search.Engine, cfg.Tools.Search.RgPath, stderr)
 	bashTimeout := time.Duration(cfg.BashTimeoutSeconds()) * time.Second
-	addBuiltins(reg, cfg.Tools.Enabled, cfg.WriteRootsForRoot(root), bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec)
+	addBuiltins(reg, cfg.Tools.Enabled, cfg.WriteRootsForRoot(root), cfg.ReadRoots(), bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec)
 	// Register Jiutian multimodal tools based on config (not via init(), so they
 	// can be toggled per-capability in [jiutian] config section).
 	for _, t := range builtin.JiutianTools(&cfg.Jiutian) {
@@ -624,6 +624,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// CodeGraph is fixed to background startup. Legacy tier values are ignored so
 	// enabling it never blocks chat startup.
 	if cfg.Codegraph.Enabled {
+		// Honor a custom download mirror for air-gapped/intranet deployments
+		// before any Resolve/Install attempt.
+		codegraph.SetDownloadBase(cfg.Codegraph.DownloadURL)
 		bin, ok := codegraph.Resolve(cfg.Codegraph.Path)
 		switch {
 		case ok && !codegraph.IndexableRoot(root):
@@ -1182,7 +1185,16 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		AllSkillStore: allSkillStore,
 		Hooks:         hookRunner,
 		Memory:        mem,
-		Cleanup:       cleanup,
+		// Chain secret-env teardown into the controller's cleanup so injected
+		// plaintext secrets don't outlive the session in os.Environ(). Bound by
+		// the same injectedKeys list LoadIntoEnv recorded, so user/system env is
+		// never clobbered. Audit A9.
+		Cleanup: func() {
+			if cleanup != nil {
+				cleanup()
+			}
+			secret.Default().UnloadFromEnv()
+		},
 		Jobs:          jm,
 		Registry:      reg,
 		PluginCtx:     ctx,
@@ -1590,7 +1602,7 @@ func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec, im
 // instance bound to writeRoots (preserving registry order).
 // When workDir is non-empty, tools resolve relative paths against it instead of
 // the process cwd, enabling concurrent multi-project sessions.
-func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sandbox.Spec, bashTimeout time.Duration, searchSpec builtin.SearchSpec, stderr io.Writer, workDir string, proxySpec netclient.ProxySpec) {
+func addBuiltins(reg *tool.Registry, enabled, writeRoots, readRoots []string, bashSpec sandbox.Spec, bashTimeout time.Duration, searchSpec builtin.SearchSpec, stderr io.Writer, workDir string, proxySpec netclient.ProxySpec) {
 	// If a workspace directory is set, use workspace-bound tools that resolve
 	// paths relative to that directory. Otherwise fall back to the process-cwd
 	// compile-time builtins.
@@ -1617,8 +1629,11 @@ func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sand
 	}
 	// Replace the unconfined defaults with confined instances (registry order is
 	// preserved on replace): file-writers bound to the workspace, bash to the OS
-	// sandbox, web_fetch to the proxy. Only replace tools actually enabled/present.
+	// sandbox, web_fetch to the proxy. read_file/grep are confined ONLY when
+	// [sandbox] read_roots is set (opt-in read isolation). Only replace tools
+	// actually enabled/present.
 	confined := append(builtin.ConfineWriters(writeRoots), builtin.ConfineBash(bashSpec, bashTimeout), builtin.ConfineSearch(searchSpec), builtin.ConfineWebFetch(proxySpec))
+	confined = append(confined, builtin.ConfineReaders(readRoots)...)
 	for _, t := range confined {
 		if _, ok := reg.Get(t.Name()); ok {
 			reg.Add(t)

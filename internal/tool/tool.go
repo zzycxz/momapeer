@@ -42,6 +42,17 @@ type Previewer interface {
 	Preview(args json.RawMessage) (diff.Change, error)
 }
 
+// ReadOnlyCallChecker is an optional capability a Tool may implement to give a
+// per-call read-only vote, overriding its static ReadOnly()=false. This exists
+// for tools whose side effects depend on the arguments and can't be classified
+// statically — bash is the canonical case: "git log" is read-only, "rm" is not.
+// Under plan mode the agent consults this to let a specific read-only invocation
+// through without unconditionally admitting the tool. Tools that don't implement
+// it fall back to their static ReadOnly() value.
+type ReadOnlyCallChecker interface {
+	ReadOnlyCall(args json.RawMessage) bool
+}
+
 // PreviewChange returns the change a writer tool would make for args, or ok=false
 // when there's nothing renderable: t is read-only, doesn't implement Previewer,
 // the preview errored (the edit will likely fail too), or the file is binary.
@@ -102,11 +113,30 @@ type Registry struct {
 	tools map[string]Tool
 	order []string
 	canon map[string]json.RawMessage
+	// hidden marks tools that stay callable (Get still resolves them) but are
+	// omitted from Schemas() so the model never sees them in its tool list.
+	// Used by cowork to register browser/desktop/calendar tools that subagents
+	// reach via FilterRegistry without cluttering the main loop's schema.
+	hidden map[string]bool
 }
 
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry {
-	return &Registry{tools: map[string]Tool{}, canon: map[string]json.RawMessage{}}
+	return &Registry{tools: map[string]Tool{}, canon: map[string]json.RawMessage{}, hidden: map[string]bool{}}
+}
+
+// Hide marks a registered tool as hidden: it stays callable by name (Get still
+// resolves it, so subagents and explicit calls work) but is omitted from
+// Schemas() so the main-loop model never sees it in its tool list. Used when a
+// tool is meant to be driven only through a subagent skill (e.g. browser tools
+// via run_skill("computer-auto")) rather than advertised to the top-level model.
+// Hiding a name that isn't registered is a no-op.
+func (r *Registry) Hide(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.tools[name]; ok {
+		r.hidden[name] = true
+	}
 }
 
 // Add inserts (or replaces) a tool, preserving first-seen order. The schema is
@@ -203,6 +233,9 @@ func (r *Registry) Schemas() []provider.ToolSchema {
 
 	out := make([]provider.ToolSchema, 0, len(names))
 	for _, name := range names {
+		if r.hidden[name] {
+			continue
+		}
 		t := r.tools[name]
 		if t == nil {
 			continue

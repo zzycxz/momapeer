@@ -31,6 +31,17 @@ const (
 	renameBackoff  = 200 * time.Millisecond
 )
 
+// customDownloadBase, when set via SetDownloadBase, replaces the default GitHub
+// download source. This lets air-gapped/intranet deployments host the CodeGraph
+// binary on an internal mirror and point momapeer at it via
+// [codegraph].download_url in config.toml. Set by boot.go before Install.
+var customDownloadBase string
+
+// SetDownloadBase overrides the download source for the CodeGraph binary. Pass
+// "" to restore the default (GitHub + mainland mirror). The URL should be the
+// base (without the version or asset name); the installer appends those.
+func SetDownloadBase(url string) { customDownloadBase = strings.TrimSpace(url) }
+
 // CacheDir is where the CodeGraph bundle is unpacked on first use:
 // <user cache>/momapeer/codegraph/<Version>. Versioned so a bump installs cleanly
 // beside the old one. MOMAPEER_CACHE_DIR overrides the base (relocate the cache,
@@ -194,6 +205,11 @@ func expectedAssetSHA256(asset string) string {
 
 func downloadBases() []string {
 	var bases []string
+	// Custom intranet/mirror download source takes highest priority — set via
+	// [codegraph].download_url for air-gapped deployments.
+	if customDownloadBase != "" {
+		bases = append(bases, strings.TrimRight(customDownloadBase, "/")+"/"+Version)
+	}
 	if strings.TrimSpace(officialMirrorBase) != "" {
 		bases = append(bases, strings.TrimRight(officialMirrorBase, "/")+"/"+Version)
 	}

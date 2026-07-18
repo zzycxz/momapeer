@@ -28,7 +28,15 @@ func init() { tool.RegisterBuiltin(readFile{}) }
 // readFile reads a text file. workDir, when non-empty, is the directory a
 // relative path is resolved against (see resolveIn); the zero value registered
 // at init resolves against the process working directory.
-type readFile struct{ workDir string }
+type readFile struct {
+	workDir string
+	// roots, when non-empty, confines reads to these directories (the read-roots
+	// boundary). Empty = unconfined, the default: an agent legitimately reads
+	// /etc, system headers, ~/.gitconfig, etc. A high-security deployment turns
+	// this on via ConfineReaders so read_file can't exfiltrate files outside the
+	// configured roots. See security audit A7.
+	roots []string
+}
 
 const (
 	readFileDefaultLimit = 2000 // lines returned when limit is unset
@@ -67,6 +75,9 @@ func (r readFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 		return "", fmt.Errorf("path is required")
 	}
 	p.Path = resolveIn(r.workDir, p.Path)
+	if err := confineRead(r.roots, p.Path); err != nil {
+		return "", err
+	}
 	if p.Offset < 0 {
 		p.Offset = 0
 	}

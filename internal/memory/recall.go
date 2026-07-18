@@ -4,34 +4,43 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/zzycxz/momapeer/internal/tool"
 )
 
-// recallTool reactivates a dormant memory back to active status. When the model
-// encounters a relevant dormant fact via memory_query, it can call this to bring
-// it back into the hot layer (MEMORY.md index).
+// recallTool lets the model look up facts it saved earlier. Saved (scattered)
+// memories are NOT injected into the per-turn prompt (only the portrait layer
+// is), so without this tool the archive is a write-only black hole: remember can
+// store a fact but nothing can fetch it back. recall is the read side — a pure
+// filesystem scan with zero LLM cost.
+//
+// Two modes:
+//   - No name (or empty): list every visible saved memory as "name — first line",
+//     so the model knows what it has recorded and can pick one to read in full.
+//   - With a name: return that memory's full body.
+//
+// Visibility follows the active profile partition (global + current mode), same
+// as the rest of the store, so dev never sees cowork facts and vice versa.
 type recallTool struct{ store Store }
 
-// NewRecallTool returns the `memory_recall` tool bound to store.
+// NewRecallTool returns the `recall` tool bound to store.
 func NewRecallTool(store Store) tool.Tool { return recallTool{store: store} }
 
-func (recallTool) Name() string { return "memory_recall" }
+func (recallTool) Name() string { return "recall" }
 
 func (recallTool) Description() string {
-	return "Reactivate a dormant memory fact back into the active index. " +
-		"Use when memory_status shows dormant facts, or when the user mentions a past topic " +
-		"that was dormant — e.g. a hobby or preference that is current once more. " +
-		"The fact will reappear in the memory index and won't auto-decay again until its next inactivity period."
+	return "Look up a fact previously saved with `remember`. Saved facts are NOT loaded into context automatically (only the portrait is), so use this when you need something you remember recording — a preference, a decision, a constraint. " +
+		"Call with no name (or empty) to list everything you have saved (name + one-line hook); call with a `name` to read one fact's full body. " +
+		"This is a local file read — it costs nothing and never calls a model."
 }
 
 func (recallTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"name": {"type": "string", "description": "Slug of the dormant memory to reactivate, as shown in the search result."}
-		},
-		"required": ["name"]
+			"name": {"type": "string", "description": "The slug of a saved memory to read in full. Omit or leave empty to list all saved memories (name + first line)."}
+		}
 	}`)
 }
 
@@ -39,19 +48,53 @@ func (t recallTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 	var in struct {
 		Name string `json:"name"`
 	}
-	if err := json.Unmarshal(args, &in); err != nil {
-		return "", fmt.Errorf("invalid arguments: %w", err)
+	if len(args) > 0 {
+		if err := json.Unmarshal(args, &in); err != nil {
+			return "", fmt.Errorf("invalid arguments: %w", err)
+		}
 	}
-	if in.Name == "" {
-		return "", fmt.Errorf("name is required")
+	name := strings.TrimSpace(in.Name)
+
+	// Single-fact read: return the full body.
+	if name != "" {
+		path := t.store.Path(name)
+		if path == "" {
+			return "", fmt.Errorf("no memory named %q", name)
+		}
+		m, ok := loadMemory(path)
+		if !ok {
+			return "", fmt.Errorf("memory %q not found", name)
+		}
+		body := strings.TrimSpace(m.Body)
+		if body == "" {
+			return fmt.Sprintf("(memory %q is empty)", name), nil
+		}
+		return body, nil
 	}
-	if err := t.store.Activate(in.Name); err != nil {
-		return "", err
+
+	// List mode: name + first line for every visible memory.
+	facts := t.store.List()
+	if len(facts) == 0 {
+		return "No saved memories yet. Use `remember` to save a durable fact.", nil
 	}
-	if q, ok := QueueFromContext(ctx); ok {
-		q.QueueMemory("Reactivated dormant memory \"" + slug(in.Name) + "\" — it is now active again.")
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d saved memor%s:\n", len(facts), pluralMem(len(facts)))
+	for _, m := range facts {
+		hook := oneLine(firstLine(m.Body))
+		if hook == "" {
+			hook = oneLine(m.Body)
+		}
+		fmt.Fprintf(&b, "- %s — %s\n", m.Name, hook)
 	}
-	return fmt.Sprintf("Reactivated memory %q — it is now active and will appear in the memory index.", in.Name), nil
+	return strings.TrimSpace(b.String()), nil
 }
 
-func (recallTool) ReadOnly() bool { return false }
+func (recallTool) ReadOnly() bool { return true }
+
+// pluralMem returns "y" for one, "ies" otherwise — for the list header.
+func pluralMem(n int) string {
+	if n == 1 {
+		return "y"
+	}
+	return "ies"
+}

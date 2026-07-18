@@ -69,6 +69,11 @@ type Skill struct {
 	// index from the full (unfiltered) store; the filtered store still omits
 	// disabled skills entirely, keeping them uncallable.
 	Disabled bool
+	// Cold marks a skill whose last use is older than the configured retirement
+	// threshold, so the index tags it [休眠]. Set by callers (boot) from a
+	// UsageTracker; built-in skills are never marked cold. Cosmetic only — a
+	// cold skill is still callable, just de-emphasized in the prompt index.
+	Cold bool
 }
 
 // IsValidName reports whether name is a usable skill identifier.
@@ -88,6 +93,14 @@ type Options struct {
 	// os.Stderr. Set to io.Discard to suppress output (e.g. during model
 	// switch inside a bubbletea session).
 	Stderr io.Writer
+	// StateDir is the directory holding skill_usage.json (cross-session usage
+	// tracking for cold-skill retirement). Empty disables usage tracking —
+	// Store.Usage() then returns a no-op tracker.
+	StateDir string
+	// LegacyStatePath is a pre-profile-partition fallback location read when
+	// StateDir's file is absent, so usage recorded before the session dir moved
+	// isn't lost. Empty = no fallback.
+	LegacyStatePath string
 }
 
 // Store resolves skills across the configured roots.
@@ -100,6 +113,8 @@ type Store struct {
 	maxDepth        int
 	disableBuiltins bool
 	stderr          io.Writer
+	stateDir        string
+	legacyStatePath string
 }
 
 // New builds a Store. Relative custom paths and a relative project root are made
@@ -141,7 +156,19 @@ func New(opts Options) *Store {
 		maxDepth:        normalizeMaxDepth(opts.MaxDepth),
 		disableBuiltins: opts.DisableBuiltins,
 		stderr:          stderr,
+		stateDir:        opts.StateDir,
+		legacyStatePath: opts.LegacyStatePath,
 	}
+}
+
+// Usage returns the skill usage tracker backed by this store's StateDir, or a
+// no-op tracker when StateDir is empty. boot.go uses it to detect cold (long-
+// unused) skills for retirement from the prompt index.
+func (s *Store) Usage() *UsageTracker {
+	if s == nil || s.stateDir == "" {
+		return NewUsageTracker("")
+	}
+	return NewUsageTracker(s.stateDir, s.legacyStatePath)
 }
 
 // HasProjectScope reports whether the store was configured with a project root.

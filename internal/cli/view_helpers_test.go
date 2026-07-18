@@ -56,7 +56,7 @@ func TestViewProtectLinesCompactsLongBodyLines(t *testing.T) {
 func TestRenderMemoryGroupsDocsAndStore(t *testing.T) {
 	width := 72
 	store := memory.Store{Dir: filepath.Join(t.TempDir(), "memory")}
-	if _, err := store.Save(memory.Memory{Name: "saved-fact", Title: "Saved Fact", Description: "remembered fact"}); err != nil {
+	if _, err := store.Save(memory.Memory{Name: "saved-fact", Body: "Saved Fact: remembered fact"}); err != nil {
 		t.Fatalf("save memory: %v", err)
 	}
 	got := renderMemory(width, &memory.Set{

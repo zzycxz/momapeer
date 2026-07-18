@@ -540,7 +540,7 @@ api_key_env = "MOMAPEER_TEST_KEY_UNSET"
 func TestAddBuiltinsWithWorkspaceRootKeepsSessionTools(t *testing.T) {
 	reg := tool.NewRegistry()
 	var stderr bytes.Buffer
-	addBuiltins(reg, nil, []string{robustTempDir(t)}, sandbox.Spec{}, 120*time.Second, builtin.SearchSpec{}, &stderr, robustTempDir(t), netclient.ProxySpec{})
+	addBuiltins(reg, nil, []string{robustTempDir(t)}, nil, sandbox.Spec{}, 120*time.Second, builtin.SearchSpec{}, &stderr, robustTempDir(t), netclient.ProxySpec{})
 	for _, name := range []string{
 		"todo_write",
 		"complete_step",

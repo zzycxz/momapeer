@@ -651,7 +651,7 @@ func TestUserBubbleEchoedImmediately(t *testing.T) {
 	// Stand in for startTurn's immediate echo (no controller in the unit harness).
 	m.bubbleStartIdx = len(m.transcript)
 	m.commitLine("")
-	m.commitLine(renderUserBubble("hello world", m.width, m.planMode))
+	m.commitLine(renderUserBubble("hello world", m.width, false))
 	m.bubblePending = true
 	m.state = tuiRunning
 
@@ -1443,7 +1443,7 @@ func TestUnsendRestoresFoldedPastePlaceholder(t *testing.T) {
 	m.ctrl = control.New(control.Options{})
 	m.bubbleStartIdx = len(m.transcript)
 	m.commitLine("")
-	m.commitLine(renderUserBubble("expanded JSON", m.width, m.planMode))
+	m.commitLine(renderUserBubble("expanded JSON", m.width, m.ctrl.PlanMode()))
 	m.pendingRestore = "[Pasted text #1 · 5 lines] 这是什么?"
 	m.bubblePending = true
 	m.state = tuiRunning
@@ -1771,13 +1771,14 @@ func TestCtrlCCopyBeatsClearInput(t *testing.T) {
 // and intentionally not duplicated here.
 func TestEscInPlanModeDoesNotExitPlan(t *testing.T) {
 	m := newTestChatTUI()
-	m.planMode = true
+	m.ctrl = control.New(control.Options{})
+	m.ctrl.SetPlanMode(true)
 
 	esc := tea.KeyPressMsg{Code: tea.KeyEsc}
 	out, _ := m.Update(esc)
 	m2 := out.(chatTUI)
 
-	if !m2.planMode {
+	if !m2.ctrl.PlanMode() {
 		t.Error("Esc must not exit plan mode; only Shift+Tab should")
 	}
 }
@@ -1794,8 +1795,8 @@ func TestDesktopShortcutLayoutShiftTabTogglesPlanOnly(t *testing.T) {
 	shiftTab := tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
 	out, _ := m.Update(shiftTab)
 	m = out.(chatTUI)
-	if !m.planMode || !m.ctrl.PlanMode() {
-		t.Fatalf("first Shift+Tab should enter plan mode, tui=%v controller=%v", m.planMode, m.ctrl.PlanMode())
+	if !m.ctrl.PlanMode() {
+		t.Fatalf("first Shift+Tab should enter plan mode, controller=%v", m.ctrl.PlanMode())
 	}
 	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAuto {
 		t.Fatalf("Shift+Tab changed approval mode to %q, want auto", got)
@@ -1803,8 +1804,8 @@ func TestDesktopShortcutLayoutShiftTabTogglesPlanOnly(t *testing.T) {
 
 	out, _ = m.Update(shiftTab)
 	m = out.(chatTUI)
-	if m.planMode || m.ctrl.PlanMode() {
-		t.Fatalf("second Shift+Tab should leave plan mode, tui=%v controller=%v", m.planMode, m.ctrl.PlanMode())
+	if m.ctrl.PlanMode() {
+		t.Fatalf("second Shift+Tab should leave plan mode, controller=%v", m.ctrl.PlanMode())
 	}
 	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAuto {
 		t.Fatalf("second Shift+Tab changed approval mode to %q, want auto", got)
@@ -1822,8 +1823,8 @@ func TestDesktopShortcutLayoutShiftTabClearsGoalWhenEnteringPlan(t *testing.T) {
 
 	out, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	m = out.(chatTUI)
-	if !m.planMode || !m.ctrl.PlanMode() {
-		t.Fatalf("Shift+Tab should enter plan mode, tui=%v controller=%v", m.planMode, m.ctrl.PlanMode())
+	if !m.ctrl.PlanMode() {
+		t.Fatalf("Shift+Tab should enter plan mode, controller=%v", m.ctrl.PlanMode())
 	}
 	if got := m.ctrl.Goal(); got != "" {
 		t.Fatalf("Shift+Tab entering plan should clear goal, got %q", got)
@@ -1958,8 +1959,8 @@ func TestShiftTabStillTogglesPlanUnderClassicShortcutLayout(t *testing.T) {
 
 	out, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	m = out.(chatTUI)
-	if !m.planMode || !m.ctrl.PlanMode() {
-		t.Fatalf("Shift+Tab should toggle plan mode, tui=%v controller=%v", m.planMode, m.ctrl.PlanMode())
+	if !m.ctrl.PlanMode() {
+		t.Fatalf("Shift+Tab should toggle plan mode, controller=%v", m.ctrl.PlanMode())
 	}
 	if got := m.ctrl.ToolApprovalMode(); got != control.ToolApprovalAsk {
 		t.Fatalf("Shift+Tab changed approval mode to %q", got)
