@@ -1,22 +1,27 @@
 // CoworkDock is the cowork-mode right-side panel: a tabbed overview of today's
-// events, the user's mailbox, and the active workspace's files. It mirrors the
-// coding-mode WorkspacePanel in spirit but presents cowork-flavored content
-// (calendar events, scheduled tasks, unread mail) instead of git changes.
+// events, the user's mailbox status, and the active workspace's files. It
+// mirrors the coding-mode workbench-dock in structure but presents cowork-
+// flavored content (calendar events, scheduled tasks, mail probe).
 //
 // Tabs:
-//   - 今日 (today): today's calendar events + upcoming scheduled tasks + a
-//     compact mail preview (unread count + latest subject).
-//   - 邮件 (mail): mailbox connection status + unread message list.
-//   - 文件 (files): a flat file tree of the active workspace (cwd), so the user
-//     can browse/peek project files without leaving cowork mode.
+//   - 今日 (today): today's calendar events + upcoming scheduled tasks.
+//   - 邮件 (mail): mailbox connection status (ProbeMailAccount: ok/error/
+//     unconfigured). The lightweight probe is all we show here — full mail
+//     reading lives in the dedicated mail tools.
+//   - 文件 (files): a flat list of the active workspace's top-level entries
+//     (ListDir ""), so the user can browse/peek project files without leaving
+//     cowork mode.
 //
 // When mode === "rag" (the user opened the knowledge base panel), the dock
-// instead shows a knowledge nav: collections, top entities, recent relations.
-// The graph canvas itself lives in RagPanel; this nav complements it.
+// shows a knowledge nav: collections list. The graph canvas itself lives in
+// RagPanel; this nav complements it.
 //
-// The dock is always rendered when rightDockOpen; App.tsx controls visibility
-// via the workspacePanelRenderable prop on AppChrome. dockOnClose / dockOnToggle
-// are wired so the dock's toolbar matches the coding-mode workbench-dock.
+// Go methods used (all verified to exist):
+//   - ListCalendarEvents(since, before string) → []CalendarEventView
+//   - ListScheduledTasks() → []TaskView
+//   - ProbeMailAccount() → MailProbeResult {OK, Status, Message}
+//   - ListDir(rel string) → []DirEntry {Name, IsDir}
+//   - ListRagCollections() → []RagCollectionView
 
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -36,7 +41,7 @@ import type {
   TaskView,
   MailProbeResult,
   RagCollectionView,
-  RagEntityBrief,
+  DirEntry,
 } from "../../lib/types";
 import { useT } from "../../lib/i18n";
 
@@ -54,102 +59,98 @@ export interface CoworkDockProps {
 
 interface TodayData {
   events: CalendarEventView[];
-  upcoming: TaskView[];
+  tasks: TaskView[];
   loading: boolean;
-  error?: string;
-}
-
-interface MailData {
-  probe: MailProbeResult | null;
-  loading: boolean;
-  error?: string;
 }
 
 interface FilesData {
-  entries: { name: string; isDir: boolean }[];
+  entries: DirEntry[];
   loading: boolean;
-  error?: string;
 }
 
 interface RagNavData {
   collections: RagCollectionView[];
-  entities: RagEntityBrief[];
   loading: boolean;
 }
 
+// todayRange returns {since, before} ISO-ish strings for the local today
+// (00:00 → 23:59), matching ListCalendarEvents's "2006-01-02T15:04" format.
+function todayRange(): { since: string; before: string } {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return { since: `${y}-${m}-${day}T00:00`, before: `${y}-${m}-${day}T23:59` };
+}
+
 export function CoworkDock({
-  cwd,
+  cwd: _cwd,
   maximized,
   onClose,
   onToggleMaximized,
   mode = "default",
-  onEntityClick,
+  onEntityClick: _onEntityClick,
   onFileClick,
 }: CoworkDockProps) {
   const t = useT();
   const [tab, setTab] = useState<DockTab>("today");
 
   // --- today data ---
-  const [today, setToday] = useState<TodayData>({ events: [], upcoming: [], loading: true });
+  const [today, setToday] = useState<TodayData>({ events: [], tasks: [], loading: true });
   const refreshToday = useCallback(async () => {
-    setToday((s) => ({ ...s, loading: true, error: undefined }));
+    setToday((s) => ({ ...s, loading: true }));
     try {
-      const [events, upcoming] = await Promise.all([
-        (app as unknown as { ListTodayEvents?: () => Promise<CalendarEventView[]> }).ListTodayEvents?.() ??
-          Promise.resolve([] as CalendarEventView[]),
-        (app as unknown as { ListUpcomingScheduledTasks?: () => Promise<TaskView[]> }).ListUpcomingScheduledTasks?.() ??
-          Promise.resolve([] as TaskView[]),
+      const { since, before } = todayRange();
+      const [events, tasks] = await Promise.all([
+        app.ListCalendarEvents(since, before).catch(() => [] as CalendarEventView[]),
+        app.ListScheduledTasks().catch(() => [] as TaskView[]),
       ]);
-      setToday({ events: events ?? [], upcoming: upcoming ?? [], loading: false });
-    } catch (e) {
-      setToday((s) => ({ ...s, loading: false, error: String(e) }));
+      // Upcoming = enabled tasks with a future nextRun.
+      const upcoming = (tasks ?? []).filter(
+        (tk) => tk.enabled && tk.nextRun && new Date(tk.nextRun).getTime() > Date.now() - 86400000,
+      );
+      setToday({ events: events ?? [], tasks: upcoming, loading: false });
+    } catch {
+      setToday({ events: [], tasks: [], loading: false });
     }
   }, []);
 
   // --- mail data ---
-  const [mail, setMail] = useState<MailData>({ probe: null, loading: true });
+  const [mail, setMail] = useState<{ probe: MailProbeResult | null; loading: boolean }>({
+    probe: null,
+    loading: true,
+  });
   const refreshMail = useCallback(async () => {
     setMail({ probe: null, loading: true });
     try {
-      const probe = await (app as unknown as { ProbeMail?: () => Promise<MailProbeResult> }).ProbeMail?.();
-      setMail({ probe: probe ?? null, loading: false });
-    } catch (e) {
-      setMail({ probe: null, loading: false, error: String(e) });
+      const probe = await app.ProbeMailAccount().catch(() => null);
+      setMail({ probe, loading: false });
+    } catch {
+      setMail({ probe: null, loading: false });
     }
   }, []);
 
   // --- files data ---
   const [files, setFiles] = useState<FilesData>({ entries: [], loading: true });
   const refreshFiles = useCallback(async () => {
-    if (!cwd) {
-      setFiles({ entries: [], loading: false });
-      return;
-    }
     setFiles({ entries: [], loading: true });
     try {
-      const entries = await (app as unknown as {
-        ListWorkspaceDir?: (dir: string) => Promise<{ name: string; isDir: boolean }[]>;
-      }).ListWorkspaceDir?.(cwd);
+      const entries = await app.ListDir("").catch(() => [] as DirEntry[]);
       setFiles({ entries: entries ?? [], loading: false });
-    } catch (e) {
-      setFiles({ entries: [], loading: false, error: String(e) });
+    } catch {
+      setFiles({ entries: [], loading: false });
     }
-  }, [cwd]);
+  }, []);
 
   // --- rag nav data ---
-  const [ragNav, setRagNav] = useState<RagNavData>({ collections: [], entities: [], loading: true });
+  const [ragNav, setRagNav] = useState<RagNavData>({ collections: [], loading: true });
   const refreshRagNav = useCallback(async () => {
-    setRagNav({ collections: [], entities: [], loading: true });
+    setRagNav({ collections: [], loading: true });
     try {
-      const [cols, ents] = await Promise.all([
-        (app as unknown as { ListRagCollections?: () => Promise<RagCollectionView[]> }).ListRagCollections?.() ??
-          Promise.resolve([] as RagCollectionView[]),
-        (app as unknown as { ListRagTopEntities?: () => Promise<RagEntityBrief[]> }).ListRagTopEntities?.() ??
-          Promise.resolve([] as RagEntityBrief[]),
-      ]);
-      setRagNav({ collections: cols ?? [], entities: ents ?? [], loading: false });
-    } catch (e) {
-      setRagNav({ collections: [], entities: [], loading: false });
+      const cols = await app.ListRagCollections().catch(() => [] as RagCollectionView[]);
+      setRagNav({ collections: cols ?? [], loading: false });
+    } catch {
+      setRagNav({ collections: [], loading: false });
     }
   }, []);
 
@@ -169,11 +170,6 @@ export function CoworkDock({
       unsub2();
     };
   }, [mode, refreshToday, refreshMail, refreshFiles, refreshRagNav]);
-
-  // When cwd changes, refresh files.
-  useEffect(() => {
-    if (mode !== "rag") void refreshFiles();
-  }, [cwd, mode, refreshFiles]);
 
   return (
     <aside className="cowork-dock" aria-label={t("coworkDock.label") || "办公概览"}>
@@ -234,26 +230,20 @@ export function CoworkDock({
         >
           {maximized ? "❐" : "▢"}
         </button>
-        <button
-          className="cowork-dock__tab"
-          type="button"
-          onClick={onClose}
-          title="关闭"
-          aria-label="关闭"
-        >
+        <button className="cowork-dock__tab" type="button" onClick={onClose} title="关闭" aria-label="关闭">
           ✕
         </button>
       </div>
 
       <div className="cowork-dock__body">
         {mode === "rag" ? (
-          <RagNavView data={ragNav} onEntityClick={onEntityClick} />
+          <RagNavView data={ragNav} />
         ) : tab === "today" ? (
           <TodayView data={today} />
         ) : tab === "mail" ? (
           <MailView data={mail} onRefresh={() => void refreshMail()} />
         ) : (
-          <FilesView data={files} cwd={cwd} onRefresh={() => void refreshFiles()} onFileClick={onFileClick} />
+          <FilesView data={files} onRefresh={() => void refreshFiles()} onFileClick={onFileClick} />
         )}
       </div>
     </aside>
@@ -268,13 +258,15 @@ function TodayView({ data }: { data: TodayData }) {
     return <div className="cowork-dock__loading">{t("common.loading") || "加载中…"}</div>;
   }
   const hasEvents = data.events.length > 0;
-  const hasUpcoming = data.upcoming.length > 0;
+  const hasUpcoming = data.tasks.length > 0;
   if (!hasEvents && !hasUpcoming) {
     return (
       <div className="cowork-dock__empty-state">
         <CalendarDays size={22} />
         <p>{t("coworkDock.noEvents") || "今日暂无日程"}</p>
-        <span className="cowork-dock__empty-hint">{t("coworkDock.noUpcoming") || "暂无待触发任务"}</span>
+        <span className="cowork-dock__empty-hint">
+          {t("coworkDock.noUpcoming") || "暂无待触发任务"}
+        </span>
       </div>
     );
   }
@@ -289,7 +281,7 @@ function TodayView({ data }: { data: TodayData }) {
           <ul className="cowork-today__list">
             {data.events.slice(0, 8).map((e, i) => (
               <li key={e.id ?? i} className="cowork-today__row" title={e.title}>
-                <span className="cowork-today__time">{formatEventTime(e)}</span>
+                <span className="cowork-today__time">{formatEventTime(e.start)}</span>
                 <span className="cowork-today__dot" />
                 <span className="cowork-today__text">{e.title}</span>
               </li>
@@ -304,9 +296,9 @@ function TodayView({ data }: { data: TodayData }) {
             {t("coworkDock.upcoming") || "即将触发"}
           </h3>
           <ul className="cowork-today__list">
-            {data.upcoming.slice(0, 5).map((task, i) => (
+            {data.tasks.slice(0, 5).map((task, i) => (
               <li key={task.id ?? i} className="cowork-today__row" title={task.name}>
-                <span className="cowork-today__time">{task.nextRun ?? ""}</span>
+                <span className="cowork-today__time">{shortTime(task.nextRun)}</span>
                 <span className="cowork-today__dot cowork-today__dot--plain" />
                 <span className="cowork-today__text">{task.name}</span>
               </li>
@@ -318,23 +310,36 @@ function TodayView({ data }: { data: TodayData }) {
   );
 }
 
-function formatEventTime(e: CalendarEventView): string {
-  if (e.startMs && typeof e.startMs === "number") {
-    const d = new Date(e.startMs);
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  }
-  return e.startTime ?? "";
+// formatEventTime extracts "HH:MM" from "2006-01-02T15:04" (or "" on parse fail).
+function formatEventTime(s: string): string {
+  if (!s) return "";
+  const m = s.match(/T(\d{2}:\d{2})/);
+  return m ? m[1] : "";
 }
 
-// --- 邮件 view: mailbox connection status ------------------------------
+// shortTime renders a nextRun timestamp as a compact "MM-DD HH:MM" for the
+// upcoming list. Falls back to the raw string when it can't be parsed.
+function shortTime(s: string): string {
+  if (!s) return "";
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return s;
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${mm}-${dd} ${hh}:${mi}`;
+}
 
-function MailView({ data, onRefresh }: { data: MailData; onRefresh: () => void }) {
+// --- 邮件 view: mailbox probe status --------------------------------
+
+function MailView({ data, onRefresh }: { data: { probe: MailProbeResult | null; loading: boolean }; onRefresh: () => void }) {
   const t = useT();
   if (data.loading) {
     return <div className="cowork-dock__loading">{t("common.loading") || "加载中…"}</div>;
   }
   const probe = data.probe;
-  if (!probe || !probe.connected) {
+  const ok = probe?.ok || probe?.status === "ok";
+  if (!probe || probe.status === "unconfigured") {
     return (
       <div className="cowork-dock__empty-state">
         <Mail size={22} />
@@ -351,64 +356,39 @@ function MailView({ data, onRefresh }: { data: MailData; onRefresh: () => void }
   return (
     <div className="cowork-mailtab">
       <div className="cowork-mailtab__head">
-        <span className="cowork-mailtab__status">{t("coworkDock.mailConnected") || "已连接"}</span>
+        <span className="cowork-mailtab__status">
+          {ok ? (t("coworkDock.mailConnected") || "已连接") : (t("coworkDock.mailError") || "连接失败")}
+        </span>
         <button className="cowork-mailtab__refresh" type="button" onClick={onRefresh} title="刷新">
           <RefreshCw size={12} />
         </button>
       </div>
-      <div className="cowork-today__section">
-        <h3 className="cowork-today__heading">
-          <Inbox size={12} />
-          {probe.unread && probe.unread > 0
-            ? t("coworkDock.unreadN", { n: probe.unread }) || `${probe.unread} 封未读`
-            : t("coworkDock.noUnread") || "无未读"}
-        </h3>
-      </div>
-      {probe.recent && probe.recent.length > 0 ? (
-        <ul className="cowork-mailtab__list">
-          {probe.recent.slice(0, 10).map((m, i) => (
-            <li key={i} className={`cowork-mailtab__item ${m.unread ? "" : "cowork-mailtab__item--open"}`}>
-              <div className="cowork-mailtab__item-head">
-                <span className="cowork-mailtab__from">{m.from}</span>
-                <span className="cowork-mailtab__date">{m.date}</span>
-              </div>
-              <div className="cowork-mailtab__subject">{m.subject}</div>
-              {m.preview && <div className="cowork-mailtab__preview">{m.preview}</div>}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <div className="cowork-dock__empty-hint">{t("coworkDock.noUnreadMail") || "没有未读邮件"}</div>
+      {probe.message && (
+        <div className="cowork-today__section">
+          <p className="cowork-dock__empty-hint">{probe.message}</p>
+        </div>
+      )}
+      {!ok && (
+        <div className="cowork-dock__empty-hint">
+          {t("coworkDock.mailConfigureHint") || "请在「设置」-「办公」中检查邮箱配置"}
+        </div>
       )}
     </div>
   );
 }
 
-// --- 文件 view: workspace file list -----------------------------------
+// --- 文件 view: workspace top-level entries --------------------------
 
 function FilesView({
   data,
-  cwd,
   onRefresh,
   onFileClick,
 }: {
   data: FilesData;
-  cwd?: string;
   onRefresh: () => void;
   onFileClick?: (path: string) => void;
 }) {
   const t = useT();
-  if (!cwd) {
-    return (
-      <div className="cowork-dock__empty-state">
-        <Folder size={22} />
-        <p>{t("coworkDock.noWorkspace") || "当前会话未关联工作区文件夹"}</p>
-        <span className="cowork-dock__empty-hint">
-          {t("coworkDock.noWorkspaceHint") || "新建会话时选择一个项目文件夹即可在此浏览文件"}
-        </span>
-      </div>
-    );
-  }
   if (data.loading) {
     return <div className="cowork-dock__loading">{t("common.loading") || "加载中…"}</div>;
   }
@@ -416,7 +396,7 @@ function FilesView({
     return (
       <div className="cowork-dock__empty-state">
         <Folder size={22} />
-        <p>空文件夹</p>
+        <p>空工作区</p>
         <button className="cowork-dock__tab" type="button" onClick={onRefresh} title="刷新">
           <RefreshCw size={12} />
         </button>
@@ -426,7 +406,7 @@ function FilesView({
   return (
     <div className="cowork-rag__tree">
       <div className="cowork-mailtab__head">
-        <span className="cowork-mailtab__status">{cwd}</span>
+        <span className="cowork-mailtab__status">工作区文件</span>
         <button className="cowork-mailtab__refresh" type="button" onClick={onRefresh} title="刷新">
           <RefreshCw size={12} />
         </button>
@@ -436,7 +416,7 @@ function FilesView({
           <li
             key={i}
             className="cowork-today__row"
-            onClick={() => !e.isDir && onFileClick?.(`${cwd}/${e.name}`)}
+            onClick={() => !e.isDir && onFileClick?.(e.name)}
             style={{ cursor: e.isDir ? "default" : "pointer" }}
             title={e.name}
           >
@@ -451,67 +431,36 @@ function FilesView({
 
 // --- RAG knowledge nav (mode="rag") ----------------------------------
 
-function RagNavView({
-  data,
-  onEntityClick,
-}: {
-  data: RagNavData;
-  onEntityClick?: (name: string) => void;
-}) {
+function RagNavView({ data }: { data: RagNavData }) {
   const t = useT();
   if (data.loading) {
     return <div className="cowork-dock__loading">{t("common.loading") || "加载中…"}</div>;
   }
-  if (data.collections.length === 0 && data.entities.length === 0) {
+  if (data.collections.length === 0) {
     return (
       <div className="cowork-dock__empty-state">
         <NetworkIcon size={22} />
         <p>{t("cowork.ragComingSoon") || "知识库为空"}</p>
-        <span className="cowork-dock__empty-hint">导入文件后此处显示实体导航</span>
+        <span className="cowork-dock__empty-hint">导入文件后此处显示集合导航</span>
       </div>
     );
   }
   return (
     <div className="cowork-rag__body">
-      {data.collections.length > 0 && (
-        <div className="cowork-dock__group">
-          <h3 className="cowork-today__heading">
-            <Folder size={12} />
-            知识库集合
-          </h3>
-          <ul className="cowork-today__list">
-            {data.collections.slice(0, 15).map((c, i) => (
-              <li key={c.id ?? i} className="cowork-today__row" title={c.name}>
-                <Folder size={13} />
-                <span className="cowork-today__text">{c.name}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {data.entities.length > 0 && (
-        <div className="cowork-dock__group">
-          <h3 className="cowork-today__heading">
-            <NetworkIcon size={12} />
-            热门实体
-          </h3>
-          <ul className="cowork-today__list">
-            {data.entities.slice(0, 20).map((e, i) => (
-              <li
-                key={i}
-                className="cowork-today__row"
-                onClick={() => onEntityClick?.(e.name)}
-                style={{ cursor: "pointer" }}
-                title={e.desc || e.name}
-              >
-                <Circle size={10} />
-                <span className="cowork-today__text">{e.name}</span>
-                {e.desc && <span className="cowork-today__time">{e.desc.slice(0, 30)}</span>}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <div className="cowork-dock__group">
+        <h3 className="cowork-today__heading">
+          <Folder size={12} />
+          知识库集合
+        </h3>
+        <ul className="cowork-today__list">
+          {data.collections.slice(0, 20).map((c, i) => (
+            <li key={c.id ?? i} className="cowork-today__row" title={c.name}>
+              <Folder size={13} />
+              <span className="cowork-today__text">{c.name}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }
