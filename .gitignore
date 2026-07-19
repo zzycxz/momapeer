@@ -73,3 +73,4 @@ mem.prof
 node_modules/
 nul
 runs_latest.json
+.tmp_diff/
