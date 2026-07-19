@@ -33,12 +33,12 @@ import type {
   MemoryView,
   Meta,
   ModelInfo,
+  ProfileView,
   NetworkView,
   ProjectNode,
   ProfileInfo,
   ProviderView,
   QuestionAnswer,
-  BudgetStatusView,
   CollabEvent,
   RagCollectionView,
   RagETAView,
@@ -46,6 +46,10 @@ import type {
   RagNodeView,
   RagProgressEvent,
   RagSearchHitView,
+  GraphDataView,
+  EntityDetailView,
+  EntityPatch,
+  DocPreviewView,
   RunRecordView,
   ServerView,
   SessionMeta,
@@ -55,11 +59,10 @@ import type {
   SkillView,
   SlashArgsResult,
   TabMeta,
+  CalendarEventView,
+  CalendarEventInput,
   TaskInput,
   TaskView,
-  CalendarEventView,
-  InboxItem,
-  MailProbeResult,
   TeamView,
   TemplateView,
   TopicMeta,
@@ -72,10 +75,10 @@ import type {
   WorkspaceView,
   HooksSettingsView,
   HookConfigView,
-  DocPreviewView,
-  WireCollab,
-  MergeCandidate,
-  EntityDetailView,
+  MailProbeResult,
+  InboxItem,
+  RagExtractResultView,
+  ExpertRunView,
 } from "./types";
 
 const GLOBAL_PROJECT_ORDER_KEY = "__global__";
@@ -132,6 +135,10 @@ export interface AppBindings {
   AnswerQuestion(id: string, answers: QuestionAnswer[]): Promise<void>;
   AnswerQuestionForTab(tabID: string, id: string, answers: QuestionAnswer[]): Promise<void>;
   ReplayPendingPrompts(): Promise<void>;
+  SetFastTaskModel(ref: string): Promise<void>;
+  // SetPlanMode/SetMode/SetGoal etc. (non-ForTab variants) are retained for
+  // Wails binding parity (_CheckGenToApp) but not called by the frontend,
+  // which uses the *ForTab variants exclusively. Their mock impls are omitted.
   SetPlanMode(on: boolean): Promise<void>;
   SetMode(mode: string): Promise<void>;
   SetModeForTab(tabID: string, mode: string): Promise<void>;
@@ -236,9 +243,11 @@ export interface AppBindings {
   PromoteMemory(name: string): Promise<boolean>;
   RejectMemory(name: string): Promise<boolean>;
   SaveDoc(path: string, body: string): Promise<string>;
+  PortraitProfile(): Promise<ProfileView>;
   Settings(): Promise<SettingsView>;
   SetDefaultModel(ref: string): Promise<void>;
-  SetPlannerModel(ref: string): Promise<void>;
+  GetJiutianBaseDomain(): Promise<string>;
+  SetJiutianBaseDomain(domain: string): Promise<void>;
   SetSubagentModel(ref: string): Promise<void>;
   SetSubagentEffort(level: string): Promise<void>;
   SetAutoPlan(mode: string): Promise<void>;
@@ -260,6 +269,16 @@ export interface AppBindings {
   // button; OpenPPTTemplateDir opens the templates folder so the user can add
   // JSON templates.
   SetCoWorkSettings(v: CoWorkSettingsView): Promise<void>;
+  // ProbeMailAccount tests the saved mailbox's IMAP login by actually
+  // connecting. Returns ok/error/unconfigured so the mail card can show a
+  // green/red status dot after the user saves. Always resolves (a connection
+  // failure comes back as status="error", not a rejection).
+  ProbeMailAccount(): Promise<MailProbeResult>;
+  // InboxPreview reads the most recent unread messages (up to limit) from the
+  // default mailbox INBOX, for the cowork dock's "邮件" tab. Returns [] when
+  // no mailbox is configured or no unread mail. Rejects only on unexpected
+  // errors (config read failure / IMAP connect failure after config present).
+  InboxPreview(limit: number): Promise<InboxItem[]>;
   // Hooks settings (settings.json, global + project scopes). HooksSettings
   // returns the payload for the Hooks tab; Save/Trust write + gate project hooks.
   HooksSettings(scope: string): Promise<HooksSettingsView>;
@@ -281,7 +300,6 @@ export interface AppBindings {
   SetDesktopAppearance(theme: string, style: string): Promise<void>;
   SetDesktopCheckUpdates(enabled: boolean): Promise<void>;
   SetDesktopTelemetry(enabled: boolean): Promise<void>;
-  SetDesktopMetrics(enabled: boolean): Promise<void>;
   SetExpandThinking(on: boolean): Promise<void>;
   MigrateDesktopPreferences(language: string, theme: string, style: string): Promise<void>;
   SetAgentParams(temperature: number, maxSteps: number, plannerMaxSteps: number, systemPrompt: string): Promise<void>;
@@ -301,20 +319,24 @@ export interface AppBindings {
   // version/os/arch, POSTs to the collection endpoint. Only ever sent on user click.
   ReportCrash(kind: string, detail: string): Promise<void>;
   ListTabs(): Promise<TabMeta[]>;
-  OpenProjectTab(workspaceRoot: string, topicID: string): Promise<TabMeta>;
-  OpenGlobalTab(topicID: string): Promise<TabMeta>;
-  EnsureBlankTab(scope: string, workspaceRoot: string): Promise<TabMeta>;
+  // profile ("dev"|"cowork"|"" for default) scopes the topic/tab to a product
+  // profile; it comes from the active tab's profile in the frontend.
+  OpenProjectTab(workspaceRoot: string, topicID: string, profile: string): Promise<TabMeta>;
+  OpenGlobalTab(topicID: string, profile: string): Promise<TabMeta>;
+  EnsureBlankTab(scope: string, workspaceRoot: string, profile: string): Promise<TabMeta>;
+  OpenExpertSessionTab(teamId: string, teamName: string): Promise<TabMeta>;
   SetActiveTab(tabID: string): Promise<void>;
   ReorderTabs(tabIDs: string[]): Promise<void>;
   CloseTab(tabID: string): Promise<void>;
-  ListProjectTree(): Promise<ProjectNode[]>;
+  ListProjectTree(profile: string): Promise<ProjectNode[]>;
   RenameProject(workspaceRoot: string, title: string): Promise<void>;
   SetProjectColor(workspaceRoot: string, color: string): Promise<void>;
-  ReorderProjects(workspaceRoots: string[]): Promise<void>;
-  CreateTopic(scope: string, workspaceRoot: string, title: string): Promise<TopicMeta>;
+  ReorderProjects(profile: string, workspaceRoots: string[]): Promise<void>;
+  CreateTopic(scope: string, workspaceRoot: string, profile: string, title: string): Promise<TopicMeta>;
   RenameTopic(topicID: string, title: string): Promise<void>;
   DeleteTopic(topicID: string): Promise<void>;
   TrashTopic(topicID: string): Promise<void>;
+  TrashExpertSession(teamID: string): Promise<void>;
   ContextPanel(tabID: string): Promise<ContextPanelInfo>;
   // New native-feel bindings (added with the desktop native-feel plan).
   ConfirmAction(req: NativeConfirmRequest): Promise<boolean>;
@@ -325,10 +347,6 @@ export interface AppBindings {
   // each component polling. "scheduler:notice" (onSchedulerNotice) carries a
   // fired task's {name, result} for an in-app toast.
   ListScheduledTasks(): Promise<TaskView[]>;
-  // CoworkDock today/mail tabs
-  ListCalendarEvents(since: string, before: string): Promise<CalendarEventView[]>;
-  ProbeMailAccount(): Promise<MailProbeResult>;
-  InboxPreview(limit: number): Promise<InboxItem[]>;
   CreateScheduledTask(input: TaskInput): Promise<TaskView>;
   UpdateScheduledTask(input: TaskInput): Promise<TaskView>;
   DeleteScheduledTask(id: string): Promise<void>;
@@ -338,6 +356,18 @@ export interface AppBindings {
   ScheduledTaskHistory(taskID: string): Promise<RunRecordView[]>;
   ScheduledTaskTemplates(): Promise<TemplateView[]>;
   PreviewSchedule(text: string): Promise<SchedulePreview>;
+  // --- Calendar (coWork calendar panel) ------------------------------------
+  // Backed by desktop/calendar_app.go. The UI re-lists on the
+  // "calendar:changed" event (onCalendarChanged).
+  ListCalendarEvents(since: string, before: string): Promise<CalendarEventView[]>;
+  ListScheduledTasksAsEvents(since: string, before: string): Promise<CalendarEventView[]>;
+  CreateCalendarEvent(input: CalendarEventInput): Promise<CalendarEventView>;
+  UpdateCalendarEvent(input: CalendarEventInput): Promise<CalendarEventView>;
+  DeleteCalendarEvent(id: string): Promise<void>;
+  SearchCalendarEvents(q: string, limit: number): Promise<CalendarEventView[]>;
+  ExportCalendarEvents(path: string): Promise<string>;
+  ImportCalendarEvents(path: string): Promise<string>;
+  GetChineseHolidays(year: number): Promise<CalendarEventView[]>;
   // --- RAG knowledge base (coWork RAG panel) -------------------------------
   // Backed by desktop/rag_app.go. The panel re-fetches the tree on the
   // "rag:changed" event (onRagChanged) and updates per-node progress bars on
@@ -346,11 +376,38 @@ export interface AppBindings {
   ListRagTree(collection: string): Promise<RagNodeView[]>;
   RagImportPaths(collection: string, paths: string[]): Promise<RagImportResult>;
   RagStartExtract(collection: string, path: string): Promise<void>;
+  RagExtractResult(collection: string): Promise<RagExtractResultView>;
   RagCancelExtract(jobId: string): Promise<void>;
   RagRemovePath(collection: string, path: string): Promise<void>;
+  RagClear(collection: string): Promise<void>;
+  RagCleanCollection(collection: string): Promise<void>;
   RagSearch(collection: string, query: string, topK: number): Promise<RagSearchHitView>;
+  RagSemanticSearch(collection: string, query: string, topK: number): Promise<RagSearchHitView>;
+  RagEmbedEntities(collection: string): Promise<void>;
+  RagDetectCommunities(collection: string): Promise<void>;
+  RagSummarize(collection: string): Promise<{ summary: string; themes: string[] }>;
+  RagAsk(collection: string, question: string): Promise<string>;
   RagPreviewETA(jobId: string): Promise<RagETAView>;
   RagListTemplates(): Promise<string[]>;
+  HEHealth(): Promise<{ running: boolean; ready: boolean; port: number }>;
+  RagListHETemplates(): Promise<Array<{ name: string; displayName: string; description: string; category: string; available: boolean; templateType: string; entityFields: Array<{ name: string; description: string }>; relationFields: Array<{ name: string; description: string }> }>>;
+  // Graph / Entity detail / Edit / Merge / KnowledgeRef / Obsidian
+  GetGraphData(collection: string): Promise<GraphDataView>;
+  GetTopEntities(collection: string, limit: number): Promise<GraphDataView>;
+  GetGraphDataPaged(collection: string, offset: number, limit: number, types: string[]): Promise<GraphDataView>;
+  GetEntityDetail(collection: string, name: string): Promise<EntityDetailView>;
+  UpdateEntity(collection: string, name: string, patch: EntityPatch): Promise<void>;
+  MergeEntities(collection: string, keepName: string, mergeNames: string[]): Promise<void>;
+  RagFindMergeCandidates(collection: string): Promise<Array<{ keepName: string; mergeName: string; keepRaw: string; mergeRaw: string; score: number }>>;
+  GetDocumentPreview(collection: string, docPath: string): Promise<DocPreviewView>;
+  WriteKnowledgeRef(collection: string, entityNames: string[], relationKeys: string[]): Promise<string>;
+  RunSkillWithKnowledge(skillName: string, refPath: string): Promise<void>;
+  ExportObsidian(collection: string, outputDir: string): Promise<void>;
+  SetSessionCollections(collections: string[]): Promise<void>;
+  GetSessionCollections(): Promise<string[]>;
+  RagFeedText(collection: string, label: string, text: string): Promise<void>;
+  RagBatchImport(collection: string, paths: string[]): Promise<RagImportResult>;
+  RagBatchExtract(collection: string): Promise<void>;
   // --- Expert team (multi-model collaboration) -----------------------------
   // Backed by desktop/experts_app.go. The panel subscribes to "experts:collab"
   // (onExpertsCollab) for streamed expert outputs and "experts:changed"
@@ -360,45 +417,12 @@ export interface AppBindings {
   UpdateExpertTeam(team: TeamView): Promise<TeamView>;
   DeleteExpertTeam(id: string): Promise<void>;
   RunExpertTeam(teamId: string, task: string, mode: string, rounds: number): Promise<string>;
-  ExpertBudgetStatus(): Promise<BudgetStatusView>;
+  GetActiveExpertRun(teamId: string): Promise<ExpertRunView>;
+  DeleteExpertCollab(tabId: string, ordinal: number): Promise<HistoryMessage[]>;
   StartScreenshotHotkey(): Promise<void>;
   StopScreenshotHotkey(): Promise<void>;
   StartEStopHotkey(): Promise<void>;
   StopEStopHotkey(): Promise<void>;
-  // Calendar bindings
-  ListCalendarEvents(since: string, before: string): Promise<CalendarEventView[]>;
-  SearchCalendarEvents(query: string, limit?: number): Promise<CalendarEventView[]>;
-  CreateCalendarEvent(event: CalendarEventView): Promise<CalendarEventView>;
-  UpdateCalendarEvent(event: CalendarEventView): Promise<CalendarEventView>;
-  DeleteCalendarEvent(id: string): Promise<void>;
-  ImportCalendarEvents(events: CalendarEventView[]): Promise<number>;
-  ExportCalendarEvents(since: string, before: string): Promise<string>;
-  GetChineseHolidays(year: number): Promise<CalendarEventView[]>;
-  ListScheduledTasksAsEvents(since?: string, before?: string): Promise<CalendarEventView[]>;
-  // Mail bindings
-  ProbeMailAccount(): Promise<MailProbeResult>;
-  InboxPreview(limit: number): Promise<InboxItem[]>;
-  // RAG extended
-  GetSessionCollections(): Promise<string[]>;
-  SetSessionCollections(collections: string[]): Promise<void>;
-  RagSummarize(collection: string): Promise<{ summary: string; themes: string[] }>;
-  RagCleanCollection(collection: string): Promise<void>;
-  RagListHETemplates(): Promise<Array<{ name: string; displayName: string; description: string; category: string; available: boolean; templateType: string; entityFields: Array<{ name: string; description: string }>; relationFields: Array<{ name: string; description: string }> }>>;
-  HEHealth(): Promise<{ ready: boolean }>;
-  RagExtractResult(collection: string): Promise<{ hasData: boolean; entityCount: number; relationCount: number; doneCount: number; jobCount: number; topEntities: Array<{ name: string; nameRaw?: string; type: string; description?: string; relationCount: number }>; topRelations: Array<{ source: string; target: string; type: string }> }>;
-  RagEmbedEntities(collection: string): Promise<void>;
-  RagFindMergeCandidates(collection: string): Promise<MergeCandidate[]>;
-  RagMergeEntities(collection: string, names: string[]): Promise<void>;
-  GetDocumentPreview(collectionOrPath: string, path?: string): Promise<DocPreviewView>;
-  GetEntityDetail(collection: string, name: string): Promise<EntityDetailView>;
-  // Expert extended
-  GetActiveExpertRun(teamId: string): Promise<{ status: string; task: string; messages?: Array<{ kind: string; expertName?: string; round?: number; text: string }> } | null>;
-  ExpertSessionHistory(teamId: string): Promise<WireCollab[]>;
-  ExpertSearchTeams(query: string): Promise<TeamView[]>;
-  // Other missing bindings
-  PortraitProfile(): Promise<{ path: string; content: string }>;
-  UpdateEntity(collection: string, name: string, patch: { nameRaw?: string; type?: string; description?: string }): Promise<void>;
-  RagClear(collection: string): Promise<void>;
 }
 
 // Compile-time drift check. Exclude<A, B> extracts keys in A that are missing
@@ -507,16 +531,37 @@ export function onReady(cb: () => void): () => void {
   if (realApp() && typeof window !== "undefined" && window.runtime) {
     return window.runtime.EventsOn("agent:ready", () => cb());
   }
-  // In dev mock, fire immediately since there's no real boot sequence.
+  // Mock fallback: fire once on subscribe (as before) AND on subsequent mock
+  // agent:ready emissions (e.g. after a mock SwitchProfile), so the dev shell
+  // reloads session data the same way the real app does.
   cb();
-  return () => {};
+  const wrapped = () => cb();
+  (mockEventListeners["agent:ready"] ??= []).push(wrapped);
+  return () => {
+    const arr = mockEventListeners["agent:ready"] ?? [];
+    mockEventListeners["agent:ready"] = arr.filter((x) => x !== wrapped);
+  };
+}
+
+// Mock-mode event bus: when running without the Go backend (npm run dev),
+// onProjectTreeChanged/onProfileChanged register here and the mock App methods
+// emit through emitMockEvent. This lets the dev shell exercise profile-switch
+// UI flows (sidebar refresh, message clear) that otherwise only fire via Wails.
+const mockEventListeners: Record<string, Array<(payload: unknown) => void>> = {};
+export function emitMockEvent(name: string, payload?: unknown): void {
+  (mockEventListeners[name] ?? []).forEach((cb) => cb(payload));
 }
 
 export function onProjectTreeChanged(cb: () => void): () => void {
   if (realApp() && typeof window !== "undefined" && window.runtime) {
     return window.runtime.EventsOn("project-tree:changed", () => cb());
   }
-  return () => {};
+  // Mock fallback so the dev shell refreshes the sidebar on profile switch.
+  (mockEventListeners["project-tree:changed"] ??= []).push(cb);
+  return () => {
+    const arr = mockEventListeners["project-tree:changed"] ?? [];
+    mockEventListeners["project-tree:changed"] = arr.filter((x) => x !== cb);
+  };
 }
 
 // onProfileChanged fires when a tab's product profile (dev/cowork) changes after
@@ -529,7 +574,17 @@ export function onProfileChanged(cb: (e: { tabId: string; profile: string }) => 
       cb({ tabId: e.tabId ?? "", profile: e.profile ?? "dev" });
     });
   }
-  return () => {};
+  // Mock fallback so the dev shell clears messages + refreshes the sidebar on
+  // profile switch (matching the real Wails event-driven flow).
+  const wrapped = (payload: unknown) => {
+    const e = (payload ?? {}) as { tabId?: string; profile?: string };
+    cb({ tabId: e.tabId ?? "", profile: e.profile ?? "dev" });
+  };
+  (mockEventListeners["profile:changed"] ??= []).push(wrapped);
+  return () => {
+    const arr = mockEventListeners["profile:changed"] ?? [];
+    mockEventListeners["profile:changed"] = arr.filter((x) => x !== wrapped);
+  };
 }
 
 // onSchedulerChanged fires when the scheduled-task list mutates (create/update/
@@ -538,18 +593,6 @@ export function onProfileChanged(cb: (e: { tabId: string; profile: string }) => 
 export function onSchedulerChanged(cb: () => void): () => void {
   if (realApp() && typeof window !== "undefined" && window.runtime) {
     return window.runtime.EventsOn("scheduler:changed", () => cb());
-  }
-  return () => {};
-}
-
-// onCalendarChanged fires when the calendar's event set changes (event added,
-// edited, deleted, or imported). Payload-free — the calendar panel re-lists on
-// this event so the grid and upcoming list stay live without polling. The
-// backend emits "calendar:changed" from the calendar tool after every mutating
-// operation.
-export function onCalendarChanged(cb: () => void): () => void {
-  if (realApp() && typeof window !== "undefined" && window.runtime) {
-    return window.runtime.EventsOn("calendar:changed", () => cb());
   }
   return () => {};
 }
@@ -563,6 +606,15 @@ export function onSchedulerNotice(cb: (e: { name: string; result: string }) => v
       const e = (data?.[0] ?? {}) as { name?: string; result?: string };
       cb({ name: e.name ?? "", result: e.result ?? "" });
     });
+  }
+  return () => {};
+}
+
+// onCalendarChanged fires when the calendar event list mutates (create/update/
+// delete). Payload-free — the calendar panel re-lists on this event.
+export function onCalendarChanged(cb: () => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("calendar:changed", () => cb());
   }
   return () => {};
 }
@@ -591,6 +643,22 @@ export function onRagProgress(cb: (e: RagProgressEvent) => void): () => void {
         totalChunks: e.totalChunks ?? 0,
         avgLatencyMs: e.avgLatencyMs ?? 0,
         message: e.message ?? "",
+      });
+    });
+  }
+  return () => {};
+}
+
+// onRagRunSkill fires when the user selects a skill from the knowledge-ref panel.
+// Payload: { skill, arguments, refPath }. The chat should invoke the skill.
+export function onRagRunSkill(cb: (e: { skill: string; arguments: string; refPath: string }) => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("rag:run-skill", (...data: unknown[]) => {
+      const e = (data?.[0] ?? {}) as Record<string, unknown>;
+      cb({
+        skill: String(e.skill ?? ""),
+        arguments: String(e.arguments ?? ""),
+        refPath: String(e.refPath ?? ""),
       });
     });
   }
@@ -758,6 +826,8 @@ function makeMockApp(): AppBindings {
       outputDest: "",
       outputDir: "",
       humanSchedule: "工作日 18:00",
+      source: "manual",
+      calendarEventId: "",
     },
   ];
   const cloneTask = (t: TaskView): TaskView => JSON.parse(JSON.stringify(t)) as TaskView;
@@ -948,17 +1018,17 @@ function makeMockApp(): AppBindings {
   };
   const settings: SettingsView = {
     defaultModel: "moma",
-    plannerModel: "",
+    fastTaskModel: "moma/qwen/qwen3.6-35b",
     subagentModel: "",
     subagentEffort: "",
     autoPlan: "off",
     providers: [
-      { name: "moma", builtIn: true, added: false, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-coder-next", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v32", "z.ai/glm-5.1", "z.ai/glm-5.2", "minimax/minimax-m2.7", "minimax/minimax-m2.5", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "stepfun/step-3.5-flash", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: true, contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
+      { name: "moma", builtIn: true, added: false, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "deepseek/deepseek-v4-flash", "z.ai/glm-5.1", "z.ai/glm-5.2", "minimax/minimax-m2.7", "minimax/minimax-m2.5", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: true, contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
     ],
     officialProviders: [
-      { name: "moma", builtIn: true, added: false, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-coder-next", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v32", "z.ai/glm-5.1", "z.ai/glm-5.2", "minimax/minimax-m2.7", "minimax/minimax-m2.5", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "stepfun/step-3.5-flash", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: true, contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
+      { name: "moma", builtIn: true, added: false, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "deepseek/deepseek-v4-flash", "z.ai/glm-5.1", "z.ai/glm-5.2", "minimax/minimax-m2.7", "minimax/minimax-m2.5", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: true, contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
     ],
-    permissions: { mode: "ask", allow: ["ls", "read_file"], ask: [], deny: ["Bash(rm:*)"] },
+    permissions: { mode: "ask", allow: ["read_file"], ask: [], deny: ["Bash(rm:*)"] },
     sandbox: { bash: "enforce", network: true, workspaceRoot: "", allowWrite: [] },
     network: {
       proxyMode: "auto",
@@ -966,13 +1036,14 @@ function makeMockApp(): AppBindings {
       noProxy: "",
       proxy: { type: "socks5", server: "127.0.0.1", port: 7890, username: "", password: "" },
     },
-    agent: { temperature: 0.2, maxSteps: 0, plannerMaxSteps: 12, systemPrompt: "You are momapeer, a coding agent.", rpm: 0 },
+    agent: { temperature: 0.2, maxSteps: 0, plannerMaxSteps: 0, systemPrompt: "You are momapeer, a coding agent.", rpm: 60 },
     cowork: {
       browserPath: "",
       embeddingModel: "",
       pptActiveTemplate: "",
       pptTemplates: [],
       pptTemplateDir: "",
+      pptMode: "fast",
       smtp: { host: "", port: 0, from: "", username: "", passwordEnv: "COWORK_SMTP_PASSWORD", useTLS: false },
       imap: { host: "", port: 0, username: "", passwordEnv: "COWORK_IMAP_PASSWORD" },
       smtpPassword: "",
@@ -1086,7 +1157,7 @@ function makeMockApp(): AppBindings {
       exaKeySet: false,
       linkupKeySet: false,
     },
-    jiutian: { imageUnderstand: true, imageGenerate: false, videoUnderstand: false },
+    jiutian: { imageUnderstand: true, imageGenerate: true, videoUnderstand: false },
     desktopLanguage: "",
     desktopTheme: "light",
     desktopThemeStyle: "graphite",
@@ -1094,7 +1165,6 @@ function makeMockApp(): AppBindings {
     displayMode: "minimal",
     checkUpdates: true,
     telemetry: true,
-    metrics: false,
     expandThinking: false,
     configPath: "~/projects/momapeer/momapeer.toml",
     providerKinds: ["openai"],
@@ -1416,7 +1486,6 @@ function makeMockApp(): AppBindings {
   ];
   const mockModelCatalog = [
     { ref: "qwen/qwen3.6-35b", provider: "moma", model: "qwen3.6-35b" },
-    { ref: "deepseek/deepseek-v32", provider: "moma", model: "deepseek-v32" },
     { ref: "openai/gpt-oss-120b", provider: "moma", model: "gpt-oss-120b" },
     { ref: "moonshotai/kimi-k2.6", provider: "moma", model: "kimi-k2.6" },
     { ref: "minimax/minimax-m2.7", provider: "moma", model: "minimax-m2.7" },
@@ -1460,7 +1529,12 @@ function makeMockApp(): AppBindings {
       return { ...tab, profile };
     });
     if (affectedId) {
-      listeners.forEach((cb) => cb({ type: "notice", text: `profile: ${profile}` } as unknown as WireEvent));
+      // Emit through the mock event bus so the dev shell's profile:changed /
+      // project-tree:changed handlers fire — mirroring the real Wails flow
+      // (backend emits both after a SwitchProfileForTab rebuild).
+      emitMockEvent("profile:changed", { tabId: affectedId, profile });
+      emitMockEvent("project-tree:changed");
+      emitMockEvent("agent:ready", { tabId: affectedId });
     }
   };
   return {
@@ -1763,10 +1837,10 @@ function makeMockApp(): AppBindings {
           void req;
           return false;
         },
-        async SetPlanMode(on) {
-          const active = mockTabs.find((tab) => tab.active);
-          if (active) await this.SetModeForTab(active.id, modeWithPlan(normalizeMode(active.mode), on));
-        },
+        // SetPlanMode is retained for binding parity but unused by the frontend
+        // (use SetModeForTab / SetCollaborationModeForTab instead). Stub so the
+        // mock satisfies the interface contract.
+        async SetPlanMode() {},
         async SetMode(mode) {
           const active = mockTabs.find((tab) => tab.active);
           if (active) await this.SetModeForTab(active.id, mode);
@@ -2140,7 +2214,7 @@ function makeMockApp(): AppBindings {
       if (skill) skill.enabled = enabled;
     },
     async SetJiutianTool(name: string, enabled: boolean) {
-      const jiutian = settings.jiutian ?? { imageUnderstand: true, imageGenerate: false, videoUnderstand: false };
+      const jiutian = settings.jiutian ?? { imageUnderstand: true, imageGenerate: true, videoUnderstand: false };
       if (name === "image_understand") jiutian.imageUnderstand = enabled;
       if (name === "image_generate") jiutian.imageGenerate = enabled;
       if (name === "video_understand") jiutian.videoUnderstand = enabled;
@@ -2232,7 +2306,6 @@ function makeMockApp(): AppBindings {
         ],
         "/model": [
           { label: "qwen/qwen3.6-35b", insert: "qwen/qwen3.6-35b", hint: "current" },
-          { label: "deepseek/deepseek-v32", insert: "deepseek/deepseek-v32", hint: "" },
           { label: "openai/gpt-oss-120b", insert: "openai/gpt-oss-120b", hint: "" },
           { label: "moonshotai/kimi-k2.6", insert: "moonshotai/kimi-k2.6", hint: "" },
           { label: "minimax/minimax-m2.7", insert: "minimax/minimax-m2.7", hint: "" },
@@ -2527,14 +2600,23 @@ function makeMockApp(): AppBindings {
       emit({ kind: "notice", level: "info", text: `saved → ${path}` });
       return path;
     },
+    async PortraitProfile() {
+      return { path: "", content: "" };
+    },
     async Settings() {
       return JSON.parse(JSON.stringify(settings)) as SettingsView;
     },
     async SetDefaultModel(ref: string) {
       settings.defaultModel = ref;
     },
-    async SetPlannerModel(ref: string) {
-      settings.plannerModel = ref;
+    async GetJiutianBaseDomain(): Promise<string> {
+      return "https://jiutian.10086.cn";
+    },
+    async SetJiutianBaseDomain(_domain: string) {
+      // mock: no-op
+    },
+    async SetFastTaskModel(ref: string) {
+      settings.fastTaskModel = ref;
     },
     async SetSubagentModel(ref: string) {
       settings.subagentModel = ref;
@@ -2553,7 +2635,7 @@ function makeMockApp(): AppBindings {
     },
     async AddOfficialProviderAccess(kind: string, key: string) {
       const templates: Record<string, ProviderView> = {
-        moma: { name: "moma", builtIn: true, added: true, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-coder-next", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v32", "z.ai/glm-5.1", "z.ai/glm-5.2", "minimax/minimax-m2.7", "minimax/minimax-m2.5", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "stepfun/step-3.5-flash", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: !!key.trim(), contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
+        moma: { name: "moma", builtIn: true, added: true, kind: "openai", baseUrl: "https://jiutian.10086.cn/largemodel/moma/api/v3", modelsUrl: "", models: ["jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b", "jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b", "qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "deepseek/deepseek-v4-flash", "z.ai/glm-5.1", "z.ai/glm-5.2", "minimax/minimax-m2.7", "minimax/minimax-m2.5", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking", "openai/gpt-oss-120b", "moma/auto-router"], default: "qwen/qwen3.6-35b", apiKeyEnv: "JIUTIAN_API_KEY", keySet: !!key.trim(), contextWindow: 200_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
       };
       const next = templates[kind] ?? templates.moma;
       const i = settings.providers.findIndex((x) => x.name === next.name);
@@ -2703,9 +2785,6 @@ function makeMockApp(): AppBindings {
         async SetDesktopTelemetry(enabled: boolean) {
           settings.telemetry = enabled;
         },
-        async SetDesktopMetrics(enabled: boolean) {
-          settings.metrics = enabled;
-        },
         async SetExpandThinking(on: boolean) {
           settings.expandThinking = on;
         },
@@ -2782,7 +2861,7 @@ function makeMockApp(): AppBindings {
     async ListTabs() {
       return mockTabs.map((tab) => ({ ...tab }));
     },
-    async OpenProjectTab(workspaceRoot: string, _topicID: string) {
+    async OpenProjectTab(workspaceRoot: string, _topicID: string, _profile?: string) {
       const existing = mockTabs.find((tab) => tab.scope === "project" && tab.workspaceRoot === workspaceRoot && tab.topicId === _topicID);
       if (existing) {
         const active = { ...existing, active: true, running: mockTopicRunsInScenario(_topicID) };
@@ -2809,7 +2888,7 @@ function makeMockApp(): AppBindings {
       mockTabs = [...mockTabs.map((item) => ({ ...item, active: false })), tab];
       return { ...tab };
     },
-    async OpenGlobalTab(_topicID: string) {
+    async OpenGlobalTab(_topicID: string, _profile?: string) {
       const existing = mockTabs.find((tab) => tab.scope === "global" && tab.topicId === _topicID);
       if (existing) {
         setMockActiveTab(existing.id);
@@ -2834,11 +2913,13 @@ function makeMockApp(): AppBindings {
       mockTabs = [...mockTabs.map((item) => ({ ...item, active: false })), tab];
       return { ...tab };
     },
-    async EnsureBlankTab(scope: string, workspaceRoot: string) {
+    async EnsureBlankTab(scope: string, workspaceRoot: string, profile: string) {
       const targetScope = scope === "project" && workspaceRoot ? "project" : "global";
       const targetRoot = targetScope === "project" ? workspaceRoot : "";
+      const targetProfile = (profile || "dev").toLowerCase();
       const existing = mockTabs.find((tab) =>
         tab.scope === targetScope &&
+        (tab.profile ?? "dev").toLowerCase() === targetProfile &&
         (targetScope === "global" || tab.workspaceRoot === targetRoot) &&
         !tab.running
       );
@@ -2846,8 +2927,21 @@ function makeMockApp(): AppBindings {
         setMockActiveTab(existing.id);
         return { ...existing, active: true };
       }
-      const topic = await this.CreateTopic(targetScope, targetRoot, "");
-      return targetScope === "global" ? this.OpenGlobalTab(topic.id) : this.OpenProjectTab(targetRoot, topic.id);
+      const topic = await this.CreateTopic(targetScope, targetRoot, targetProfile, "");
+      return targetScope === "global" ? this.OpenGlobalTab(topic.id, targetProfile) : this.OpenProjectTab(targetRoot, topic.id, targetProfile);
+    },
+    async OpenExpertSessionTab(teamId: string, teamName: string) {
+      const existing = mockTabs.find((t) => t.expertSession?.teamId === teamId);
+      if (existing) { setMockActiveTab(existing.id); return { ...existing, active: true }; }
+      const meta: TabMeta = {
+        id: `expert_${Date.now()}`, tabType: "session", scope: "expert",
+        workspaceRoot: "", workspaceName: "", topicId: "", topicTitle: teamName,
+        label: "", ready: true, running: false, mode: "normal", active: true, cwd: "",
+        profile: "cowork", expertSession: { teamId, teamName },
+      };
+      mockTabs.push(meta);
+      setMockActiveTab(meta.id);
+      return meta;
     },
     async SetActiveTab(_tabID: string) {
       setMockActiveTab(_tabID);
@@ -2867,7 +2961,7 @@ function makeMockApp(): AppBindings {
         mockTabs[mockTabs.length - 1] = { ...mockTabs[mockTabs.length - 1], active: true };
       }
     },
-    async ListProjectTree() {
+    async ListProjectTree(_profile?: string) {
       return cloneProjectTree();
     },
     async RenameProject(workspaceRoot: string, title: string) {
@@ -2889,7 +2983,7 @@ function makeMockApp(): AppBindings {
           : tab,
       );
     },
-    async ReorderProjects(workspaceRoots: string[]) {
+    async ReorderProjects(_profile: string, workspaceRoots: string[]) {
       const projects = mockProjectTree.filter((node) => node.kind === "project");
       const globals = mockProjectTree.filter((node) => node.kind === "global_folder");
       if (!workspaceRoots.includes(GLOBAL_PROJECT_ORDER_KEY)) {
@@ -2917,7 +3011,7 @@ function makeMockApp(): AppBindings {
       if (ordered.length !== projects.length + globals.length) return;
       mockProjectTree.splice(0, mockProjectTree.length, ...ordered);
     },
-    async CreateTopic(_scope: string, _workspaceRoot: string, title: string) {
+    async CreateTopic(_scope: string, _workspaceRoot: string, _profile: string, title: string) {
       const now = Date.now();
       const id = "topic_" + now;
       const topicTitle = title.trim() || t("mock.newSession");
@@ -2954,6 +3048,9 @@ function makeMockApp(): AppBindings {
     async TrashTopic(topicID: string) {
       deleteMockTopic(topicID);
     },
+    async TrashExpertSession(_teamID: string) {
+      // no-op in mock — no real session files to trash
+    },
     async SaveWindowState(_state) {
       // no-op in browser dev — no real window geometry to persist
     },
@@ -2977,10 +3074,12 @@ function makeMockApp(): AppBindings {
         nextRun: input.expression.toLowerCase().startsWith("at ") ? input.expression.slice(3) : "明天 09:00",
         runCount: 0,
         lastResult: "",
-        outputMode: input.outputMode,
-        outputDest: input.outputDest,
+        outputMode: input.outputMode ?? "",
+        outputDest: input.outputDest ?? "",
         outputDir: input.outputDir ?? "",
         humanSchedule: input.expression,
+        source: "manual",
+        calendarEventId: "",
       };
       mockSchedulerTasks.unshift(view);
       return cloneTask(view);
@@ -2993,8 +3092,8 @@ function makeMockApp(): AppBindings {
         name: input.name,
         expression: input.expression,
         prompt: input.prompt,
-        outputMode: input.outputMode,
-        outputDest: input.outputDest,
+        outputMode: input.outputMode ?? "",
+        outputDest: input.outputDest ?? "",
         outputDir: input.outputDir ?? "",
         humanSchedule: input.expression,
       };
@@ -3044,6 +3143,39 @@ function makeMockApp(): AppBindings {
       }
       return { inputText: text, expression: "", absoluteTime: "", kind: "unknown", note: "无法识别（mock）" };
     },
+    // --- Calendar mock (browser dev only) ------------------------------------
+    async ListCalendarEvents(_since: string, _before: string): Promise<CalendarEventView[]> {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = now.getMonth();
+      const d = now.getDate();
+      return [
+        { id: "evt_mock_1", title: "周会", description: "讨论本周进展", location: "会议室A", start: `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}T10:00`, end: `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}T11:00`, allDay: false, timezone: "Asia/Shanghai", color: "#FF4444", status: "confirmed", source: "manual", recurrence: "FREQ=WEEKLY;BYDAY=MO", recurrenceEnd: "", reminders: [15], taskId: "", tags: ["工作", "例会"], createdAt: "2026-07-01 10:00" },
+        { id: "evt_mock_2", title: "代码review", description: "", location: "线上", start: `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}T14:00`, end: `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}T15:00`, allDay: false, timezone: "Asia/Shanghai", color: "#4488FF", status: "confirmed", source: "manual", recurrence: "", recurrenceEnd: "", reminders: [5], taskId: "", tags: ["工作"], createdAt: "2026-07-01 10:00" },
+      ];
+    },
+    async ListScheduledTasksAsEvents(_since: string, _before: string): Promise<CalendarEventView[]> {
+      return [];
+    },
+    async CreateCalendarEvent(input: CalendarEventInput): Promise<CalendarEventView> {
+      return { ...input, id: `evt_mock_${Date.now()}`, status: "confirmed", source: "manual", taskId: "", createdAt: new Date().toISOString().slice(0,16).replace("T"," ") };
+    },
+    async UpdateCalendarEvent(input: CalendarEventInput): Promise<CalendarEventView> {
+      return { ...input, status: "confirmed", source: "manual", taskId: "", createdAt: "2026-07-01 10:00" };
+    },
+    async DeleteCalendarEvent(_id: string): Promise<void> {},
+    async SearchCalendarEvents(_q: string, _limit: number): Promise<CalendarEventView[]> {
+      return [];
+    },
+    async ExportCalendarEvents(_path: string): Promise<string> {
+      return "exported 0 events (mock)";
+    },
+    async ImportCalendarEvents(_path: string): Promise<string> {
+      return "imported 0 events (mock)";
+    },
+    async GetChineseHolidays(_year: number): Promise<CalendarEventView[]> {
+      return [];
+    },
     // --- RAG mock (browser dev only) ------------------------------------------
     // In-memory tree seeded with one sample collection + a file mid-extraction
     // so the panel shows a progress bar outside the Wails shell.
@@ -3078,11 +3210,34 @@ function makeMockApp(): AppBindings {
       const node = mockRagTree.find((n) => n.path === path);
       if (node) { node.status = "extracting"; node.doneChunks = 0; node.totalChunks = node.totalChunks || 8; simulateRagProgress(node.jobId, node); }
     },
+    async RagExtractResult(_collection: string): Promise<RagExtractResultView> {
+      return {
+        entityCount: 5,
+        relationCount: 3,
+        topEntities: [
+          { name: "mock_entity", nameRaw: "Mock Entity", type: "concept", description: "A mock entity", relationCount: 2 },
+        ],
+        topRelations: [
+          { source: "mock_entity", target: "mock_entity2", type: "related", description: "mock relation" },
+        ],
+        jobCount: 1,
+        doneCount: 1,
+        hasData: true,
+      };
+    },
     async RagCancelExtract(jobId: string): Promise<void> {
       for (const n of mockRagTree) { if (n.jobId === jobId) { n.status = "cancelled"; } }
     },
     async RagRemovePath(_collection: string, path: string): Promise<void> {
       mockRagTree = mockRagTree.filter((n) => n.path !== path);
+    },
+    async RagClear(_collection: string): Promise<void> {
+      mockRagTree = [];
+      mockRagDocs = 0;
+      mockRagEntities = 0;
+    },
+    async RagCleanCollection(_collection: string): Promise<void> {
+      // mock: no-op
     },
     async RagSearch(_collection: string, query: string, _topK: number): Promise<RagSearchHitView> {
       return {
@@ -3090,6 +3245,25 @@ function makeMockApp(): AppBindings {
         relations: [],
         snippets: [{ collection: "default", path: "/mock/doc.md", chunk: 0, snippet: `…包含「${query}」的片段…`, score: 0.9 }],
       };
+    },
+    async RagSemanticSearch(_collection: string, query: string, _topK: number): Promise<RagSearchHitView> {
+      return {
+        entities: [{ name: query + "（语义匹配）", type: "concept", description: "mock 语义命中" }],
+        relations: [],
+        snippets: [],
+      };
+    },
+    async RagEmbedEntities(_collection: string): Promise<void> {
+      // mock: no-op
+    },
+    async RagDetectCommunities(_collection: string): Promise<void> {
+      // mock: no-op
+    },
+    async RagSummarize(_collection: string): Promise<{ summary: string; themes: string[] }> {
+      return { summary: "这是一份示例摘要，展示了知识库的主要内容。", themes: ["示例主题1", "示例主题2"] };
+    },
+    async RagAsk(_collection: string, _question: string): Promise<string> {
+      return "这是来自知识库的示例回答。";
     },
     async RagPreviewETA(jobId: string): Promise<RagETAView> {
       const n = mockRagTree.find((x) => x.jobId === jobId);
@@ -3099,10 +3273,48 @@ function makeMockApp(): AppBindings {
     async RagListTemplates(): Promise<string[]> {
       return [".txt", ".md", ".csv", ".json", ".html", ".py", ".go", ".js", ".ts", ".yaml"];
     },
+    async HEHealth(): Promise<{ running: boolean; ready: boolean; port: number }> {
+      return { running: false, ready: false, port: 0 };
+    },
+    async RagListHETemplates() {
+      return [] as Array<{ name: string; displayName: string; description: string; category: string; available: boolean; templateType: string; entityFields: Array<{ name: string; description: string }>; relationFields: Array<{ name: string; description: string }> }>;
+    },
+    async GetGraphData(_collection: string): Promise<GraphDataView> {
+      return { nodes: [], edges: [] };
+    },
+    async GetTopEntities(_collection: string, _limit: number): Promise<GraphDataView> {
+      return { nodes: [], edges: [] };
+    },
+    async GetGraphDataPaged(_collection: string, _offset: number, _limit: number, _types: string[]): Promise<GraphDataView> {
+      return { nodes: [], edges: [] };
+    },
+    async GetEntityDetail(_collection: string, _name: string): Promise<EntityDetailView> {
+      return { name: "", nameRaw: "", type: "", description: "", sources: [], relations: [], community: -1, relationCnt: 0 };
+    },
+    async UpdateEntity(_collection: string, _name: string, _patch: EntityPatch): Promise<void> {},
+    async MergeEntities(_collection: string, _keepName: string, _mergeNames: string[]): Promise<void> {},
+    async RagFindMergeCandidates(_collection: string): Promise<Array<{ keepName: string; mergeName: string; keepRaw: string; mergeRaw: string; score: number }>> {
+      return [];
+    },
+    async GetDocumentPreview(_collection: string, _docPath: string): Promise<DocPreviewView> {
+      return { path: "", content: "", chunks: [] };
+    },
+    async WriteKnowledgeRef(_collection: string, _entityNames: string[], _relationKeys: string[]): Promise<string> {
+      return "/tmp/mock_knowledge_ref.md";
+    },
+    async RunSkillWithKnowledge(_skillName: string, _refPath: string): Promise<void> {},
+    async ExportObsidian(_collection: string, _outputDir: string): Promise<void> {},
+    async SetSessionCollections(_collections: string[]): Promise<void> {},
+    async GetSessionCollections(): Promise<string[]> { return []; },
+    async RagFeedText(_collection: string, _label: string, _text: string): Promise<void> {},
+    async RagBatchImport(_collection: string, _paths: string[]): Promise<RagImportResult> {
+      return { jobIds: [], files: 0, ftsChunks: 0, message: "mock" };
+    },
+    async RagBatchExtract(_collection: string): Promise<void> {},
     // --- Expert team mock (browser dev only) -------------------------------
     async ListExpertTeams(): Promise<TeamView[]> {
       return [
-        { id: "t1", name: "方案评审团", defaultMode: "debate", defaultRounds: 2, experts: [
+        { id: "t1", name: "方案评审团", defaultMode: "debate", defaultRounds: 2, allowSearch: false, experts: [
           { name: "批判者", model: "", perspective: "从风险角度批判性审视" },
           { name: "建设者", model: "", perspective: "从改进落地角度给建议" },
         ]},
@@ -3120,14 +3332,20 @@ function makeMockApp(): AppBindings {
       // a runId so the panel's "start" handler doesn't crash.
       return runId;
     },
-    async ExpertBudgetStatus(): Promise<BudgetStatusView> {
-      return { rpm: 0, used: 0, remaining: 0, reserveMain: 0, windowSecs: 0 };
+    async GetActiveExpertRun(_teamId: string): Promise<ExpertRunView> {
+      // No in-flight run in the browser dev shell.
+      return {};
+    },
+    async DeleteExpertCollab(_tabId: string, _ordinal: number): Promise<HistoryMessage[]> {
+      return [];
     },
     async StartScreenshotHotkey() {},
     async StopScreenshotHotkey() {},
     async StartEStopHotkey() {},
     async StopEStopHotkey() {},
     async SetCoWorkSettings(v: any) { settings.cowork = { ...v, detectedBrowser: settings.cowork.detectedBrowser }; },
+    async ProbeMailAccount() { return { ok: true, status: "unconfigured", message: "" } as MailProbeResult; },
+    async InboxPreview(_limit: number) { return [] as InboxItem[]; },
     async HooksSettings(scope: string) {
       const key = scope === "project" ? "project" : "global";
       return JSON.parse(JSON.stringify(hookSettings[key])) as HooksSettingsView;
@@ -3176,39 +3394,5 @@ function makeMockApp(): AppBindings {
         ],
       };
     },
-    // Calendar mock bindings
-    async ListCalendarEvents() { return []; },
-    async SearchCalendarEvents() { return []; },
-    async CreateCalendarEvent(event: CalendarEventView) { return event; },
-    async UpdateCalendarEvent(event: CalendarEventView) { return event; },
-    async DeleteCalendarEvent() {},
-    async ImportCalendarEvents() { return 0; },
-    async ExportCalendarEvents() { return ""; },
-    async GetChineseHolidays() { return []; },
-    async ListScheduledTasksAsEvents() { return []; },
-    // Mail mock bindings
-    async ProbeMailAccount() { return { ok: false, status: "unconfigured", message: "" }; },
-    async InboxPreview() { return []; },
-    // RAG extended mock bindings
-    async GetSessionCollections() { return []; },
-    async SetSessionCollections() {},
-    async RagSummarize() { return { summary: "", themes: [] }; },
-    async RagCleanCollection() {},
-    async RagListHETemplates() { return []; },
-    async HEHealth() { return { ready: false }; },
-    async RagExtractResult() { return { hasData: false, entityCount: 0, relationCount: 0, doneCount: 0, jobCount: 0, topEntities: [], topRelations: [] }; },
-    async RagEmbedEntities() {},
-    async RagFindMergeCandidates() { return []; },
-    async RagMergeEntities() {},
-    async GetDocumentPreview() { return { path: "", content: "" }; },
-    async GetEntityDetail() { return { name: "", type: "", description: "" }; },
-    // Expert extended mock bindings
-    async GetActiveExpertRun() { return null; },
-    async ExpertSessionHistory() { return []; },
-    async ExpertSearchTeams() { return []; },
-    // Other missing bindings
-    async PortraitProfile() { return { path: "", content: "" }; },
-    async UpdateEntity() {},
-    async RagClear() {},
   };
 }

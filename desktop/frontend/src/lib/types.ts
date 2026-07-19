@@ -20,13 +20,33 @@ export type EventKind =
   | "retrying"
   | "steer"
   | "paused"
-  | "resumed";
+  | "resumed"
+  | "expert_collab";
 
 export interface WireCompaction {
   trigger?: string; // "auto" | "manual"
   messages?: number; // done: how many messages were folded into the summary
   summary?: string; // done: the briefing (empty on an aborted pass)
   archive?: string; // done: archive path, if any
+}
+
+// WireCollab is the payload of an "expert_collab" event: a finished expert-team
+// collaboration appended to the transcript. Carries the full record (per-round
+// expert answers + synthesis) so the frontend renders the folded card without an
+// extra fetch. Mirrors desktop/wire.go wireCollab.
+export interface WireCollabAnswer {
+  expertName: string;
+  text: string;
+}
+export interface WireCollab {
+  runId: string;
+  teamId: string;
+  teamName: string;
+  task: string;
+  mode: string; // "parallel" | "debate" | "pipeline"
+  rounds: WireCollabAnswer[][];
+  synthesis: string;
+  createdAt: number; // unix ms
 }
 
 export interface WireProfile {
@@ -108,6 +128,7 @@ export interface WireEvent {
   approval?: WireApproval;
   ask?: WireAsk;
   compaction?: WireCompaction;
+  collab?: WireCollab;
   err?: string;
   retryAttempt?: number;
   retryMax?: number;
@@ -142,11 +163,21 @@ export interface TabMeta {
   cwd: string;
   // Product profile ("dev" | "cowork"); absent = dev. Drives layout selection.
   profile?: string;
+  // Set when this tab is an independent expert-team collaboration session.
+  // The frontend renders ExpertSessionView (group-chat) instead of the normal
+  // transcript when present.
+  expertSession?: ExpertSessionMeta;
+}
+
+// ExpertSessionMeta carries the team context for an expert-session tab.
+export interface ExpertSessionMeta {
+  teamId: string;
+  teamName: string;
 }
 
 export interface ProjectNode {
   key: string;
-  kind: "project" | "topic" | "global_folder" | "global_topic";
+  kind: "project" | "topic" | "global_folder" | "global_topic" | "expert_folder" | "expert_topic";
   label: string;
   root?: string;
   topicId?: string;
@@ -158,6 +189,8 @@ export interface ProjectNode {
   running?: boolean;
   status?: ProjectTopicStatus;
   children?: ProjectNode[];
+  expertTeamId?: string;
+  expertTeamName?: string;
 }
 
 export type ProjectTopicStatus = "thinking" | "streaming" | "waiting_confirmation" | "paused" | "error";
@@ -287,6 +320,7 @@ export interface Meta {
   toolApprovalMode?: ToolApprovalMode;
   goal?: string;
   goalStatus?: GoalStatus;
+  expertSession?: ExpertSessionMeta;
 }
 
 export type CollaborationMode = "normal" | "plan" | "goal";
@@ -504,32 +538,6 @@ export interface ProfileInfo {
 // "YYYY-MM-DD HH:MM" strings (empty when absent) so the UI renders directly
 // without a date library.
 
-// --- CoworkDock types (today/mail tabs) ---
-
-export interface CalendarEventView {
-  id: string;
-  title: string;
-  description: string;
-  location: string;
-  start: string;
-  end: string;
-  allDay: boolean;
-  color: string;
-}
-
-export interface InboxItem {
-  from: string;
-  subject: string;
-  date: string;
-  preview: string;
-}
-
-export interface MailProbeResult {
-  ok: boolean;
-  status: string;
-  message: string;
-}
-
 // One task row in the automation panel. humanSchedule is a friendly Chinese
 // rendering of expression (e.g. "工作日 09:00"); the UI may show both.
 export interface TaskView {
@@ -547,7 +555,11 @@ export interface TaskView {
   outputMode: string; // "" | "im" | "email" | "notify" | "file"
   outputDest: string;
   outputDir: string;
+  color?: string;
+  location?: string;
   humanSchedule: string;
+  source: string;        // "manual" | "calendar"
+  calendarEventId: string;
 }
 
 // Create/update payload from the UI. Empty id on create.
@@ -556,9 +568,11 @@ export interface TaskInput {
   name: string;
   expression: string;
   prompt: string;
-  outputMode: string;
-  outputDest: string;
+  outputMode?: string;
+  outputDest?: string;
   outputDir?: string;
+  color?: string;
+  location?: string;
 }
 
 // One run-history record (newest first when listed).
@@ -593,6 +607,45 @@ export interface SchedulePreview {
   absoluteTime: string;
   kind: string;
   note: string;
+}
+
+// --- Calendar (coWork calendar panel) ----------------------------------------
+// Mirror desktop/calendar_app.go view structs.
+
+export interface CalendarEventView {
+  id: string;
+  title: string;
+  description: string;
+  location: string;
+  start: string;    // "2006-01-02T15:04"
+  end: string;
+  allDay: boolean;
+  timezone: string;
+  color: string;
+  status: string;   // confirmed / cancelled / tentative
+  source: string;   // manual / email / agent
+  recurrence: string;
+  recurrenceEnd: string;
+  reminders: number[];
+  taskId: string;
+  tags: string[];
+  createdAt: string;
+}
+
+export interface CalendarEventInput {
+  id: string;
+  title: string;
+  description: string;
+  location: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  timezone: string;
+  color: string;
+  recurrence: string;
+  recurrenceEnd: string;
+  reminders: number[];
+  tags: string[];
 }
 
 // --- RAG knowledge base (coWork RAG panel) ----------------------------------
@@ -632,6 +685,32 @@ export interface RagImportResult {
   files: number;
   ftsChunks: number;
   message: string;
+}
+
+// Extraction result summary.
+export interface RagExtractResultView {
+  entityCount: number;
+  relationCount: number;
+  topEntities: RagEntityBrief[];
+  topRelations: RagRelationBrief[];
+  jobCount: number;
+  doneCount: number;
+  hasData: boolean;
+}
+
+export interface RagEntityBrief {
+  name: string;
+  nameRaw: string;
+  type: string;
+  description: string;
+  relationCount: number;
+}
+
+export interface RagRelationBrief {
+  source: string;
+  target: string;
+  type: string;
+  description: string;
 }
 
 // Combined search hits (entities/relations + FTS5 snippets).
@@ -680,6 +759,72 @@ export interface RagProgressEvent {
   message: string;
 }
 
+// --- Graph visualization types (mirrors desktop/rag_app.go) ------------------
+
+export interface GraphNodeView {
+  id: string;
+  label: string;
+  type: string;
+  description: string;
+  sources: Array<{ path: string; chunk: number }>;
+  relationCnt: number;
+  collection: string;
+  community: number;
+}
+
+export interface GraphEdgeView {
+  source: string;
+  target: string;
+  type: string;
+  description: string;
+  weight: number;
+  strength: number;
+}
+
+export interface GraphDataView {
+  nodes: GraphNodeView[];
+  edges: GraphEdgeView[];
+}
+
+export interface EntityRelationView {
+  direction: string; // "out" | "in"
+  peer: string;
+  type: string;
+  description: string;
+  weight: number;
+  strength: number;
+}
+
+export interface EntityDetailView {
+  name: string;
+  nameRaw: string;
+  type: string;
+  description: string;
+  sources: Array<{ path: string; chunk: number }>;
+  relations: EntityRelationView[];
+  community: number;
+  relationCnt: number;
+}
+
+export interface EntityPatch {
+  nameRaw: string;
+  type: string;
+  description: string;
+}
+
+export interface ChunkHighlight {
+  index: number;
+  start: number;
+  end: number;
+  content: string;
+}
+
+export interface DocPreviewView {
+  path: string;
+  content: string;
+  chunks: ChunkHighlight[];
+}
+
 // --- Expert team (multi-model collaboration) --------------------------------
 // Mirror desktop/experts_app.go view structs.
 
@@ -695,14 +840,7 @@ export interface TeamView {
   experts: ExpertView[];
   defaultMode: string;     // "parallel" | "debate" | "pipeline"
   defaultRounds: number;   // debate rounds
-}
-
-export interface BudgetStatusView {
-  rpm: number;
-  used: number;
-  remaining: number;
-  reserveMain: number;
-  windowSecs: number;
+  allowSearch: boolean;    // true = each expert runs a web_search mini-agent (slower, accurate for real-time data)
 }
 
 // CollabEvent is one streamed event during an expert-team run.
@@ -717,6 +855,34 @@ export interface CollabEvent {
   text: string;   // expert_chunk: delta; synthesis: delta
   message: string;
   mode: string;
+}
+
+// ExpertRunView is the queryable status of an in-flight expert-team run, used
+// by ExpertPanel/ExpertSessionView to recover after the CoWorkLayout is torn
+// down (tab/profile switch) mid-run. Mirrors desktop/expert_runs.go ExpertRunView.
+export interface ExpertRunView {
+  runId?: string;
+  teamId?: string;
+  teamName?: string;
+  task?: string;
+  mode?: string;
+  status?: string;  // "" | "running" | "done" | "error"
+  startedAt?: number;  // unix ms
+  err?: string;
+  // Cached live-stream messages accumulated on the backend while the tab was
+  // hidden. When the user switches back, the frontend restores these so the
+  // experts' progress that happened during the switch isn't lost.
+  messages?: StreamMessageWire[];
+}
+
+// StreamMessageWire mirrors the Go StreamMessageWire type — the JSON form of
+// one expert's (or synthesis's) accumulated text in the live stream.
+export interface StreamMessageWire {
+  kind: string;       // "expert" | "synthesis"
+  expertName: string;
+  round: number;
+  text: string;
+  streaming: boolean;
 }
 
 // Slash sub-command / argument completion (desktop/app.go SlashArgs). Mirrors the
@@ -741,25 +907,37 @@ export interface MemoryDoc {
 
 export interface MemoryFact {
   name: string;
-  title?: string;
-  description: string;
-  type: string; // "user" | "feedback" | "project" | "reference"
   body: string;
-  // Bitemporal fields (v0.3.0). Populated from the store's Memory struct so the
-  // timeline view can show validity windows, status, and supersedence chains.
-  validFrom?: string; // YYYY-MM-DD, when the fact became true
-  validTo?: string; // YYYY-MM-DD, when it stopped being true ("" = still valid)
-  status?: string; // "active" | "superseded" | "archived" | "dormant" | "pending"
-  category?: string; // "identity" | "style" | "belief" | "temporal" | "feedback"
+  type: string; // "user" | "feedback" | "project" | "reference" (panel tag)
+  // v0.4: title/description were removed from the store struct; the index label
+  // is now derived from the body's first line. Kept optional here so older
+  // payloads and the timeline UI don't type-error — they just read as empty.
+  title?: string;
+  description?: string;
+  // Bitemporal fields (v0.3.0). No longer populated by the slimmed store (the
+  // bitemporal model was removed in v0.4); retained optional so the timeline
+  // panel compiles. They will be undefined on new facts.
+  validFrom?: string;
+  validTo?: string;
+  status?: string;
+  category?: string;
   tags?: string[];
-  supersededBy?: string; // name of the record that replaced this one
+  supersededBy?: string;
   createdAt?: string; // RFC3339, system write time
-  updatedAt?: string; // RFC3339, last modification time
+  updatedAt?: string;
 }
 
 export interface MemoryScope {
   scope: string; // "user" | "project" | "local"
   path: string;
+}
+
+// ProfileView is the active mode's portrait (cowork.md under cowork, dev.md
+// under dev). The workspace preference panel reads it on open and writes it
+// back via SaveDoc (the path is whitelisted in the backend).
+export interface ProfileView {
+  path: string;
+  content: string;
 }
 
 export interface MemoryView {
@@ -792,7 +970,7 @@ export interface DreamStatusView {
 }
 
 // SettingsTab is the top-level navigation item in the Settings Centre modal.
-export type SettingsTab = "general" | "models" | "providers" | "bots" | "cowork" | "mcp" | "skills" | "memory" | "permissions" | "sandbox" | "network" | "hooks" | "appearance" | "updates";
+export type SettingsTab = "general" | "models" | "providers" | "bots" | "cowork" | "preference" | "mcp" | "skills" | "memory" | "permissions" | "sandbox" | "network" | "hooks" | "appearance" | "updates";
 
 // Settings panel payloads (desktop/settings_app.go).
 export interface ProviderView {
@@ -853,7 +1031,8 @@ export interface NetworkView {
 export interface AgentView {
   temperature: number;
   maxSteps: number;
-  plannerMaxSteps: number;
+  /** @deprecated retained for Wails binding parity; the backend ignores it. */
+  plannerMaxSteps?: number;
   systemPrompt: string;
   rpm: number; // max requests/minute; 0 = unlimited
 }
@@ -978,6 +1157,7 @@ export interface CoWorkSettingsView {
   pptActiveTemplate: string;
   pptTemplates: PPTTemplateView[];
   pptTemplateDir: string;
+  pptMode: string;
   smtp: SMTPSettings;
   imap: IMAPSettings;
   smtpPassword: string;
@@ -998,7 +1178,7 @@ export interface CoWorkSettingsView {
 
 // PPTTemplateView is a trimmed PPT template (id + name) for the settings
 // dropdown. The full template (master file + theme + layout coordinates) is
-// loaded by the backend and injected into the ppt-wizard skill context.
+// loaded by the backend and injected into the ppt-auto skill context.
 export interface PPTTemplateView {
   id: string;
   name: string;
@@ -1056,9 +1236,29 @@ export interface BotConnectionDiagnostic {
   messageId: string;
 }
 
+// MailProbeResult is the outcome of a mailbox IMAP connection probe, returned
+// by ProbeMailAccount so the mail card can show a green/red status dot after
+// the user saves the mailbox config. status: "ok" | "error" | "unconfigured".
+export interface MailProbeResult {
+  ok: boolean;
+  status: string;
+  message: string;
+}
+
+// InboxItem is one row in the cowork dock's "邮件" tab: a trimmed-down mail
+// envelope (from/subject/date + a short body preview). Returned by
+// InboxPreview; an empty array means either no mailbox configured or no unread
+// mail — the dock distinguishes via ProbeMailAccount's status.
+export interface InboxItem {
+  from: string;
+  subject: string;
+  date: string;
+  preview: string;
+}
+
 export interface SettingsView {
   defaultModel: string;
-  plannerModel: string;
+  fastTaskModel: string;
   subagentModel: string;
   subagentEffort: string;
   autoPlan: string;
@@ -1079,7 +1279,6 @@ export interface SettingsView {
   displayMode: string;   // "standard" | "compact" | "minimal"
   checkUpdates: boolean; // check for new versions on startup
   telemetry: boolean; // anonymous launch ping (install id + version + OS)
-  metrics: boolean; // opt-in aggregate agent metrics (anonymous signal/bucket counts)
   expandThinking: boolean; // show reasoning text expanded by default
   configPath: string;
   providerKinds: string[]; // provider implementations the kernel registered (for the kind picker)
@@ -1107,26 +1306,19 @@ export interface UpdateProgress {
   err?: string;
 }
 
-// Document preview
-export interface DocPreviewView {
-  path: string;
-  content: string;
-  chunks?: Array<{ start: number; end: number; text: string }>;
+// BudgetStatusView describes the rate-limit budget window for live UI display
+// (rpm/used/remaining). Mirrors desktop.BudgetStatusView on the Go side.
+export interface BudgetStatusView {
+  rpm: number;
+  used: number;
+  remaining: number;
+  reserveMain: number;
+  windowSecs: number;
 }
 
-// Expert collaboration
-export interface WireCollab {
-  runId: string;
-  teamId: string;
-  teamName: string;
-  task: string;
-  mode: string;
-  synthesis?: string;
-  createdAt?: number;
-  rounds: Array<Array<{ expertName: string; text: string }>>;
-}
-
-// Merge candidates
+// MergeCandidate represents one entity in the graph deduplication merge flow:
+// the candidate to merge away (name/raw/score), the keep target (keepName/keepRaw),
+// and the proposed merged result (mergeName/mergeRaw) for review before applying.
 export interface MergeCandidate {
   name: string;
   raw?: string;
@@ -1135,27 +1327,4 @@ export interface MergeCandidate {
   keepRaw?: string;
   mergeName?: string;
   mergeRaw?: string;
-}
-
-// Entity detail view
-export interface EntityDetailView {
-  name: string;
-  nameRaw?: string;
-  type: string;
-  description?: string;
-  sources?: Array<{ path: string; chunk: number }>;
-  relations?: EntityRelationView[];
-  community?: number;
-  relationCnt?: number;
-}
-
-// Entity relation view
-export interface EntityRelationView {
-  source: string;
-  target: string;
-  type: string;
-  description?: string;
-  direction?: string;
-  peer?: string;
-  strength?: number;
 }

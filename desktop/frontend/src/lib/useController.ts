@@ -8,7 +8,6 @@ import { asArray } from "./array";
 import { app, onEvent, onReady } from "./bridge";
 import { createRafBatch } from "./rafBatch";
 import { t } from "./i18n";
-import { modeHasAutoApproveTools } from "./types";
 import type {
   CheckpointMeta,
   CollaborationMode,
@@ -18,7 +17,6 @@ import type {
   JobView,
   MemoryView,
   Meta,
-  Mode,
   QuestionAnswer,
   SessionMeta,
   TabMeta,
@@ -26,6 +24,7 @@ import type {
   WireApproval,
   WireAsk,
   WireAttachment,
+  WireCollab,
   WireEvent,
   WireUsage,
 } from "./types";
@@ -50,6 +49,7 @@ export type Item =
       summary: string;
       archive: string;
     }
+  | { kind: "expert_collab"; id: string; collab: WireCollab }
   | {
       kind: "tool";
       id: string;
@@ -71,6 +71,11 @@ interface State {
   items: Item[];
   running: boolean;
   turnActive: boolean;
+  // paused is true while the in-flight turn is frozen on a graceful pause
+  // (between steps, awaiting ResumeTurn). The run loop preserves full state,
+  // so the UI keeps rendering the running turn — just gated. Distinct from
+  // running=false (turn done): paused means "running, but held".
+  paused: boolean;
   approval?: WireApproval;
   ask?: WireAsk;
   usage?: WireUsage;
@@ -90,13 +95,13 @@ interface State {
   sessionTokens: number;
   retry?: { attempt: number; max: number };
   seq: number;
-  paused?: boolean;
 }
 
 export const initialState: State = {
   items: [],
   running: false,
   turnActive: false,
+  paused: false,
   context: { used: 0, window: 0, sessionTokens: 0 },
   jobs: [],
   checkpoints: [],
@@ -139,7 +144,13 @@ function sameMeta(a?: Meta, b?: Meta): boolean {
     a.bypass === b.bypass &&
     a.toolApprovalMode === b.toolApprovalMode &&
     a.goal === b.goal &&
-    a.goalStatus === b.goalStatus
+    a.goalStatus === b.goalStatus &&
+    // expertSession drives the main-area branch (ExpertSessionView vs
+    // Transcript). Without comparing it, a meta refresh that only changes the
+    // expert team (e.g. on tab switch / team rename) is silently dropped, and
+    // the main area can render the wrong view or wrong team name.
+    a.expertSession?.teamId === b.expertSession?.teamId &&
+    a.expertSession?.teamName === b.expertSession?.teamName
   );
 }
 
@@ -163,6 +174,29 @@ type Action =
   | { type: "reset" };
 
 // ---- reducer helpers (unchanged logic) ----
+
+// parseCollabRecord decodes a persisted expert-collab tool message's content
+// (a CollabRecord JSON) into the WireCollab the transcript renders. Returns null
+// for any input that isn't a valid collab record (wrong/missing marker, bad
+// JSON) so the caller can fall back to a plain tool card.
+export function parseCollabRecord(content: string): WireCollab | null {
+  try {
+    const r = JSON.parse(content);
+    if (!r || r.__type !== "__expert_collab__") return null;
+    return {
+      runId: r.runId ?? "",
+      teamId: r.teamId ?? "",
+      teamName: r.teamName ?? "",
+      task: r.task ?? "",
+      mode: r.mode ?? "",
+      rounds: Array.isArray(r.rounds) ? r.rounds : [],
+      synthesis: r.synthesis ?? "",
+      createdAt: r.createdAt ?? 0,
+    };
+  } catch {
+    return null;
+  }
+}
 
 export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: string, startSeq = 0): { items: Item[]; seq: number } {
   const resultByID = new Map<string, HistoryMessage>();
@@ -238,6 +272,18 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
   }
   if (m.role === "tool") {
     if (m.toolCallId && consumedToolIDs.has(m.toolCallId)) continue;
+    // A persisted expert-team collaboration is stored as a tool message whose
+    // content is a CollabRecord JSON (marker __type === "__expert_collab__").
+    // Render it as a folded card instead of a raw tool dump.
+    if (m.toolName === "expert_team_collab") {
+      const parsed = parseCollabRecord(m.content);
+      if (parsed) {
+        items.push({ kind: "expert_collab", id: m.toolCallId || `${idPrefix}ec${seq}`, collab: parsed });
+        seq++;
+        continue;
+      }
+      // Fall through: corrupt/unparseable record renders as a plain tool card.
+    }
     const output = m.content;
     const error = output.startsWith("[error") || output.startsWith("Error:") ? output : undefined;
     items.push({
@@ -390,6 +436,13 @@ function applyEvent(s: State, e: WireEvent): State {
     }
     case "steer":
       return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `s${s.seq}`, level: "info", text: `↪ ${e.text ?? ""}` }] };
+    case "paused":
+      // The agent finished its current step and is now frozen. running stays
+      // true (the turn is still in flight, just held) so the status bar keeps
+      // showing; paused flips the button to Resume.
+      return { ...s, paused: true, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `p${s.seq}`, level: "info", text: e.text ?? "已暂停" }] };
+    case "resumed":
+      return { ...s, paused: false };
     case "approval_request": return { ...s, approval: e.approval };
     case "ask_request": return { ...s, ask: e.ask };
     case "turn_done": {
@@ -401,7 +454,15 @@ function applyEvent(s: State, e: WireEvent): State {
         return it;
       });
       const items: Item[] = e.err ? [...finalized, { kind: "notice", id: `e${s.seq}`, level: "warn", text: e.err }] : finalized;
-      return { ...s, items, live: undefined, running: false, turnActive: false, currentAssistant: undefined, approval: undefined, ask: undefined, seq: s.seq + 1 };
+      return { ...s, items, live: undefined, running: false, turnActive: false, paused: false, currentAssistant: undefined, approval: undefined, ask: undefined, seq: s.seq + 1 };
+    }
+    case "expert_collab": {
+      // A finished expert-team collaboration is appended as a folded card. The
+      // full record (per-round answers + synthesis) rides in the event, so no
+      // fetch is needed; the model's context layer (Go side) projects it down to
+      // a synthesis-only view before the next turn.
+      if (!e.collab) return s;
+      return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "expert_collab", id: `ec${s.seq}`, collab: e.collab }] };
     }
     default: return s;
   }
@@ -448,6 +509,7 @@ export function reducer(s: State, a: Action): State {
     }
     case "meta": return sameMeta(s.meta, a.meta) ? s : { ...s, meta: a.meta };
     case "context": {
+      if (!a.context) return s;
       const sessionTokens = typeof a.context.sessionTokens === "number"
         ? Math.max(0, a.context.sessionTokens)
         : s.sessionTokens;
@@ -513,11 +575,17 @@ async function refreshMetaForTab(tabId: string, dispatchTo: (tabId: string, acti
   }
 }
 
-export function useController() {
+export function useController(getProfile?: () => string) {
   const statesRef = useRef<TabStates>(new Map());
   const lastTokenAt = useRef(0);
   const [activeTabId, setActiveTabId] = useState<string | undefined>();
   const activeTabIdRef = useRef<string | undefined>(undefined);
+  // Read the active product profile ("dev"|"cowork") via the getter supplied by
+  // App — it mirrors the active tab's profile and is passed to backend calls
+  // (OpenProjectTab/OpenGlobalTab) that scope topics to a profile.
+  const profile = () => {
+    try { return getProfile?.() ?? ""; } catch { return ""; }
+  };
   // A render-triggering counter so that mutations to a non-active tab's state still
   // cause a re-render when that tab becomes active.
   const [, setVersion] = useState(0);
@@ -613,23 +681,17 @@ export function useController() {
     if (!tab) return;
     const local = statesRef.current.get(tabId);
     const needsInitialLoad = !local?.meta;
-    // If the frontend thinks a turn is still running but the backend says it's
-    // done, the turn_done event was missed (rare — Wails IPC is synchronous).
-    // We used to reset items and rebuild from history here, but that discards
-    // the streaming content the user already saw (thinking, tool calls). Instead,
-    // finalize the state in-place: mark running=false, stop streaming, keep all
-    // accumulated items. The turn_done handler in applyEvent already does the
-    // right thing (live→item, streaming→false), so if the event truly arrives
-    // later it's a harmless no-op on already-finalized state.
     const missedTurnDone = Boolean(local?.running && !tab.running);
+    // Expert-session tabs must always re-fetch meta on activation: the
+    // expertSession field (which selects ExpertSessionView vs Transcript and
+    // supplies the teamId) is populated from the backend's tab flags. A cached
+    // meta from before the controller was ready, or a meta whose expertSession
+    // was dropped by a stale sameMeta guard, would render the wrong view.
+    const isExpertTab = Boolean(tab.expertSession);
     dispatchTo(tabId, { type: "backend_status", running: Boolean(tab.running) });
-    if (needsInitialLoad) {
-      await loadSessionDataForTab(tabId);
+    if (needsInitialLoad || missedTurnDone || isExpertTab) {
+      await loadSessionDataForTab(tabId, missedTurnDone);
       return;
-    }
-    if (missedTurnDone) {
-      // Finalize in-place without discarding items — trust the accumulated state.
-      dispatchTo(tabId, { type: "event", e: { kind: "turn_done" } as WireEvent });
     }
     const [jobs, effort] = await Promise.all([
       app.JobsForTab(tabId).catch(() => undefined),
@@ -766,17 +828,21 @@ export function useController() {
     return undefined;
   }, [activeTabId, dispatchTo]);
 
-  const paused = activeState.paused ?? false;
-
-  const pauseToggle = useCallback(() => {
+  // pauseToggle flips between Pause and ResumeTurn based on current state. When
+  // the turn is running and not yet paused, it requests a pause (the agent
+  // finishes its current step, then freezes). When paused, it resumes. No-op
+  // when nothing is running. Reads stateRef so the callback identity is stable
+  // across renders (the Composer memoizes on it).
+  const pauseToggle = useCallback((): void => {
+    const cur = stateRef.current;
     const tabId = activeTabId;
-    if (!tabId) return;
-    if (paused) {
+    if (!tabId || !cur.running) return;
+    if (cur.paused) {
       app.ResumeTurnTab(tabId).catch(() => {});
     } else {
       app.PauseTab(tabId).catch(() => {});
     }
-  }, [activeTabId, paused]);
+  }, [activeTabId]);
 
   const approve = useCallback((id: string, allow: boolean, session: boolean, persist: boolean) => {
     if (!activeTabId) return;
@@ -788,13 +854,6 @@ export function useController() {
     if (!activeTabId) return;
     dispatchTo(activeTabId, { type: "clearAsk" });
     app.AnswerQuestionForTab(activeTabId, id, answers).catch(() => {});
-  }, [activeTabId, dispatchTo]);
-
-  const setControllerMode = useCallback((mode: Mode): Promise<void> => {
-    if (!activeTabId) return Promise.resolve();
-    return app.SetModeForTab(activeTabId, mode).then(() => {
-      if (modeHasAutoApproveTools(mode) && activeTabId) dispatchTo(activeTabId, { type: "clearApproval" });
-    }).catch(() => {});
   }, [activeTabId, dispatchTo]);
 
   const setCollaborationMode = useCallback(async (mode: CollaborationMode): Promise<void> => {
@@ -908,12 +967,7 @@ export function useController() {
 
   const setEffort = useCallback(async (level: string) => {
     if (!activeTabId) return;
-    try {
-      await app.SetEffortForTab(activeTabId, level);
-    } catch (err) {
-      dispatchTo(activeTabId, { type: "local_notice", level: "warn", text: t("status.effortSwitchFailed", { err: errorMessage(err) }) });
-      return;
-    }
+    await app.SetEffortForTab(activeTabId, level).catch(() => {});
     try {
       dispatchTo(activeTabId, { type: "meta", meta: await app.MetaForTab(activeTabId) });
       dispatchTo(activeTabId, { type: "context", context: await app.ContextUsageForTab(activeTabId) });
@@ -965,6 +1019,19 @@ export function useController() {
     }
   }, [activeTabId, dispatchTo, loadSessionDataForTab, syncActiveTabFromBackend, waitForTabReady]);
 
+  // deleteExpertCollab removes the Nth expert-collab message from the active
+  // tab's session and re-renders from the refreshed history. Mirrors rewind's
+  // call-then-history-dispatch flow but without the checkpoint/notice ceremony.
+  const deleteExpertCollab = useCallback(async (ordinal: number) => {
+    const sourceTabId = activeTabId;
+    if (!sourceTabId) return;
+    try {
+      const messages = asArray(await app.DeleteExpertCollab(sourceTabId, ordinal));
+      dispatchTo(sourceTabId, { type: "reset" });
+      if (messages.length) dispatchTo(sourceTabId, { type: "history", messages });
+    } catch { /* the card stays; a failure here is rare and silent */ }
+  }, [activeTabId, dispatchTo]);
+
   // Tab management: switch preserves per-tab state; open creates it.
   const switchTab = useCallback(async (tabId: string) => {
     setActiveTabId(tabId);
@@ -975,23 +1042,23 @@ export function useController() {
   }, [reconcileTabRuntime]);
 
   const openProjectTab = useCallback(async (workspaceRoot: string, topicId: string): Promise<TabMeta> => {
-    const meta = await app.OpenProjectTab(workspaceRoot, topicId);
+    const meta = await app.OpenProjectTab(workspaceRoot, topicId, profile());
     setActiveTabId(meta.id);
     await loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id));
     return meta;
-  }, [loadSessionDataForTab]);
+  }, [loadSessionDataForTab, getProfile]);
 
   const openGlobalTab = useCallback(async (topicId: string): Promise<TabMeta> => {
-    const meta = await app.OpenGlobalTab(topicId);
+    const meta = await app.OpenGlobalTab(topicId, profile());
     setActiveTabId(meta.id);
     await loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id));
     return meta;
-  }, [loadSessionDataForTab]);
+  }, [loadSessionDataForTab, getProfile]);
 
   // Ensure a blank tab exists for the given scope — reuses an existing one
   // or creates a new tab, then loads its session data.
-  const ensureBlankTab = useCallback(async (scope: string, workspaceRoot: string): Promise<TabMeta> => {
-    const meta = await app.EnsureBlankTab(scope, workspaceRoot);
+  const ensureBlankTab = useCallback(async (scope: string, workspaceRoot: string, profile?: string): Promise<TabMeta> => {
+    const meta = await app.EnsureBlankTab(scope, workspaceRoot, profile ?? "");
     setActiveTabId(meta.id);
     await loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id));
     return meta;
@@ -1015,9 +1082,9 @@ export function useController() {
   return {
     state: activeState,
     activeTabId,
-    send, runShell, steer, notice, cancel, pauseToggle, paused, approve, answerQuestion, setControllerMode, setCollaborationMode, setToolApprovalMode, setGoal, clearGoal,
+    send, runShell, steer, notice, cancel, pauseToggle, approve, answerQuestion, setCollaborationMode, setToolApprovalMode, setGoal, clearGoal,
     newSession, clearSession, listSessions, listTrashedSessions, resumeSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession,
-    refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, setModel, setEffort,
+    refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, deleteExpertCollab, setModel, setEffort,
     fetchMemory, remember, forget, saveDoc,
     switchTab, openProjectTab, openGlobalTab, ensureBlankTab, closeTab, reorderTabs,
     syncActiveTab: syncActiveTabFromBackend,

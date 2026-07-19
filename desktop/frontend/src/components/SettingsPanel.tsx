@@ -20,7 +20,7 @@ import {
 import { TEXT_SIZES, applyTextSize, getTextSize, type TextSize } from "../lib/textSize";
 import { FONT_FAMILIES, applyFontFamily, getFontFamily, type FontFamily } from "../lib/fontFamily";
 import { getDisplayMode, onDisplayModeChange, setDisplayMode as setLocalDisplayMode } from "../lib/displayMode";
-import type { BotConnectionView, BotInstallStartResult, BotSettingsView, HookConfigView, HooksSettingsView, NetworkView, ProviderView, SettingsTab, SettingsView } from "../lib/types";
+import type { BotConnectionView, BotInstallStartResult, BotSettingsView, HookConfigView, HooksSettingsView, MailProbeResult, NetworkView, ProviderView, SettingsTab, SettingsView } from "../lib/types";
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { Tooltip } from "./Tooltip";
 import { AnchoredPopover } from "./AnchoredPopover";
@@ -170,7 +170,6 @@ export function SettingsPanel({ onClose, onChanged, initialTab, initialPayload }
                       configPath={s.configPath}
                       checkUpdates={s.checkUpdates}
                       telemetry={s.telemetry !== false}
-                      metrics={s.metrics === true}
                       settingsBusy={busy}
                       applySettings={apply}
                     />
@@ -326,6 +325,8 @@ function settingsTabLabel(id: SettingsTab, t: ReturnType<typeof useT>): string {
       return t("settings.tab.updates");
     case "cowork":
       return t("settings.tab.cowork");
+    default:
+      return id;
   }
 }
 
@@ -359,6 +360,8 @@ function settingsTabMeta(id: SettingsTab, s: SettingsView, t: ReturnType<typeof 
       return t("settings.updatesMeta");
     case "cowork":
       return t("settings.tabSub.cowork");
+    default:
+      return "";
   }
 }
 
@@ -423,19 +426,6 @@ const COMMON_PROVIDER_PRESETS: { label: string; baseUrl: string; context: number
   { label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", context: 200000 },
 ];
 
-// COMMON_MAIL_PRESETS are one-click mail-provider shortcuts: picking one fills
-// SMTP + IMAP host/port/encryption so the user only has to type account + auth
-// code. useTLS=true means implicit TLS (port 465); false means STARTTLS (587).
-type MailPreset = {
-  label: string;
-  host: string; port: number; useTLS: boolean;        // SMTP
-  imapHost?: string; imapPort?: number;                // IMAP for the same provider
-  note?: string;                                        // one-line help shown when selected
-};
-const COMMON_MAIL_PRESETS: MailPreset[] = [
-  { label: "139邮箱", host: "smtp.139.com",       port: 465, useTLS: true,  imapHost: "imap.139.com",       imapPort: 993,
-    note: "服务器已按 139 默认配置（smtp.139.com:465 / imap.139.com:993）。授权码请登录 mail.10086.cn → 设置 → 邮箱协议设置 → 开启 IMAP/SMTP 服务 获取（非登录密码）" },
-];
 const PROXY_TYPES = ["http", "https", "socks5", "socks5h"] as const;
 const LANGUAGE_PREFS: LangPref[] = ["", "zh", "en"];
 const AUTO_PLAN_MODES = ["off", "on"] as const;
@@ -581,8 +571,7 @@ function normalizeSettingsView(view: SettingsView | null | undefined): SettingsV
     noProxy: "",
     proxy: { type: "socks5", server: "", port: 0, username: "", password: "" },
   };
-  const agent = view.agent ?? { temperature: 0, maxSteps: 0, plannerMaxSteps: 12, systemPrompt: "" };
-  agent.plannerMaxSteps = Number.isFinite(agent.plannerMaxSteps) ? Math.max(0, Math.trunc(agent.plannerMaxSteps)) : 12;
+  const agent = view.agent ?? { temperature: 0, maxSteps: 0, systemPrompt: "" };
   agent.maxSteps = Number.isFinite(agent.maxSteps) ? Math.max(0, Math.trunc(agent.maxSteps)) : 0;
   return {
     ...view,
@@ -1948,23 +1937,33 @@ function sanitizeBotDraft(draft: BotSettingsView): BotSettingsView {
 function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) {
   const t = useT();
   const [subtab, setSubtab] = useState<"usage" | "access">("usage");
+  const [jiutianDomain, setJiutianDomain] = useState("");
+  useEffect(() => {
+    app.GetJiutianBaseDomain().then(setJiutianDomain).catch(() => {});
+  }, []);
   const autoRefreshKeyRef = useRef("");
   const refs = allRefs(s);
   const defaultRef = toRef(s.defaultModel, s);
-  const plannerRef = toRef(s.plannerModel, s);
+  const fastTaskRef = toRef(s.fastTaskModel, s);
   const subagentRef = toRef(s.subagentModel, s);
-  const plannerSelectRef = plannerRef === defaultRef ? "" : plannerRef;
+  const fastTaskSelectRef = fastTaskRef === defaultRef ? "" : fastTaskRef;
   const [defaultProvider, defaultModel] = defaultRef.split("/");
   const defaultProviderView = s.providers.find((p) => p.name === defaultProvider);
   const currentModelLabel = defaultModel || defaultRef || t("common.none");
   const providerLabel = defaultProvider ? modelProviderLabel(defaultProvider, defaultProviderView, t) : t("common.none");
-  const plannerLabel = plannerSelectRef || t("settings.plannerNone");
   const keyStatusLabel = defaultProviderView?.keySet ? t("settings.keySet") : t("settings.noKey");
-  const agent = s.agent ?? { temperature: 0, maxSteps: 0, plannerMaxSteps: 12, systemPrompt: "", rpm: 0 };
-  const setAgentSteps = (maxSteps: number, plannerMaxSteps: number) => (
-    app.SetAgentParams(agent.temperature, maxSteps, plannerMaxSteps, agent.systemPrompt)
+  const agent = s.agent ?? { temperature: 0, maxSteps: 0, systemPrompt: "", rpm: 0 };
+  const setAgentSteps = (maxSteps: number) => (
+    app.SetAgentParams(agent.temperature, maxSteps, 0, agent.systemPrompt)
   );
-  const setRPM = (rpm: number) => app.SetRPM(rpm);
+  const setRPM = (rpm: number) => {
+    // Clamp before sending to the backend: negative values disable (0), and
+    // absurdly large values are capped to a sane single-key ceiling. 0 means
+    // unlimited and is preserved. The backend accepts any int but a runaway
+    // value would effectively disable limiting without any indication.
+    const clamped = Number.isFinite(rpm) && rpm > 0 ? Math.min(Math.trunc(rpm), 600) : 0;
+    return app.SetRPM(clamped);
+  };
 
   useEffect(() => {
     if (subtab !== "usage") return;
@@ -2033,14 +2032,48 @@ function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) 
               />
             </SettingsField>
 
-            <SettingsField label={t("settings.plannerModel")}>
+            <SettingsField label={"模型域名"}>
+              <input
+                className="mem-input"
+                placeholder={t("settings.jiutianDomainHint")}
+                value={jiutianDomain}
+                onChange={e => setJiutianDomain(e.target.value)}
+                onBlur={() => void app.SetJiutianBaseDomain(jiutianDomain)}
+                onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              />
+            </SettingsField>
+
+            <SettingsField label={t("settings.screenshotVlmLabel")} hint={t("settings.screenshotVlmHint")}>
+              <SimpleSelect
+                value={s.cowork?.screenshotVlmModel || "qwen/qwen3.6-27b"}
+                disabled={busy}
+                options={[
+                  { value: "qwen/qwen3.6-27b", label: `qwen/qwen3.6-27b — ${t("settings.screenshotVlmLight")}` },
+                  { value: "qwen/qwen3.5-397b-a17b", label: `qwen/qwen3.5-397b-a17b — ${t("settings.screenshotVlmStrong")}` },
+                ]}
+                onChange={(vlm) => {
+                  const base = s.cowork ?? {
+                    browserPath: "", embeddingModel: "",
+                    pptActiveTemplate: "", pptTemplates: [], pptTemplateDir: "",
+                    smtpPassword: "", imapPassword: "", smtpPasswordSet: false, imapPasswordSet: false, detectedBrowser: "",
+                    screenshotEnabled: false, screenshotHotkey: "Ctrl+Shift+S", screenshotVlmModel: "qwen/qwen3.6-27b",
+                    estopHotkey: "Ctrl+Shift+Pause",
+                  };
+                  void apply(() => app.SetCoWorkSettings({ ...base, screenshotVlmModel: vlm } as any));
+                }}
+              />
+            </SettingsField>
+
+            <SettingsField label={t("settings.fastTaskModel")}>
               <ModelPicker
                 s={s}
                 refs={refs}
-                value={plannerSelectRef}
+                value={fastTaskSelectRef}
                 disabled={busy}
                 includeSameDefault
-                onPick={(ref) => void apply(() => app.SetPlannerModel(ref))}
+                emptyOptionLabel={t("settings.fastTaskNone")}
+                emptyOptionHint={t("settings.fastTaskNoneHintShort")}
+                onPick={(ref) => void apply(() => app.SetFastTaskModel(ref))}
               />
             </SettingsField>
 
@@ -2057,19 +2090,15 @@ function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) 
             </SettingsField>
 
             <SettingsField label={t("settings.subagentEffort")} hint={t("settings.subagentHint")}>
-              <select
-                className="mem-select set-grow"
+              <SimpleSelect
                 value={s.subagentEffort || ""}
                 disabled={busy}
-                onChange={(e) => void apply(() => app.SetSubagentEffort(e.target.value))}
-              >
-                <option value="">{t("settings.subagentEffortDefault")}</option>
-                {EFFORT_PRESETS.map((level) => (
-                  <option key={level} value={level}>
-                    {effortLabel(level, t)}
-                  </option>
-                ))}
-              </select>
+                options={[
+                  { value: "", label: t("settings.subagentEffortDefault") },
+                  ...EFFORT_PRESETS.map((level) => ({ value: level, label: effortLabel(level, t) })),
+                ]}
+                onChange={(v) => void apply(() => app.SetSubagentEffort(v))}
+              />
             </SettingsField>
 
             <div className="settings-model-current" aria-label={t("settings.modelCurrentStatus")}>
@@ -2079,7 +2108,7 @@ function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) 
               </div>
               <div className="settings-model-current__meta">
                 <span>{providerLabel}</span>
-                <span>{plannerLabel}</span>
+                <span>{fastTaskSelectRef || t("settings.fastTaskNone")}</span>
                 <span>{keyStatusLabel}</span>
               </div>
             </div>
@@ -2090,15 +2119,7 @@ function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) 
                 value={agent.maxSteps}
                 presets={[0, 10, 25, 50]}
                 busy={busy}
-                onChange={(next) => void apply(() => setAgentSteps(next, agent.plannerMaxSteps))}
-              />
-            </SettingsField>
-            <SettingsField label={t("settings.plannerMaxSteps")} hint={plannerSelectRef ? t("settings.plannerMaxStepsHint") : t("settings.plannerMaxStepsDisabledHint")}>
-              <StepLimitControl
-                value={agent.plannerMaxSteps}
-                presets={[6, 12, 25, 0]}
-                busy={busy}
-                onChange={(next) => void apply(() => setAgentSteps(agent.maxSteps, next))}
+                onChange={(next) => void apply(() => setAgentSteps(next))}
               />
             </SettingsField>
           </SettingsSection>
@@ -2106,7 +2127,7 @@ function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) 
             <SettingsField label={t("settings.rpmLimit")} hint={t("settings.rpmLimitHint")}>
               <StepLimitControl
                 value={agent.rpm}
-                presets={[5, 10, 25, 0]}
+                presets={[5, 20, 60, 180, 0]}
                 busy={busy}
                 onChange={(next) => void apply(() => setRPM(next))}
               />
@@ -2212,9 +2233,9 @@ function ModelPicker({
   const [query, setQuery] = useState("");
   const triggerRef = useRef<HTMLButtonElement>(null);
   const q = query.trim().toLowerCase();
-  const emptyLabel = includeSameDefault ? t("settings.plannerNone") : emptyOptionLabel;
-  const emptyHint = includeSameDefault ? t("settings.plannerNoneHint") : emptyOptionHint;
-  const emptyMeta = includeSameDefault ? t("settings.plannerNoneHintShort") : emptyOptionHint;
+  const emptyLabel = includeSameDefault ? t("settings.fastTaskNone") : emptyOptionLabel;
+  const emptyHint = includeSameDefault ? t("settings.fastTaskNoneHint") : emptyOptionHint;
+  const emptyMeta = includeSameDefault ? t("settings.fastTaskNoneHintShort") : emptyOptionHint;
   const selected = refs.includes(value) ? modelOptionFromRef(value, s) : null;
   const selectedLabel = value === "" && emptyLabel
     ? emptyLabel
@@ -2386,6 +2407,68 @@ function uniqueModelOptions(options: ModelPickerOption[]): ModelPickerOption[] {
   return out;
 }
 
+// SimpleSelect is a styled dropdown that matches ModelPicker's visual appearance
+// but without search or provider grouping. Used for fixed-option selects like
+// VLM model and subagent effort.
+function SimpleSelect({
+  value,
+  options,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  options: { value: string; label: string }[];
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const selected = options.find((o) => o.value === value);
+
+  return (
+    <div className="settings-model-picker">
+      <button
+        ref={triggerRef}
+        type="button"
+        className="settings-model-picker__trigger"
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((next) => !next)}
+      >
+        <span className="settings-model-picker__selected">
+          <span>{selected?.label || value}</span>
+        </span>
+        <ChevronDown size={16} className={`settings-model-picker__chev${open ? " settings-model-picker__chev--open" : ""}`} />
+      </button>
+      <AnchoredPopover
+        open={open && !disabled}
+        anchorRef={triggerRef}
+        onClose={() => setOpen(false)}
+        className="settings-model-picker__menu"
+        placement="bottom"
+        style={{ width: triggerRef.current?.getBoundingClientRect().width }}
+      >
+        <div className="settings-model-picker__list" role="listbox">
+          {options.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              role="option"
+              aria-selected={opt.value === value}
+              className={`settings-model-picker__option${opt.value === value ? " settings-model-picker__option--selected" : ""}`}
+              onClick={() => { setOpen(false); if (opt.value !== value) onChange(opt.value); }}
+            >
+              <span><strong>{opt.label}</strong></span>
+              {opt.value === value && <Check size={14} />}
+            </button>
+          ))}
+        </div>
+      </AnchoredPopover>
+    </div>
+  );
+}
+
 function sameStringList(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
   return a.every((value, i) => value === b[i]);
@@ -2442,7 +2525,6 @@ function JiutianSection() {
   if (!jiutian) return null;
 
   const fields: Array<{ key: keyof typeof jiutian; labelKey: DictKey; hintKey: DictKey; toolName: string }> = [
-    { key: "imageUnderstand", labelKey: "settings.jiutianImageUnderstand", hintKey: "settings.jiutianImageUnderstandHint", toolName: "image_understand" },
     { key: "imageGenerate",   labelKey: "settings.jiutianImageGenerate",   hintKey: "settings.jiutianImageGenerateHint",   toolName: "image_generate" },
     { key: "videoUnderstand", labelKey: "settings.jiutianVideoUnderstand", hintKey: "settings.jiutianVideoUnderstandHint", toolName: "video_understand" },
   ];
@@ -4019,14 +4101,12 @@ function UpdatesSection({
   configPath,
   checkUpdates,
   telemetry,
-  metrics,
   settingsBusy,
   applySettings,
 }: {
   configPath: string;
   checkUpdates: boolean;
   telemetry: boolean;
-  metrics: boolean;
   settingsBusy: boolean;
   applySettings: (fn: () => Promise<void>) => Promise<void>;
 }) {
@@ -4062,17 +4142,6 @@ function UpdatesSection({
           value={telemetry}
           disabled={settingsBusy}
           onChange={(enabled) => void applySettings(() => app.SetDesktopTelemetry(enabled))}
-        />
-      </SettingsField>
-      <SettingsField
-        className="settings-field--wide-copy"
-        label={t("settings.metricsLabel")}
-        hint={t("settings.metricsHint")}
-      >
-        <ToggleSegment
-          value={metrics}
-          disabled={settingsBusy}
-          onChange={(enabled) => void applySettings(() => app.SetDesktopMetrics(enabled))}
         />
       </SettingsField>
       <SettingsField label={t("updater.currentVersion", { v: version || "…" })}>
@@ -4122,12 +4191,17 @@ function OptionalModule({
   enabled,
   onToggle,
   children,
+  statusDot,
 }: {
   title: string;
   description: string;
   enabled: boolean;
   onToggle: (v: boolean) => void;
   children: ReactNode;
+  // statusDot overrides the default "configured" dot. When provided (e.g. the
+  // mail card's live green/red connection indicator), it replaces the orange
+  // dot entirely; the default dot still applies to other cards.
+  statusDot?: ReactNode;
 }) {
   // The switch toggles the config panel open/closed. `enabled` (derived from
   // whether the module has been configured) only drives the switch's checked
@@ -4144,7 +4218,7 @@ function OptionalModule({
         <div className="optional-module__copy">
           <div className="optional-module__title">
             {title}
-            {enabled && <span className="optional-module__configured-dot" title="" />}
+            {statusDot ?? (enabled && <span className="optional-module__configured-dot" title="" />)}
           </div>
           <div className="optional-module__desc">{description}</div>
         </div>
@@ -4209,11 +4283,63 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
   const [browserDetecting, setBrowserDetecting] = useState(false);
   const [recordingHotkey, setRecordingHotkey] = useState(false);
   const [recordingEStopHotkey, setRecordingEStopHotkey] = useState(false);
+  // Mail connection status: probed after the user saves the mailbox config.
+  // "idle" = not yet probed; "checking" = probe in flight; "ok" = IMAP login
+  // succeeded; "error" = connection/auth failed. Drives the green/red dot on
+  // the mail card title. Not polled — one probe per save.
+  const [mailStatus, setMailStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
+  const [mailMessage, setMailMessage] = useState("");
 
-  const isDirty = JSON.stringify(draft) !== JSON.stringify(s.cowork ?? {});
+  // commitDraft persists the current draft to the backend, but only when it
+  // actually changed — so a blur with no edits is a no-op (no needless writes,
+  // no spinner flicker). This replaces the old bottom "保存" button: every
+  // control now saves on its own natural event (toggle/blur/enter), so there's
+  // no global submit step.
+  const commitDraft = (next: typeof draft) => {
+    if (JSON.stringify(next) === JSON.stringify(s.cowork ?? {})) return;
+    void apply(() => app.SetCoWorkSettings(next));
+  };
+  // commitCurrent is the convenience form for input onBlur/onEnter handlers
+  // that just flush whatever is in draft right now.
+  const commitCurrent = () => commitDraft(draft);
 
-  const handleSave = () => {
-    void apply(() => app.SetCoWorkSettings(draft));
+  // probeMail tests the saved mailbox's IMAP login and updates the status dot.
+  // Called after the user saves the mail account/auth-code (the only moment the
+  // connection could have changed). Skips when no mailbox is configured (e.g.
+  // the user just toggled mail off) so we don't probe a non-existent account.
+  const probeMail = async () => {
+    if (!draft.smtp?.username && !draft.imap?.host) {
+      setMailStatus("idle");
+      return;
+    }
+    setMailStatus("checking");
+    try {
+      const r: MailProbeResult = await app.ProbeMailAccount();
+      if (r.status === "unconfigured") {
+        setMailStatus("idle");
+      } else if (r.ok) {
+        setMailStatus("ok");
+        setMailMessage(r.message || "连接正常");
+      } else {
+        setMailStatus("error");
+        setMailMessage(r.message || "连接失败");
+      }
+    } catch {
+      // ProbeMailAccount resolves rather than rejects on failure, but defend
+      // against a transport error so the dot doesn't get stuck on "checking".
+      setMailStatus("error");
+      setMailMessage("检测请求失败");
+    }
+  };
+  // commitMailThenProbe: flush the draft to the backend (awaiting persistence),
+  // THEN probe — so the probe reads the just-saved config, not a stale one.
+  // Used by the mail account/auth-code onBlur so the green/red dot reflects the
+  // value the user actually committed.
+  const commitMailThenProbe = async () => {
+    const next = draft;
+    if (JSON.stringify(next) === JSON.stringify(s.cowork ?? {})) return;
+    await apply(() => app.SetCoWorkSettings(next));
+    void probeMail();
   };
 
   const checkBrowser = async () => {
@@ -4223,22 +4349,23 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
       // into browserPath so the config actually persists — previously detection
       // only set the read-only detectedBrowser, which was never saved, so the
       // picked browser vanished on reopen. The user can still override by
-      // editing the path field directly.
+      // editing the path field directly. Detection persists immediately.
       const path = await app.CheckCoworkBrowser();
-      setDraft(d => ({
-        ...d,
-        detectedBrowser: browserDisplayName(path),
-        browserPath: path,
-      }));
+      setDraft(d => {
+        const next = {
+          ...d,
+          detectedBrowser: browserDisplayName(path),
+          browserPath: path,
+        };
+        commitDraft(next);
+        return next;
+      });
     } finally {
       setBrowserDetecting(false);
     }
   };
 
   const openTemplateDir = async () => {
-    // Best-effort: opening the folder failing isn't fatal; the wails call surfaces
-    // a clear error in the backend log. We don't have a per-section error sink
-    // here, so we just swallow it.
     try { await app.OpenPPTTemplateDir(); } catch { /* see backend log */ }
   };
 
@@ -4252,24 +4379,29 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
   const ragOn = !!draft.embeddingModel;
 
   // Toggle helpers: disabling clears related fields so the backend treats them
-  // as "not configured". Enabling just expands the card (user fills in values).
+  // as "not configured", and persists immediately (no save button). Enabling
+  // just expands the card (user fills in values, saved on blur/enter).
   const toggleBrowser = (on: boolean) => {
-    if (!on) setDraft(d => ({ ...d, browserPath: "", detectedBrowser: "" }));
+    if (!on) setDraft(d => { const n = { ...d, browserPath: "", detectedBrowser: "" }; commitDraft(n); return n; });
   };
   const togglePpt = (on: boolean) => {
-    if (!on) setDraft(d => ({ ...d, pptActiveTemplate: "" }));
+    if (!on) setDraft(d => { const n = { ...d, pptActiveTemplate: "" }; commitDraft(n); return n; });
   };
   // Disabling mail clears BOTH sides (SMTP + IMAP) since they're one mailbox.
   const toggleMail = (on: boolean) => {
-    if (!on) setDraft(d => ({
-      ...d,
-      smtp: { ...d.smtp, host: "", port: 0, from: "", username: "" },
-      imap: { ...d.imap, host: "", port: 0, username: "" },
-      smtpPassword: "", imapPassword: "",
-    }));
+    if (!on) setDraft(d => {
+      const n = {
+        ...d,
+        smtp: { ...d.smtp, host: "", port: 0, from: "", username: "" },
+        imap: { ...d.imap, host: "", port: 0, username: "" },
+        smtpPassword: "", imapPassword: "",
+      };
+      commitDraft(n);
+      return n;
+    });
   };
   const toggleRag = (on: boolean) => {
-    if (!on) setDraft(d => ({ ...d, embeddingModel: "" }));
+    if (!on) setDraft(d => { const n = { ...d, embeddingModel: "" }; commitDraft(n); return n; });
   };
 
   return (
@@ -4279,103 +4411,107 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
         {/* ── 浏览器自动化 ── */}
         <OptionalModule title={t("cowork.browser")} description={t("cowork.browserModDesc")} enabled={browserOn} onToggle={toggleBrowser}>
           <div className="optional-module__controls">
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-              <button className="btn btn--small" disabled={busy || browserDetecting} onClick={checkBrowser}>
+            <div className="set-input-browse">
+              <input
+                className="mem-input set-grow"
+                placeholder={t("cowork.browserPath")}
+                value={draft.browserPath}
+                onChange={e => setDraft({ ...draft, browserPath: e.target.value })}
+                onBlur={commitCurrent}
+                onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              />
+              <button
+                type="button"
+                className="btn btn--small set-input-browse__btn"
+                disabled={busy || browserDetecting}
+                onClick={checkBrowser}
+              >
                 {browserDetecting ? <Loader2 className="spinner" size={14} /> : t("cowork.browserDetect")}
               </button>
-              <span className="mem-hint" style={{ margin: 0 }}>
-                {draft.detectedBrowser ? t("cowork.browserDetected", { name: draft.detectedBrowser }) : t("cowork.browserHint")}
-              </span>
+              {draft.detectedBrowser && (
+                <span className="mem-hint" style={{ margin: 0, whiteSpace: "nowrap" }}>
+                  {t("cowork.browserDetected", { name: draft.detectedBrowser })}
+                </span>
+              )}
             </div>
-            <input
-              className="mem-input set-grow"
-              placeholder={t("cowork.browserPath")}
-              value={draft.browserPath}
-              onChange={e => setDraft({ ...draft, browserPath: e.target.value })}
-            />
           </div>
         </OptionalModule>
 
-        {/* ── PPT 模板（驱动可视化 CUA 生成）── */}
-        <OptionalModule title={t("cowork.ppt")} description="选择一个 PPT 模板，生成时基于它（母版+配色+版式坐标），多数步骤无需 VLM 感知，更快更准" enabled={pptOn} onToggle={togglePpt}>
+        {/* ── PPT 生成 ── */}
+        <OptionalModule title={t("cowork.ppt")} description="通过 SVG 路径生成专业 PPT，支持模板、多种布局、质量检查" enabled={pptOn} onToggle={togglePpt}>
           <div className="optional-module__controls">
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <div className="set-input-browse">
               <select
                 className="mem-input set-grow"
                 value={draft.pptActiveTemplate}
-                onChange={e => setDraft({ ...draft, pptActiveTemplate: e.target.value })}
+                onChange={e => setDraft(d => { const n = { ...d, pptActiveTemplate: e.target.value }; commitDraft(n); return n; })}
               >
                 <option value="">— 选择模板 —</option>
                 {(draft.pptTemplates ?? []).map(tpl => (
                   <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
                 ))}
               </select>
-              <button className="btn btn--small" disabled={busy} onClick={() => void openTemplateDir()}>
+              <button
+                type="button"
+                className="btn btn--small set-input-browse__btn"
+                disabled={busy}
+                onClick={() => void openTemplateDir()}
+              >
                 打开模板目录
               </button>
             </div>
-            <span className="mem-hint">
-              {(draft.pptTemplates ?? []).length > 0
-                ? `共 ${(draft.pptTemplates ?? []).length} 个模板`
-                : "模板目录为空，点开目录添加 JSON 模板"}
-            </span>
-          </div>
-          {draft.pptTemplateDir && (
-            <div className="mem-hint" style={{ marginTop: 4, wordBreak: "break-all" }}>
-              模板目录：{draft.pptTemplateDir}
+            <div style={{ marginTop: "12px" }}>
+              <label style={{ fontSize: "12px", color: "#666", marginBottom: "4px", display: "block" }}>生成模式</label>
+              <select
+                className="mem-input"
+                value={draft.pptMode || "fast"}
+                onChange={e => setDraft(d => { const n = { ...d, pptMode: e.target.value }; commitDraft(n); return n; })}
+                style={{ width: "100%" }}
+              >
+                <option value="fast">快速模式（一次生成，不返工）</option>
+                <option value="validate">校验模式（生成后检查，有问题返工）</option>
+              </select>
             </div>
-          )}
+          </div>
         </OptionalModule>
 
         {/* ── 邮箱（139 收发一体）── */}
-        <OptionalModule title={t("cowork.mail")} description={t("cowork.mailModDesc")} enabled={mailOn} onToggle={toggleMail}>
+        <OptionalModule
+          title={t("cowork.mail")}
+          description={t("cowork.mailModDesc")}
+          enabled={mailOn}
+          onToggle={toggleMail}
+          statusDot={mailOn ? (
+            <span
+              className={"mail-status-dot mail-status-dot--" + mailStatus}
+              title={mailStatus === "error" ? mailMessage : (mailStatus === "ok" ? "连接正常" : "")}
+            />
+          ) : undefined}
+        >
           <div className="optional-module__controls">
-            <div className="provider-presets mail-presets">
-              {COMMON_MAIL_PRESETS.map((preset) => (
-                <button
-                  key={preset.label}
-                  type="button"
-                  className={"mail-preset" + (draft.smtp?.host === preset.host ? " mail-preset--on" : "")}
-                  onClick={() => setDraft({
-                    ...draft,
-                    smtp: { ...draft.smtp!, host: preset.host, port: preset.port, useTLS: preset.useTLS, encryptionMode: preset.useTLS ? "tls" : "starttls" },
-                    imap: { ...draft.imap!, host: preset.imapHost ?? draft.imap?.host ?? "", port: preset.imapPort ?? draft.imap?.port ?? 0 },
-                  })}
-                >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
-            {(() => {
-              const sel = COMMON_MAIL_PRESETS.find(p => p.host === draft.smtp?.host);
-              return sel?.note ? (
-                <div className="mail-note"><span className="mail-note__icon" aria-hidden>ⓘ</span><span>{sel.note}</span></div>
-              ) : null;
-            })()}
-            {/* The account (邮箱地址) + auth code (授权码) are the only two
-                things a user fills in. Both write to SMTP and IMAP at once,
-                since 139 uses one mailbox for send + read. Host/port/
-                encryption stay in draft (so they save) but are fixed by the
-                preset and not exposed. */}
-            <label className="mail-field">
-              <span className="mail-field__label">{t("cowork.mailAccount")}</span>
+            {/* 139 is the only provider and is pre-filled by default, so there's
+                no provider picker and no separate hint — the auth-code pointer
+                lives in the description above. Host/port/encryption are fixed in
+                draft (never surfaced), matching the sibling cards' simplicity. */}
+            <div style={{ display: "flex", gap: "8px" }}>
               <input
                 className="mem-input set-grow"
                 placeholder={t("cowork.mailAccount")}
                 value={draft.smtp?.username || ""}
                 onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, username: e.target.value, from: e.target.value }, imap: { ...draft.imap!, username: e.target.value } })}
+                onBlur={() => void commitMailThenProbe()}
+                onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
               />
-            </label>
-            <label className="mail-field">
-              <span className="mail-field__label">{t("cowork.mailAuthCode")}</span>
               <input
                 className="mem-input set-grow"
                 type="password"
                 placeholder={draft.smtpPasswordSet ? t("cowork.secretSet") : t("cowork.mailAuthCode")}
                 value={draft.smtpPassword || ""}
                 onChange={e => setDraft({ ...draft, smtpPassword: e.target.value, imapPassword: e.target.value })}
+                onBlur={() => void commitMailThenProbe()}
+                onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
               />
-            </label>
+            </div>
           </div>
         </OptionalModule>
 
@@ -4388,6 +4524,8 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
               placeholder={t("cowork.ragModel")}
               value={draft.embeddingModel}
               onChange={e => setDraft({ ...draft, embeddingModel: e.target.value })}
+              onBlur={commitCurrent}
+              onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
             />
           </div>
         </OptionalModule>
@@ -4401,7 +4539,7 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
             <input
               type="checkbox"
               checked={draft.screenshotEnabled ?? false}
-              onChange={e => setDraft({ ...draft, screenshotEnabled: e.target.checked })}
+              onChange={e => setDraft(d => { const n = { ...d, screenshotEnabled: e.target.checked }; commitDraft(n); return n; })}
             />
             <span className="cap-switch__track" />
           </label>
@@ -4425,10 +4563,10 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
                 if (e.metaKey) parts.push(e.metaKey ? "Win" : "");
                 const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
                 parts.push(key);
-                setDraft({ ...draft, screenshotHotkey: parts.filter(Boolean).join("+") });
+                setDraft(d => { const n = { ...d, screenshotHotkey: parts.filter(Boolean).join("+") }; commitDraft(n); return n; });
                 setRecordingHotkey(false);
               }}
-              onBlur={() => recordingHotkey && setRecordingHotkey(false)}
+              onBlur={() => { if (recordingHotkey) setRecordingHotkey(false); else commitCurrent(); }}
               onChange={e => !recordingHotkey && setDraft({ ...draft, screenshotHotkey: e.target.value })}
             />
             <button
@@ -4439,16 +4577,6 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
               {recordingHotkey ? "Esc" : t("settings.hotkeyRecordBtn")}
             </button>
           </div>
-        </SettingsField>
-        <SettingsField label={t("settings.screenshotVlmLabel")} hint={t("settings.screenshotVlmHint")}>
-          <select
-            className="mem-input"
-            value={draft.screenshotVlmModel ?? "qwen/qwen3.6-27b"}
-            onChange={e => setDraft({ ...draft, screenshotVlmModel: e.target.value })}
-          >
-            <option value="qwen/qwen3.6-27b">qwen/qwen3.6-27b — {t("settings.screenshotVlmLight")}</option>
-            <option value="qwen/qwen3.5-397b-a17b">qwen/qwen3.5-397b-a17b — {t("settings.screenshotVlmStrong")}</option>
-          </select>
         </SettingsField>
       </SettingsSection>
 
@@ -4473,10 +4601,10 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
                 if (e.metaKey) parts.push(e.metaKey ? "Win" : "");
                 const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
                 parts.push(key);
-                setDraft({ ...draft, estopHotkey: parts.filter(Boolean).join("+") });
+                setDraft(d => { const n = { ...d, estopHotkey: parts.filter(Boolean).join("+") }; commitDraft(n); return n; });
                 setRecordingEStopHotkey(false);
               }}
-              onBlur={() => recordingEStopHotkey && setRecordingEStopHotkey(false)}
+              onBlur={() => { if (recordingEStopHotkey) setRecordingEStopHotkey(false); else commitCurrent(); }}
               onChange={e => !recordingEStopHotkey && setDraft({ ...draft, estopHotkey: e.target.value })}
             />
             <button
@@ -4488,17 +4616,6 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
             </button>
           </div>
         </SettingsField>
-
-        <div style={{ marginTop: "16px" }}>
-          <button
-            type="button"
-            className="btn btn--primary btn--small"
-            disabled={!isDirty || busy}
-            onClick={handleSave}
-          >
-            {t("cowork.save")}
-          </button>
-        </div>
       </SettingsSection>
     </>
   );

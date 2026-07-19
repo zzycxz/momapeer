@@ -17,8 +17,13 @@ interface ProjectTreeProps {
   activeScope?: string;
   activeWorkspaceRoot?: string;
   activeTopicId?: string;
+  // The active product profile ("dev"|"cowork"); scopes ListProjectTree/
+  // CreateTopic/ReorderProjects to the profile so each profile shows its own
+  // project/topic set.
+  profile?: string;
   imTopicSources?: Record<string, ProjectTreeImTopicSource>;
   onOpenTopic: (scope: string, workspaceRoot: string, topicId: string) => Promise<void> | void;
+  onOpenExpertSession?: (teamId: string, teamName: string) => Promise<void> | void;
   onOpenProjectHistory: (scope: "global" | "project", workspaceRoot: string) => Promise<void> | void;
   onAddProject: () => Promise<void>;
   onCreateTopic?: (scope: string, workspaceRoot: string) => Promise<void> | void;
@@ -124,7 +129,7 @@ function collapsibleFolderKeys(nodes: ProjectNode[], depth = 0): string[] {
   for (const node of nodes) {
     if (!node) continue;
     const children = asArray(node.children);
-    if ((node.kind === "project" || node.kind === "global_folder") && children.length > 0) {
+    if ((node.kind === "project" || node.kind === "global_folder" || node.kind === "expert_folder") && children.length > 0) {
       keys.push(projectNodeKey(node, depth));
     }
     keys.push(...collapsibleFolderKeys(children, depth + 1));
@@ -199,8 +204,10 @@ export function ProjectTree({
   activeScope,
   activeWorkspaceRoot,
   activeTopicId,
+  profile = "",
   imTopicSources = {},
   onOpenTopic,
+  onOpenExpertSession,
   onOpenProjectHistory,
   onAddProject,
   onCreateTopic,
@@ -249,8 +256,27 @@ export function ProjectTree({
 
   const refresh = useCallback(async () => {
     try {
-      const nodes = await app.ListProjectTree();
-      const list = asArray(nodes);
+      const nodes = await app.ListProjectTree(profile);
+      let list = asArray(nodes);
+      
+      // In Cowork mode, hide empty sessions ("新的会话" / "新建日程") to avoid sidebar clutter
+      if (profile === "cowork") {
+        const filterEmpty = (items: ProjectNode[]): ProjectNode[] => {
+          return items.filter(node => {
+            if ((node.kind === "topic" || node.kind === "global_topic") && 
+                (!node.turns || node.turns === 0) &&
+                (node.label === "新的会话" || node.label === t("mock.newSession") || node.label === "新的日程" || node.label === t("cowork.newTask"))) {
+              return false;
+            }
+            if (node.children) {
+              node.children = filterEmpty(asArray(node.children));
+            }
+            return true;
+          });
+        };
+        list = filterEmpty(list);
+      }
+
       setTree(list);
       setExpanded((prev) => {
         const next = new Set(prev);
@@ -263,7 +289,7 @@ export function ProjectTree({
     } catch {
       /* bridge unavailable */
     }
-  }, []);
+  }, [profile, t]);
 
   useEffect(() => {
     manuallyCollapsedRef.current = manuallyCollapsed;
@@ -388,7 +414,7 @@ export function ProjectTree({
         await onTopicsChanged?.();
         return;
       }
-      const topic = await app.CreateTopic(scope, workspaceRoot, "");
+      const topic = await app.CreateTopic(scope, workspaceRoot, profile, "");
       await refresh();
       await onTopicsChanged?.();
       await onOpenTopic(scope, workspaceRoot, topic.id);
@@ -447,6 +473,23 @@ export function ProjectTree({
   const trashTopic = async (topicId: string) => {
     try {
       await app.TrashTopic(topicId);
+      setMenuTopic(null);
+      setMenuPoint(null);
+      setConfirmAction(null);
+      await refresh();
+      await onTopicsChanged?.();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  // trashExpertSession moves a team's expert-session conversation history to
+  // trash (mirrors trashTopic for normal sessions). The backend closes any open
+  // expert tab for the team, cancels any in-flight run, and moves the .jsonl/
+  // .meta/.ckpt files to local trash. The team definition itself is preserved.
+  const trashExpertSession = async (teamId: string) => {
+    try {
+      await app.TrashExpertSession(teamId);
       setMenuTopic(null);
       setMenuPoint(null);
       setConfirmAction(null);
@@ -516,13 +559,13 @@ export function ProjectTree({
     if (nextRoots.join("\n") === currentRoots.join("\n")) return;
     setTree((current) => applyProjectOrder(current, nextRoots));
     try {
-      await app.ReorderProjects(nextRoots);
+      await app.ReorderProjects(profile, nextRoots);
       await refresh();
       await onTopicsChanged?.();
     } catch {
       await refresh();
     }
-  }, [onTopicsChanged, refresh, tree]);
+  }, [onTopicsChanged, profile, refresh, tree]);
 
   const clearProjectDrag = useCallback(() => {
     setDragProjectRoot(null);
@@ -577,6 +620,59 @@ export function ProjectTree({
     const children = asArray(node.children);
     const isExpanded = query.trim() ? true : expanded.has(key);
     const hasChildren = children.length > 0;
+
+    if (node.kind === "expert_topic" && node.expertTeamId) {
+      const label = node.expertTeamName || node.label || node.expertTeamId;
+      const meta = topicMetaLine(node, t);
+      const status = topicStatus(node);
+      const statusLabel = topicStatusLabel(node, t);
+      const title = [label, statusLabel, meta].filter(Boolean).join(" · ");
+      const teamId = node.expertTeamId;
+      const expertMenuOpen = menuTopic === `expert:${teamId}`;
+      const openExpertMenu = (event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setMenuProject(null);
+        setConfirmRemoveProject(null);
+        setMenuPoint(contextMenuPointFromEvent(event));
+        setMenuTopic(`expert:${teamId}`);
+        setConfirmAction(null);
+      };
+      const expertMenuItems: ContextMenuItem[] = [
+        {
+          key: "trash",
+          icon: <Archive size={13} />,
+          label: confirmAction?.topicId === teamId && confirmAction.action === "trash" ? t("history.confirmMoveToTrash") : t("history.moveToTrash"),
+          danger: true,
+          onSelect: () => {
+            if (confirmAction?.topicId === teamId && confirmAction.action === "trash") void trashExpertSession(teamId);
+            else setConfirmAction({ topicId: teamId, action: "trash" });
+          },
+        },
+      ];
+      return (
+        <div
+          key={node.key}
+          className={`project-tree__topic project-tree__topic--expert${expertMenuOpen ? " project-tree__topic--menu-open" : ""}`}
+          title={title}
+          onContextMenu={openExpertMenu}
+          onClick={() => { if (onOpenExpertSession) void onOpenExpertSession(node.expertTeamId!, node.expertTeamName ?? label); }}
+        >
+          <span className="project-tree__topic-icon">🤝</span>
+          <span className="project-tree__topic-label">{label}</span>
+          {node.open && <span className="project-tree__topic-open-dot" />}
+          {status && <span className={`project-tree__topic-status project-tree__topic-status--${status}`} />}
+          <ContextMenu
+            open={expertMenuOpen}
+            point={menuPoint}
+            items={expertMenuItems}
+            minWidth={178}
+            ariaLabel={t("projectTree.topicActions")}
+            onClose={closeMenu}
+          />
+        </div>
+      );
+    }
 
     if (node.kind === "topic" || node.kind === "global_topic") {
       const scope = node.kind === "global_topic" ? "global" : "project";

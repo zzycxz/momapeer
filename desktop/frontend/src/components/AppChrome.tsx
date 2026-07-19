@@ -164,7 +164,8 @@ export function AppChrome({
         </button>
       )}
       {/* Profile switcher: toggles between dev (coding) and cowork (office).
-          A click rebuilds the active tab's controller with the profile bundle. */}
+          Button shows the TARGET mode (what you'll switch TO), not the current mode.
+          A dot indicator marks the current active mode. */}
       <button
         className={[
           "app-chrome__profile-toggle",
@@ -175,6 +176,7 @@ export function AppChrome({
         aria-label={profile.toLowerCase() === "cowork" ? t("cowork.switchToDev") : t("cowork.switchToCoWork")}
         title={profile.toLowerCase() === "cowork" ? t("cowork.switchToDev") : t("cowork.switchToCoWork")}
       >
+        <span className="app-chrome__profile-dot" aria-hidden="true" />
         <span className="app-chrome__profile-label">
           {profile.toLowerCase() === "cowork" ? t("cowork.badgeCoWork") : t("cowork.badgeDev")}
         </span>

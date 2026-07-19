@@ -2,8 +2,8 @@
 // open project/global topic, so switching tabs switches the active conversation.
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
-import { FileText, Plus, Search, X } from "lucide-react";
-import { normalizeCollaborationMode, normalizeMode, normalizeToolApprovalMode, type Mode, type TabMeta } from "../lib/types";
+import { FileText, Plus, Search, Users, X } from "lucide-react";
+import { normalizeCollaborationMode, normalizeMode, type Mode, type TabMeta } from "../lib/types";
 import { projectColorValue } from "../lib/projectColors";
 import { useT } from "../lib/i18n";
 import { Tooltip } from "./Tooltip";
@@ -25,6 +25,7 @@ interface TabBarProps {
 type DropSide = "before" | "after";
 
 function tabDisplayTitle(tab: TabMeta): string {
+  if (tab.expertSession) return tab.expertSession.teamName || tab.topicTitle?.trim() || "专家会话";
   if (tab.tabType === "file" || tab.scope === "file") return tab.topicTitle?.trim() || tab.filePath?.split("/").filter(Boolean).pop() || "File";
   const title = tab.topicTitle?.trim();
   if (tab.scope === "global") return title || "Global";
@@ -192,13 +193,11 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
           const collaborationMode = normalizeCollaborationMode(tab.collaborationMode, tab.goal, mode);
           const planMode = collaborationMode === "plan";
           const goalMode = collaborationMode === "goal";
-          const toolApprovalMode = normalizeToolApprovalMode(tab.toolApprovalMode, mode);
           const stateTitle = [
             tab.running ? "Running" : "",
             planMode ? "Plan" : "",
             goalMode ? "Goal" : "",
-            toolApprovalMode === "auto" ? "Auto approve" : "",
-            toolApprovalMode === "yolo" ? "YOLO approval" : "",
+            (tab.profile ?? "").toLowerCase() === "cowork" ? t("cowork.badgeCoWork") : (((tab.profile ?? "").toLowerCase() === "dev" || !(tab.profile ?? "")) ? (t("cowork.badgeDev") || "编码") : ""),
           ].filter(Boolean).join(" · ");
           const annotatedTitle = stateTitle ? `${stateTitle} · ${fullTitle}` : fullTitle;
           return (
@@ -216,7 +215,6 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
                 "tabbar__tab",
                 tab.id === resolvedActiveTabId ? "tabbar__tab--active" : "",
                 tab.running ? "tabbar__tab--running" : "",
-                toolApprovalMode === "yolo" ? "tabbar__tab--yolo" : "",
                 draggingTabId === tab.id ? "tabbar__tab--dragging" : "",
                 dropTarget?.id === tab.id ? `tabbar__tab--drop-${dropTarget.side}` : "",
               ].filter(Boolean).join(" ")}
@@ -235,7 +233,9 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
               onDrop={(event) => handleDrop(event, tab.id)}
               onDragEnd={clearDragState}
             >
-              {tab.tabType === "file" || tab.scope === "file" ? (
+              {tab.expertSession ? (
+                <Users size={12} className="tabbar__file-icon" />
+              ) : tab.tabType === "file" || tab.scope === "file" ? (
                 <FileText size={12} className="tabbar__file-icon" />
               ) : (
                 <span
@@ -248,8 +248,13 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
               <span className="tabbar__tab-label">{displayTitle}</span>
               {planMode && <span className="tabbar__mode-badge tabbar__mode-badge--plan">plan</span>}
               {goalMode && <span className="tabbar__mode-badge tabbar__mode-badge--plan">goal</span>}
-              {toolApprovalMode === "auto" && <span className="tabbar__mode-badge tabbar__mode-badge--plan">auto</span>}
-              {toolApprovalMode === "yolo" && <span className="tabbar__mode-badge tabbar__mode-badge--yolo">yolo</span>}
+              {/* Profile badges */}
+              {(tab.profile ?? "").toLowerCase() === "cowork" && (
+                <span className="tabbar__mode-badge tabbar__mode-badge--cowork">{t("cowork.badgeCoWork")}</span>
+              )}
+              {((tab.profile ?? "").toLowerCase() === "dev" || !(tab.profile ?? "")) && (
+                <span className="tabbar__mode-badge tabbar__mode-badge--dev">{t("cowork.badgeDev") || "编码"}</span>
+              )}
               <span
                 className="tabbar__tab-close"
                 onClick={(e) => {

@@ -13,8 +13,31 @@ type LinkInfo = {
   exists: boolean;
 };
 
+// displayTitle returns the label for a fact card. v0.4: title/description are
+// gone from the store, so prefer the body's first non-empty line (matching the
+// MEMORY.md index label the backend derives), then fall back to a de-kebabed
+// name.
 function displayTitle(fact: MemoryFact): string {
+  if (fact.body) {
+    for (const ln of fact.body.split(/\r?\n/)) {
+      const t = ln.trim();
+      if (t) return t;
+    }
+  }
   return fact.title || fact.name.replaceAll("-", " ");
+}
+
+// memoryTypeLabel maps the raw English type (user/feedback/project/reference)
+// to a localized label so the filter buttons and fact cards don't show raw
+// enum values to end users.
+function memoryTypeLabel(type: string, t: Translator): string {
+  switch (type) {
+    case "user": return t("memory.typeUser");
+    case "feedback": return t("memory.typeFeedback");
+    case "project": return t("memory.typeProject");
+    case "reference": return t("memory.typeReference");
+    default: return t("memory.typeOther");
+  }
 }
 
 function uniqueLinks(body: string, names: Set<string>): LinkInfo[] {
@@ -380,7 +403,7 @@ export function MemoryPanel({
                       type="button"
                       key={type}
                     >
-                      {type}
+                      {memoryTypeLabel(type, t)}
                     </button>
                   ))}
                 </div>
@@ -429,7 +452,7 @@ export function MemoryPanel({
                           <span className="mem-fact__main">
                             <span className="mem-fact__title">{displayTitle(f)}</span>
                             <span className="mem-fact__meta">
-                              {f.type && <span className="mem-fact__type" data-mem-type={f.type}>{f.type}</span>}
+                              {f.type && <span className="mem-fact__type" data-mem-type={f.type}>{memoryTypeLabel(f.type, t)}</span>}
                               <span className="mem-fact__slug">{f.name}</span>
                             </span>
                             <span className="mem-fact__desc">{f.description}</span>
@@ -894,15 +917,16 @@ export function MemorySettingsPage() {
 					<span>{t("memory.memoryEntries")}</span>
 					<small>{facts.length}</small>
 				</button>
-				<button
-					className={"settings-subtab" + (tab === "timeline" ? " settings-subtab--active" : "")}
-					role="tab"
-					aria-selected={tab === "timeline"}
-					type="button"
-					onClick={() => setTab("timeline")}
-				>
-					<span>{t("memory.timeline")}</span>
-				</button>
+					<button
+						className={"settings-subtab" + (tab === "timeline" ? " settings-subtab--active" : "")}
+						role="tab"
+						aria-selected={tab === "timeline"}
+						type="button"
+						onClick={() => setTab("timeline")}
+					>
+						<span>{t("memory.timeline")}</span>
+						{historyFacts.length > 0 && <small>{historyFacts.length}</small>}
+					</button>
 				<button
 					className={"settings-subtab" + (tab === "docs" ? " settings-subtab--active" : "")}
 					role="tab"
@@ -941,43 +965,47 @@ export function MemorySettingsPage() {
 								<span>{t("memory.addMemoryHint")}</span>
 							</div>
 						</div>
-						<div className="mem-add">
-							<Tooltip label={t("memory.whereToSave")}>
-								<select
-									className="mem-select"
-									value={activeScope}
-									onChange={(e) => setScope(e.target.value)}
-								>
-									{scopes.map((s) => (
-										<option key={s.scope} value={s.scope}>
-											{memoryScopeLabel(s.scope, t)}
-										</option>
-									))}
-								</select>
-							</Tooltip>
-							<input
+						<div className="mem-add mem-add--stacked">
+							<div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+								<Tooltip label={t("memory.whereToSave")}>
+									<select
+										className="mem-select"
+										value={activeScope}
+										onChange={(e) => setScope(e.target.value)}
+									>
+										{scopes.map((s) => (
+											<option key={s.scope} value={s.scope}>
+												{memoryScopeLabel(s.scope, t)}
+											</option>
+										))}
+									</select>
+								</Tooltip>
+								<span className="mem-hint mem-hint--inline">
+									{scopes.find((s) => s.scope === activeScope)?.path}
+								</span>
+							</div>
+							<textarea
 								className="mem-input"
+								style={{ width: "100%", minHeight: "60px", resize: "vertical" }}
 								placeholder={t("memory.notePlaceholder")}
 								value={note}
 								onChange={(e) => setNote(e.target.value)}
 								onKeyDown={(e) => {
-									if (e.key === "Enter") void submitNote();
+									if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void submitNote();
 								}}
 							/>
-							<button
-								className="btn btn--primary btn--small"
-								onClick={() => void submitNote()}
-								disabled={busy || !note.trim()}
-							>
-								{t("memory.remember")}
+							<div style={{ display: "flex", justifyContent: "flex-end" }}>
+								<button
+									className="btn btn--primary btn--small"
+									onClick={() => void submitNote()}
+									disabled={busy || !note.trim()}
+								>
 							</button>
-						</div>
-						<div className="mem-hint">
-							{scopes.find((s) => s.scope === activeScope)?.path}
+							</div>
 						</div>
 					</div>
-				)}
-				<div className="mem-toolbar">
+					)}
+					<div className="mem-toolbar">
 					<label className="mem-search">
 						<Search size={14} />
 						<input
@@ -994,16 +1022,16 @@ export function MemorySettingsPage() {
 						>
 							{t("memory.allTypes")}
 						</button>
-						{factTypes.map((type) => (
-							<button
-								className={"mem-filter__item" + (typeFilter === type ? " mem-filter__item--on" : "")}
-								onClick={() => setTypeFilter(type)}
-								type="button"
-								key={type}
-							>
-								{type}
-							</button>
-						))}
+								{factTypes.map((type) => (
+									<button
+										className={"mem-filter__item" + (typeFilter === type ? " mem-filter__item--on" : "")}
+										onClick={() => setTypeFilter(type)}
+										type="button"
+										key={type}
+									>
+										{memoryTypeLabel(type, t)}
+									</button>
+								))}
 					</div>
 				</div>
 				{error && <div className="mem-error" role="alert">{error}</div>}
@@ -1050,7 +1078,7 @@ export function MemorySettingsPage() {
 										<span className="mem-fact__main">
 											<span className="mem-fact__title">{displayTitle(f)}</span>
 											<span className="mem-fact__meta">
-												{f.type && <span className="mem-fact__type" data-mem-type={f.type}>{f.type}</span>}
+												{f.type && <span className="mem-fact__type" data-mem-type={f.type}>{memoryTypeLabel(f.type, t)}</span>}
 												<span className="mem-fact__slug">{f.name}</span>
 											</span>
 											<span className="mem-fact__desc">{f.description}</span>
@@ -1369,7 +1397,7 @@ function MemoryTimelineCard({
 					<span className="mem-fact__title">{displayTitle(f)}</span>
 					<span className="mem-fact__meta">
 						{f.type && (
-							<span className="mem-fact__type" data-mem-type={f.type}>{f.type}</span>
+							<span className="mem-fact__type" data-mem-type={f.type}>{memoryTypeLabel(f.type, t)}</span>
 						)}
 						<span className="mem-fact__slug">{f.name}</span>
 						{isSuperseded && (

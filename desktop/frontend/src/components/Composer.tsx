@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
-import { ArrowUp, Check, Eye, FileText, Folder, Gauge, List, MessageSquare, MoreHorizontal, Search, Shield, ShieldAlert, ShieldCheck, SlidersHorizontal, Square, Target, Trash2, X } from "lucide-react";
+import { ArrowUp, Check, Eye, FileText, Folder, Gauge, List, MessageSquare, MoreHorizontal, Pause, Play, Search, Shield, ShieldAlert, ShieldCheck, SlidersHorizontal, Square, Target, Trash2, X } from "lucide-react";
 import { asArray } from "../lib/array";
 import { filterAtMatches } from "../lib/atMatches";
 import { DedupIndex, sha256 } from "../lib/attachDedup";
@@ -8,7 +8,7 @@ import { app, onFilesDropped } from "../lib/bridge";
 import { SPINNER_WORDS, useI18n } from "../lib/i18n";
 import { clearLayoutSize, loadOptionalLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
 import { useToast } from "../lib/toast";
-import { type CollaborationMode, type CommandInfo, type ComposerInsertRequest, type DirEntry, type EffortInfo, type HistoryMessage, type Mode, type SessionMeta, type SessionReference, type SlashArgItem, type SlashArgsResult, type ToolApprovalMode } from "../lib/types";
+import { type CollaborationMode, type CommandInfo, type ComposerInsertRequest, type DirEntry, type EffortInfo, type HistoryMessage, type SessionMeta, type SessionReference, type SlashArgItem, type SlashArgsResult, type ToolApprovalMode } from "../lib/types";
 import {
   formatWorkspaceReference,
   parseWorkspaceReference,
@@ -320,6 +320,7 @@ async function buildSessionContext(refs: SessionReference[]): Promise<string> {
 
 export function Composer({
   running,
+  paused,
   collaborationMode,
   toolApprovalMode,
   goal,
@@ -329,12 +330,11 @@ export function Composer({
   effort,
   onSend,
   onCancel,
+  onPauseToggle,
   onCycleMode,
-  onSetMode,
   onSetCollaborationMode,
   onSetToolApprovalMode,
   onToggleYoloApprovalMode,
-  onSetGoal,
   onClearGoal,
   onSwitchModel,
   onSetEffort,
@@ -348,6 +348,10 @@ export function Composer({
   transientDismissSignal,
 }: {
   running: boolean;
+  // paused is true while the in-flight turn is frozen on a graceful pause.
+  // When true the status-bar button shows Resume and calls onPauseToggle to
+  // unblock; when false it shows Pause. Only meaningful while running.
+  paused?: boolean;
   collaborationMode: CollaborationMode;
   toolApprovalMode: ToolApprovalMode;
   goal?: string;
@@ -359,13 +363,13 @@ export function Composer({
   // Returns the un-sent text when cancelling before the server replied (so it can
   // be restored to the input); undefined for a normal cancel.
   onCancel: () => string | undefined;
+  // onPauseToggle is called when the user clicks the pause/resume button. The
+  // parent decides whether to call Pause or ResumeTurn based on current state.
   onPauseToggle?: () => void;
   onCycleMode: () => void;
-  onSetMode: (mode: Mode) => void;
   onSetCollaborationMode: (mode: CollaborationMode) => void;
   onSetToolApprovalMode: (mode: ToolApprovalMode) => void;
   onToggleYoloApprovalMode: () => void;
-  onSetGoal: (goal: string) => void;
   onClearGoal: () => void;
   onSwitchModel: (name: string) => void;
   onSetEffort: (level: string) => void;
@@ -1447,8 +1451,6 @@ export function Composer({
     ? ({ height: `${textareaAutoHeight}px`, overflowY: textareaAutoOverflow ? "auto" : "hidden" } as CSSProperties)
     : undefined;
   const composerAutoExpanded = composerHeight === null && textareaAutoHeight !== null && textareaAutoHeight > 40;
-  const draftGoal = text.trim();
-  void onSetMode;
   const chooseApprovalMode = (nextMode: ToolApprovalMode) => {
     onSetToolApprovalMode(nextMode);
     requestAnimationFrame(() => taRef.current?.focus());
@@ -1463,14 +1465,6 @@ export function Composer({
     if (goalModeOn) {
       closeIntentMenu(() => {
         onClearGoal();
-        requestAnimationFrame(() => taRef.current?.focus());
-      });
-      return;
-    }
-    if (draftGoal) {
-      closeIntentMenu(() => {
-        onSetGoal(draftGoal);
-        setText("");
         requestAnimationFrame(() => taRef.current?.focus());
       });
       return;
@@ -1731,6 +1725,20 @@ export function Composer({
           <div className="composer-runstatus" role="status" aria-live="polite">
             <span className="composer-runstatus__dot" />
             <span className="composer-runstatus__text">{runActivity}</span>
+            {onPauseToggle && (
+              <Tooltip label={paused ? t("composer.resume") : t("composer.pause")}>
+                <button
+                  className={"composer-runstatus__pause" + (paused ? " composer-runstatus__pause--active" : "")}
+                  type="button"
+                  onClick={onPauseToggle}
+                  disabled={decisionPending}
+                  aria-label={paused ? t("composer.resume") : t("composer.pause")}
+                >
+                  {paused ? <Play size={11} fill="currentColor" /> : <Pause size={11} fill="currentColor" />}
+                  <span>{paused ? t("composer.resumeShort") : t("composer.pauseShort")}</span>
+                </button>
+              </Tooltip>
+            )}
             <Tooltip label={t("composer.stop")}>
               <button className="composer-runstatus__stop" type="button" onClick={handleCancel} disabled={decisionPending}>
                 <Square size={10} fill="currentColor" />

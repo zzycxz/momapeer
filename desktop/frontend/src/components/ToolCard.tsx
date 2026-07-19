@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { CodeViewer } from "./CodeViewer";
 import { DiffView } from "./DiffView";
@@ -10,7 +10,7 @@ import type { Item } from "../lib/useController";
 
 type ToolItem = Extract<Item, { kind: "tool" }>;
 
-const SUBAGENT_TOOLS = new Set(["task", "run_skill", "explore", "research", "review", "security_review"]);
+const SUBAGENT_TOOLS = new Set(["task", "run_skill", "explore", "research"]);
 
 /** Lines shown by default in a shell output block before the "show all" button. */
 const SHELL_PREVIEW_LINES = 10;
@@ -95,18 +95,45 @@ export const ToolCard = memo(function ToolCard({ item, subcalls }: { item: ToolI
   const shellPreview = shellOutput ? splitPreview(shellOutput, SHELL_PREVIEW_LINES) : null;
   const hasAttachments = Boolean(item.attachments && item.attachments.some((a) => a.kind === "image"));
   const hasBody = Boolean(summary || diffs.length || hasNested || shellPreview || (!shellPreview && hasArgsOrOutput) || item.error || hasAttachments);
-  const [open, setOpen] = useState(hasNested ? item.status === "running" : false);
+  // Open while running so the user sees live progress; closed once settled.
+  // Shell cards (incl. agent-initiated bash) follow the same rule so streamed
+  // stdout stays visible during a long command and auto-collapses on finish.
+  const [open, setOpen] = useState((hasNested || item.isShell) ? item.status === "running" : false);
   const [showAll, setShowAll] = useState(false);
+  // Track whether the user has manually toggled this card, so the auto-open /
+  // auto-close effect below doesn't fight a deliberate interaction.
+  const userToggledRef = useRef(false);
+  const shellBodyRef = useRef<HTMLDivElement | null>(null);
 
   // Register this shell card's toggle with the global ShellExpand context so
   // Ctrl/Cmd+B can expand/collapse the most recent shell output.
   const shellExpand = useShellExpand();
   useEffect(() => {
     if (!item.isShell || !shellExpand) return;
-    return shellExpand.register(item.id, () => setOpen((v) => !v));
+    return shellExpand.register(item.id, () => {
+      userToggledRef.current = true;
+      setOpen((v) => !v);
+    });
   }, [item.isShell, item.id, shellExpand]);
 
-  // Read-only "research" calls (read/grep/ls/glob/web_fetch) are hidden after
+  // Auto-open shell cards while running (so streamed chunks are visible) and
+  // auto-collapse when done — but only until the user manually toggles, after
+  // which we respect their choice. Mirrors how streaming-thinking cards behave.
+  useEffect(() => {
+    if (!item.isShell || userToggledRef.current) return;
+    const should = item.status === "running";
+    if (should !== open) setOpen(should);
+  }, [item.isShell, item.status, open]);
+
+  // Keep the shell output pinned to the bottom as new chunks stream in, so the
+  // latest lines (where errors appear) are always in view while running.
+  useEffect(() => {
+    if (!item.isShell || !open || item.status !== "running") return;
+    const el = shellBodyRef.current?.querySelector("pre.code") as HTMLElement | null;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [item.isShell, open, item.status, item.output]);
+
+  // Read-only "research" calls (read/grep/web_fetch) are hidden after
   // completion so they don't clutter the transcript. During execution they still
   // render so the user sees progress.
   const quiet =
@@ -120,7 +147,11 @@ export const ToolCard = memo(function ToolCard({ item, subcalls }: { item: ToolI
         type="button"
         className="tool__head"
         data-running={item.status === "running" ? "" : undefined}
-        onClick={() => hasBody && setOpen((v) => !v)}
+        onClick={() => {
+          if (!hasBody) return;
+          userToggledRef.current = true;
+          setOpen((v) => !v);
+        }}
         aria-expanded={hasBody ? open : undefined}
       >
         <span className="tool__label-group">
@@ -156,7 +187,7 @@ export const ToolCard = memo(function ToolCard({ item, subcalls }: { item: ToolI
         )}
 
         {shellPreview && (
-          <>
+          <div ref={shellBodyRef}>
             <CodeViewer value={showAll ? shellOutput! : shellPreview.preview} maxHeight={showAll ? 480 : 260} />
             {shellPreview.hasMore && !showAll && (
               <button className="tool__showall" onClick={() => setShowAll(true)}>
@@ -164,7 +195,7 @@ export const ToolCard = memo(function ToolCard({ item, subcalls }: { item: ToolI
               </button>
             )}
             {item.truncated && <div className="tool__note">{t("tool.truncated")}</div>}
-          </>
+          </div>
         )}
 
         {!shellPreview && hasArgsOrOutput && (
