@@ -6,7 +6,6 @@ import {
   Command,
   Download,
   SquarePen,
-  SlidersHorizontal,
   FileDown,
   FileImage,
   FileText,
@@ -20,6 +19,7 @@ import {
   Brain,
   Cpu,
   Palette,
+  SlidersHorizontal,
 } from "lucide-react";
 import { useToast } from "./lib/toast";
 import { asArray } from "./lib/array";
@@ -30,6 +30,7 @@ import { onProfileChanged } from "./lib/bridge";
 import { CoWorkLayout } from "./layouts/CoWorkLayout";
 import { PreferencePanel } from "./components/cowork/PreferencePanel";
 import { Transcript } from "./components/Transcript";
+import { ExpertSessionView } from "./components/cowork/ExpertSessionView";
 import { Composer } from "./components/Composer";
 import { TodoPanel } from "./components/TodoPanel";
 import { ApprovalModal } from "./components/ApprovalModal";
@@ -54,8 +55,6 @@ import { CopyButton } from "./components/CopyButton";
 import { parseTodos } from "./lib/tools";
 import { shouldShowTodoPanel } from "./lib/todoVisibility";
 import {
-  modeHasAutoApproveTools,
-  modeHasPlan,
   modeFromAxes,
   normalizeMode,
   normalizeToolApprovalMode,
@@ -596,6 +595,11 @@ function safeFilename(name: string): string {
 }
 
 export default function App() {
+  // profileRef mirrors the active tab's product profile ("dev"|"cowork"). It is
+  // kept in sync by the coworkActive effect below and read via the getter passed
+  // to useController so the controller's OpenProjectTab/OpenGlobalTab calls scope
+  // the topic to the active profile without stale-closure issues.
+  const profileRef = useRef<"dev" | "cowork">("dev");
   const {
     state,
     activeTabId,
@@ -607,7 +611,6 @@ export default function App() {
     pauseToggle,
     approve,
     answerQuestion,
-    setControllerMode,
     setCollaborationMode: setControllerCollaborationMode,
     setToolApprovalMode: setControllerToolApprovalMode,
     setGoal: setControllerGoal,
@@ -634,7 +637,7 @@ export default function App() {
     reorderTabs,
     syncActiveTab,
     ensureBlankTab,
-  } = useController();
+  } = useController(() => profileRef.current);
   const { locale, setPref: setLocalePref } = useI18n();
   const t = useT();
   const [modesByTab, setModesByTab] = useState<Record<string, Mode>>({});
@@ -661,22 +664,25 @@ export default function App() {
   const [histView, setHistView] = useState<HistoryViewState | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [preferenceOpen, setPreferenceOpen] = useState(false);
   const [paletteSessions, setPaletteSessions] = useState<SessionMeta[]>([]);
   const [paletteCapabilities, setPaletteCapabilities] = useState<CapabilitiesView | null>(null);
   const { showToast } = useToast();
   const [sidebarImConnections, setSidebarImConnections] = useState<SidebarImConnection[]>([]);
   const [imTopicSources, setImTopicSources] = useState<Record<string, SidebarImTopicSource>>({});
   const [sidebarImDetailConnectionId, setSidebarImDetailConnectionId] = useState("");
-  // preferenceOpen toggles the inline "编码偏好"/"办公偏好" panel in the dev
-  // (coding) layout. When true, the main transcript area is replaced by
-  // PreferencePanel so the user can edit the active mode's portrait
-  // (cowork.md / dev.md). Mirrors the cowork sidebar's preference tab.
-  const [preferenceOpen, setPreferenceOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(true);
+  // Cowork dock has its OWN open state, separate from the coding-mode
+  // workspacePanelOpen. Rationale: the cowork overview dock (今日/邮件/文件)
+  // is the centerpiece of office mode — it should default open and NOT be
+  // closed when the user shrinks the coding-mode workspace panel. Sharing one
+  // state leaked coding-mode preferences into cowork (a user who collapsed the
+  // dev dock would arrive at cowork with no right column at all).
+  const [coworkDockOpen, setCoworkDockOpen] = useState(true);
   const [rightDockTreeWidth, setRightDockTreeWidth] = useState(loadRightDockTreeWidth);
   const [rightDockPreviewWidth, setRightDockPreviewWidth] = useState(loadRightDockPreviewWidth);
   const [workspacePreviewActive, setWorkspacePreviewActive] = useState(false);
@@ -895,27 +901,16 @@ export default function App() {
       showToast(e.message ?? "已紧急停止 AI 操作", "error");
     });
   }, [showToast]);
-
-  // Scheduled-task results: surface as a toast globally so the user sees the
-  // outcome even when they're not on the Automation panel. Without this, a
-  // task with output_mode="notify" fires its result into the void if the user
-  // is on another panel (experts/rag/chat).
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.runtime) return;
-    return window.runtime.EventsOn("scheduler:notice", (...data: unknown[]) => {
-      const e = (data?.[0] ?? {}) as { name?: string; result?: string };
-      const name = e.name ?? "定时任务";
-      const preview = (e.result ?? "").slice(0, 120);
-      showToast(`${name}: ${preview}`, "info");
-    });
-  }, [showToast]);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onResize = () => setViewportWidth(window.innerWidth);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
-  const [pendingPlanRevision, setPendingPlanRevision] = useState<string | null>(null);
+  // Per-tab pending plan revision text. Keyed by tab id so a revision drafted
+  // in one tab is never sent to another (previously a single global value that
+  // could leak across tabs when the active tab changed).
+  const [pendingPlanRevisionsByTab, setPendingPlanRevisionsByTab] = useState<Record<string, string>>({});
   const [footerHeight, setFooterHeight] = useState(0);
   const footerHeightRef = useRef(0);
   const footerRef = useRef<HTMLElement>(null);
@@ -944,6 +939,11 @@ export default function App() {
     workspacePanelOpen && (workspacePanelMaximized || resolvedWorkspacePanelWidth >= RIGHT_DOCK_MIN_RENDER_WIDTH);
   const workspacePanelGridOpen = workspacePanelRenderable && !workspacePanelMaximized;
   const workspacePanelRenderWidth = workspacePanelMaximized ? preferredWorkspacePanelWidth : resolvedWorkspacePanelWidth;
+  // The cowork dock reuses the same width resolution (so resize/maximize behave
+  // consistently) but pairs it with the cowork-specific open state. So a coding-
+  // mode panel close doesn't hide the cowork overview.
+  const coworkDockRenderable =
+    coworkDockOpen && (workspacePanelMaximized || resolvedWorkspacePanelWidth >= RIGHT_DOCK_MIN_RENDER_WIDTH);
   const activeTab = useMemo(
     () => tabMetas.find((tab) => tab.id === activeTabId) ?? tabMetas.find((tab) => tab.active),
     [activeTabId, tabMetas],
@@ -960,7 +960,7 @@ export default function App() {
         cancelled = true;
       };
     }
-    void app.ListProjectTree()
+    void app.ListProjectTree(profileRef.current)
       .then((tree) => {
         if (!cancelled) setActiveTopicTurns(activeTopicTurnsFromTree(asArray(tree), activeTab));
       })
@@ -1147,30 +1147,10 @@ export default function App() {
     });
   }, [activeTabId, goalDraftMode, legacyMode, setGoalDraftModeForTab, state.meta]);
 
-  const syncModeToController = useCallback((m: Mode) => setControllerMode(m), [setControllerMode]);
-
   useEffect(() => {
     void app.SetTrayLocale(locale).catch(() => {});
   }, [locale]);
 
-  // applyMode is the single source of truth for the input mode: it updates the
-  // local pill and pushes the matching gate state to the controller (plan = read
-  // only; yolo = auto-approve approval-gated tools while user decisions still wait).
-  // normal clears both.
-  const applyMode = useCallback(
-    (m: Mode) => {
-      if (!activeTabId) return;
-      const nextCollaborationMode: CollaborationMode = modeHasPlan(m) ? "plan" : "normal";
-      const nextToolApprovalMode: ToolApprovalMode = modeHasAutoApproveTools(m) ? "yolo" : "ask";
-      setGoalDraftModeForTab(activeTabId, false);
-      setMode(m);
-      setCollaborationModesByTab((current) => (current[activeTabId] === nextCollaborationMode ? current : { ...current, [activeTabId]: nextCollaborationMode }));
-      setToolApprovalModesByTab((current) => (current[activeTabId] === nextToolApprovalMode ? current : { ...current, [activeTabId]: nextToolApprovalMode }));
-      setGoalsByTab((current) => (current[activeTabId] ? { ...current, [activeTabId]: "" } : current));
-      void syncModeToController(m);
-    },
-    [activeTabId, setGoalDraftModeForTab, setMode, syncModeToController],
-  );
   const applyCollaborationMode = useCallback(
     (m: CollaborationMode) => {
       if (!activeTabId) return;
@@ -1233,15 +1213,6 @@ export default function App() {
     },
     [activeTabId, clearControllerGoal, setControllerGoal, setGoalDraftModeForTab, setMode, toolApprovalMode],
   );
-  const startGoal = useCallback(
-    (nextGoal: string) => {
-      const trimmed = nextGoal.trim();
-      if (!trimmed) return;
-      applyGoal(trimmed);
-      send(trimmed, `/goal ${trimmed}`);
-    },
-    [applyGoal, send],
-  );
   // Shift+Tab toggles only the collaboration axis; Ctrl/Cmd+Y toggles YOLO on the
   // tool-permission axis while preserving the Ask/Auto base mode.
   const cycleMode = useCallback(() => {
@@ -1267,26 +1238,56 @@ export default function App() {
   // the layout swaps without waiting for the profile:changed event, and revert on
   // error. The composer/mode/goal re-application is unnecessary here — the rebuild
   // preserves them via applyTabModeToController on the Go side.
+  // switchProfile implements VIEW-SWITCH semantics: toggling dev/cowork does NOT
+  // convert the current tab to the other profile. Instead it finds an existing
+  // tab of the target profile (preferring the same scope/workspaceRoot) and
+  // activates it, or creates a fresh blank tab in the target profile if none
+  // exists. The current tab stays as-is in its own profile — so a dev tab is
+  // never lost or relabeled when you peek at cowork, and switching back is just
+  // clicking the dev tab again. The sidebar follows the active tab's profile
+  // automatically (see the active-tab-sync effect below).
   const switchProfile = useCallback(
     async (name: string) => {
-      const next = name.toLowerCase() === "cowork";
-      console.log("[switchProfile] switching to", name, "coworkActive→", next);
-      setCoworkActive(next);
+      const targetProfile = name.toLowerCase() === "cowork" ? "cowork" : "dev";
+      // Close any open modal/overlay (History panel, transient popovers) — their
+      // cached content belongs to the outgoing profile's view and would be stale.
+      closeTransientOverlays();
+      setHistView(null);
+      // Prefer a tab matching the active tab's scope/workspaceRoot so the view
+      // switch lands in the same project; fall back to any tab of that profile.
+      const curScope = activeTab?.scope === "project" ? "project" : "global";
+      const curRoot = activeTab?.scope === "project" ? (activeTab.workspaceRoot ?? "") : "";
+      const match = tabMetas.find(
+        (t) => (t.profile ?? "dev").toLowerCase() === targetProfile &&
+          t.scope === curScope &&
+          (curScope === "global" || t.workspaceRoot === curRoot),
+      );
+      const anyMatch = match ?? tabMetas.find(
+        (t) => (t.profile ?? "dev").toLowerCase() === targetProfile,
+      );
       try {
-        await app.SwitchProfile(name);
-        console.log("[switchProfile] done:", name);
+        if (anyMatch) {
+          // Activate the existing target-profile tab. Tab activation drives
+          // coworkActive/profileRef/sidebar via the active-tab-sync effect, so
+          // no manual layout flip is needed.
+          await switchTab(anyMatch.id);
+        } else {
+          // No tab of the target profile exists yet — create a blank one. The
+          // explicit profile arg ensures it boots in the target mode regardless
+          // of the current tab's profile.
+          await ensureBlankTab(curScope, curRoot, targetProfile);
+        }
+        setProjectRevision((v) => v + 1);
       } catch (err) {
-        console.error("[switchProfile] failed, reverting:", err);
-        setCoworkActive(!next); // rebuild failed — revert
+        console.error("[switchProfile] failed:", err);
         if (String(err).includes("finish or cancel the current turn") || String(err).includes("turn")) {
           notice("请先停止当前运行的任务（如分析截图等），再切换模式！", "warn");
         } else {
           notice("切换模式失败: " + String(err), "warn");
         }
-        throw err;
       }
     },
-    [],
+    [activeTab, tabMetas, switchTab, ensureBlankTab, closeTransientOverlays, notice],
   );
 
   // Startup and workspace/model rebuilds create a fresh controller in normal
@@ -1370,12 +1371,20 @@ export default function App() {
     [getSessionJson, getSessionMarkdown, sessionTitle],
   );
 
+  // Drain the active tab's pending plan revision once it stops running. Keyed
+  // per-tab so a revision drafted in tab A can't leak into tab B's send.
   useEffect(() => {
-    if (!pendingPlanRevision || state.running) return;
-    const text = pendingPlanRevision;
-    setPendingPlanRevision(null);
+    if (!activeTabId || state.running) return;
+    const text = pendingPlanRevisionsByTab[activeTabId];
+    if (!text) return;
+    setPendingPlanRevisionsByTab((current) => {
+      if (!(activeTabId in current)) return current;
+      const next = { ...current };
+      delete next[activeTabId];
+      return next;
+    });
     send(text);
-  }, [pendingPlanRevision, send, state.running]);
+  }, [activeTabId, pendingPlanRevisionsByTab, send, state.running]);
 
   useEffect(() => {
     setClearContextPending(false);
@@ -1478,7 +1487,7 @@ export default function App() {
         return;
       }
       if (runningRef.current) { steer(submitText.trim()); return; }
-      await setControllerCollaborationMode(collaborationMode);
+      await setControllerCollaborationMode(controllerCollaborationMode({ collaborationMode, goal }));
       await setControllerToolApprovalMode(toolApprovalMode);
       if (goal.trim()) await setControllerGoal(goal);
       send(trimmed, submitText.trim());
@@ -1499,6 +1508,7 @@ export default function App() {
   }, [activeTab?.scope, activeTab?.workspaceRoot]);
 
   const openBlankSession = useCallback(async (scope: string, workspaceRoot: string) => {
+    window.dispatchEvent(new CustomEvent("cowork:reset-panel"));
     await ensureBlankTab(scope, scope === "project" ? workspaceRoot : "");
     setProjectRevision((value) => value + 1);
     await refreshTabMetas();
@@ -1518,6 +1528,20 @@ export default function App() {
     });
   }, [refreshTabMetas]);
 
+  // Refresh tab metas + sync active tab when cowork:reset-panel fires —
+  // ExpertPanel dispatches it after RunExpertTeam (which opens an expert-session
+  // tab and sets it active on the backend). Without this, the frontend's
+  // activeTabId lags behind the backend, so the new expert tab appears in the
+  // TabBar but isn't selected — the user still sees the old tab.
+  useEffect(() => {
+    const handler = () => {
+      void refreshTabMetas();
+      void syncActiveTab(true);
+    };
+    window.addEventListener("cowork:reset-panel", handler);
+    return () => window.removeEventListener("cowork:reset-panel", handler);
+  }, [refreshTabMetas, syncActiveTab]);
+
   // Sync coworkActive from the active tab's profile. Refetch on active-tab change
   // (each tab remembers its own profile) and on the profile:changed event (fired
   // after a SwitchProfile rebuild). The TabMeta.profile field is the per-tab
@@ -1525,7 +1549,9 @@ export default function App() {
   useEffect(() => {
     const active = tabMetas.find((m) => m.id === activeTabId);
     if (active?.profile) {
-      setCoworkActive(active.profile.toLowerCase() === "cowork");
+      const isCowork = active.profile.toLowerCase() === "cowork";
+      setCoworkActive(isCowork);
+      profileRef.current = isCowork ? "cowork" : "dev";
       return;
     }
     // No tab meta yet (startup) — ask the backend directly.
@@ -1533,7 +1559,11 @@ export default function App() {
     app
       .Profile()
       .then((name) => {
-        if (!cancelled) setCoworkActive((name ?? "").toLowerCase() === "cowork");
+        const isCowork = (name ?? "").toLowerCase() === "cowork";
+        if (!cancelled) {
+          setCoworkActive(isCowork);
+          profileRef.current = isCowork ? "cowork" : "dev";
+        }
       })
       .catch(() => {
         /* dev mock / backend not ready */
@@ -1545,14 +1575,27 @@ export default function App() {
 
   useEffect(() => {
     return onProfileChanged((e) => {
+      const isActive = e.tabId === activeTabId || !e.tabId;
       // Only adopt the change if it concerns the active tab — a background tab's
       // profile switch should not flip the visible layout.
       setCoworkActive((prev) => {
         if (e.profile.toLowerCase() === "cowork") return true;
-        return prev && e.tabId === activeTabId ? false : prev;
+        return prev && isActive ? false : prev;
       });
+      // Keep the profile getter (handed to useController) live so subsequent
+      // OpenProjectTab/OpenGlobalTab calls scope to the new profile.
+      profileRef.current = e.profile.toLowerCase() === "cowork" ? "cowork" : "dev";
+      // A profile switch rebuilds the active tab's controller, so the backend
+      // re-emits agent:ready. The ready handler reloads with reset=false, which
+      // leaves the previous profile's messages on screen when the new history is
+      // empty. Explicitly reset+reload here so the chat list reflects the new
+      // (possibly empty) session. Only the active tab's switch matters.
+      if (isActive) void syncActiveTab(true);
+      // Close any open History panel — its cached session list belongs to the
+      // previous profile and would show the wrong conversations until reopened.
+      setHistView(null);
     });
-  }, [activeTabId]);
+  }, [activeTabId, syncActiveTab]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1772,12 +1815,18 @@ export default function App() {
 
   const toggleWorkspacePanel = useCallback(() => {
     pulseWorkspaceToggle();
+    // In cowork mode toggle the cowork-specific dock state, not the shared
+    // coding-mode workspacePanelOpen — see coworkDockOpen comment above.
+    if (coworkActive) {
+      setCoworkDockOpen((open) => !open);
+      return;
+    }
     if (workspacePanelRenderable) {
       closeWorkspacePanel();
       return;
     }
     openWorkspacePanel("context");
-  }, [closeWorkspacePanel, openWorkspacePanel, pulseWorkspaceToggle, workspacePanelRenderable]);
+  }, [closeWorkspacePanel, coworkActive, openWorkspacePanel, pulseWorkspaceToggle, workspacePanelRenderable]);
 
   const openRightDockMode = useCallback(
     (mode: RightDockMode) => {
@@ -1896,12 +1945,22 @@ export default function App() {
 
   const handleTabClose = useCallback(async (id: string) => {
     closeTransientOverlays();
-    setModesByTab((current) => {
+    // Purge all per-tab mode maps so a closed tab leaves no residue. The
+    // tabMetas sync effect (App.tsx ~L1031) would eventually reconcile, but
+    // deleting up-front avoids stale state window during async refresh.
+    const dropKey = <T extends Record<string, unknown>>(current: T): T => {
       if (!(id in current)) return current;
       const next = { ...current };
       delete next[id];
       return next;
-    });
+    };
+    setModesByTab(dropKey);
+    setCollaborationModesByTab(dropKey);
+    setToolApprovalModesByTab(dropKey);
+    setGoalsByTab(dropKey);
+    setGoalDraftModesByTab(dropKey);
+    setPendingPlanRevisionsByTab(dropKey);
+    delete yoloRestoreToolApprovalModesRef.current[id];
     setTabMetas((current) => {
       if (current.length <= 1) return current;
       const closingIndex = current.findIndex((tab) => tab.id === id);
@@ -1916,7 +1975,7 @@ export default function App() {
     await closeTab(id);
     await refreshTabMetas();
     setTabRevealSignal((signal) => signal + 1);
-  }, [activeTabId, closeTab, closeTransientOverlays, refreshTabMetas]);
+  }, [activeTabId, closeTab, closeTransientOverlays, refreshTabMetas, yoloRestoreToolApprovalModesRef]);
 
   const handleTabsClose = useCallback(async (ids: string[], nextActiveTabId?: string) => {
     closeTransientOverlays();
@@ -1966,17 +2025,52 @@ export default function App() {
     }
   }, [refreshTabMetas, rewind]);
 
+  // runExpertFromSession triggers a new collaboration run on the team whose
+  // expert-session tab is active. RunExpertTeam opens/activates the expert tab
+  // and streams live; the result appends to the same session (multi-turn).
+  // Search-cost confirmation is tracked per-team (a Set in a ref) so the user
+  // is warned ONCE per team per session — not nagged on every follow-up.
+  const searchCostConfirmedRef = useRef<Set<string>>(new Set());
+  const runExpertFromSession = useCallback(async (teamId: string, task: string, mode: string, rounds: number) => {
+    try {
+      const teams = await app.ListExpertTeams().catch(() => []);
+      const team = teams.find((tm) => tm.id === teamId);
+      if (team?.allowSearch && !searchCostConfirmedRef.current.has(teamId)) {
+        if (!window.confirm(t("cowork.expertSearchCostConfirm"))) return;
+        searchCostConfirmedRef.current.add(teamId);
+      }
+      await app.RunExpertTeam(teamId, task, mode, rounds);
+    } catch { /* ExpertSessionView shows error via stream events */ }
+  }, [t]);
+
   const handleOpenTopic = useCallback(async (scope: string, workspaceRoot: string, topicId: string) => {
+    window.dispatchEvent(new CustomEvent("cowork:reset-panel"));
     closeTransientOverlays();
     setSidebarImDetailConnectionId("");
-    if (scope === "global") {
-      await openGlobalTab(topicId);
-    } else {
-      await openProjectTab(workspaceRoot, topicId);
+    try {
+      if (scope === "global") {
+        await openGlobalTab(topicId);
+      } else {
+        await openProjectTab(workspaceRoot, topicId);
+      }
+    } catch (err) {
+      // A cross-profile topicId (stale sidebar briefly showing the previous
+      // profile's tree right after a switch) is rejected by the backend with a
+      // "does not belong to the X profile" error. Refresh the sidebar so the
+      // stale entry is gone, and surface a localized notice instead of the raw
+      // English backend message.
+      const msg = String(err);
+      if (msg.includes("does not belong")) {
+        setProjectRevision((v) => v + 1);
+        await refreshTabMetas();
+        showToast(t("cowork.topicNotInProfile"), "warn");
+        return;
+      }
+      throw err;
     }
     await refreshTabMetas();
     setTabRevealSignal((signal) => signal + 1);
-  }, [closeTransientOverlays, openGlobalTab, openProjectTab, refreshTabMetas]);
+  }, [closeTransientOverlays, openGlobalTab, openProjectTab, refreshTabMetas, showToast, t]);
 
   const openSidebarImConnectionSession = useCallback(async (connection: SidebarImConnection) => {
     const target = mappedSessionTarget(connection.sessionId);
@@ -2035,6 +2129,7 @@ export default function App() {
 
   const onResumeSession = useCallback(
     async (session: SessionMeta) => {
+      window.dispatchEvent(new CustomEvent("cowork:reset-panel"));
       if (state.running) return;
       const scope = session.scope || (session.workspaceRoot ? "project" : "global");
       try {
@@ -2350,10 +2445,90 @@ export default function App() {
     </>
   );
 
+  const headerNode = !preferenceOpen && (
+    <header className="topicbar">
+      <div className="topicbar__identity">
+        <div className="topicbar__title-row">
+          {topicbarEditing ? (
+            <div className="topicbar__title-edit">
+              <input
+                autoFocus
+                className="topicbar__title-input"
+                value={topicTitleDraft}
+                onChange={(event) => setTopicTitleDraft(event.target.value)}
+                onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void commitActiveTopicRename();
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    cancelActiveTopicRename();
+                  }
+                }}
+                onBlur={() => void commitActiveTopicRename()}
+              />
+            </div>
+          ) : (
+            <h1 title={sidebarImDetailConnection ? topicbarTitle : topicTitle(activeTab)}>{topicbarTitle}</h1>
+          )}
+          <Tooltip label={t("topicBar.renameSession")}>
+            <button
+              className="topicbar__icon-btn"
+              type="button"
+              disabled={Boolean(sidebarImDetailConnection) || !activeTab?.topicId || topicbarEditing}
+              onClick={startActiveTopicRename}
+              aria-label={t("topicBar.renameSession")}
+            >
+              <Pencil size={14} />
+            </button>
+          </Tooltip>
+        </div>
+        {topicbarSubtitleVisible && (
+          <div className="topicbar__subtitle" title={topicbarSubtitleTitle}>
+            {topicbarWorkspaceLabel && <span>{topicbarWorkspaceLabel}</span>}
+            {topicbarImSourcePlatform && (
+              <span className={`topicbar__source-chip topicbar__source-chip--${topicbarImSourcePlatform}`}>
+                {topicbarImSourceLabel}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="topicbar__spacer" />
+      <div className="topicbar__actions">
+        {sessionActions}
+        <Tooltip label={t("workspace.changedTab")}>
+          <button
+            className="topicbar__action-btn topicbar__action-btn--label"
+            type="button"
+            aria-label={t("workspace.changedTab")}
+            aria-pressed={workspacePanelRenderable && rightDockMode === "changed"}
+            onClick={() => openRightDockMode("changed")}
+          >
+            <GitBranch size={14} />
+            <span>{t("workspace.changedTab")}</span>
+          </button>
+        </Tooltip>
+        <Tooltip label={t("topicBar.command")}>
+          <button
+            className="topicbar__action-btn topicbar__action-btn--label topicbar__action-btn--accent"
+            type="button"
+            aria-label={t("topicBar.command")}
+            onClick={() => void openPalette()}
+          >
+            <Command size={14} />
+            <span>{t("topicBar.command")}</span>
+          </button>
+        </Tooltip>
+      </div>
+    </header>
+  );
+
   const mainNode = (
     <main className="main">
       {preferenceOpen ? (
-        <PreferencePanel
+        <PreferencePanel 
           title={t("preference.title") || "编码偏好"}
           onClose={() => setPreferenceOpen(false)}
         />
@@ -2369,6 +2544,15 @@ export default function App() {
           <div className="loading-screen__spinner" />
           <span className="loading-screen__text">{t("common.loading")}</span>
         </div>
+      ) : state.meta?.expertSession ? (
+        <ExpertSessionView
+          key={state.meta.expertSession.teamId}
+          items={state.items}
+          teamName={state.meta.expertSession.teamName}
+          teamId={state.meta.expertSession.teamId}
+          running={state.running}
+          onSend={(task, mode, rounds) => void runExpertFromSession(state.meta!.expertSession!.teamId, task, mode, rounds)}
+        />
       ) : (
         <Transcript
           items={state.items}
@@ -2387,7 +2571,10 @@ export default function App() {
     </main>
   );
 
-  const footerNode = !sidebarImDetailConnection ? (
+  // Expert-session tabs render their own composer inside ExpertSessionView, so
+  // the normal chat Composer (footerNode) is suppressed for them to avoid a
+  // double-composer.
+  const footerNode = !sidebarImDetailConnection && !state.meta?.expertSession ? (
     <footer className="footer" ref={footerRef}>
       {showTodos && <TodoPanel todos={todos} onDismiss={() => setDismissedTodo(todoItem!.id)} />}
       {state.approval && (
@@ -2400,7 +2587,9 @@ export default function App() {
             approve(state.approval!.id, allow, session, persist);
           }}
           onRevisePlan={(text) => {
-            setPendingPlanRevision(text);
+            if (activeTabId) {
+              setPendingPlanRevisionsByTab((current) => ({ ...current, [activeTabId]: text }));
+            }
             approve(state.approval!.id, false, false, false);
           }}
           onExitPlan={() => {
@@ -2425,7 +2614,9 @@ export default function App() {
         />
       )}
       <Composer
+        key={`composer-${coworkActive ? "cowork" : "dev"}`}
         running={state.running}
+        paused={state.paused}
         collaborationMode={collaborationMode}
         toolApprovalMode={toolApprovalMode}
         goal={goal}
@@ -2437,11 +2628,9 @@ export default function App() {
         onCancel={cancel}
         onPauseToggle={pauseToggle}
         onCycleMode={cycleMode}
-        onSetMode={applyMode}
         onSetCollaborationMode={applyCollaborationMode}
         onSetToolApprovalMode={applyToolApprovalMode}
         onToggleYoloApprovalMode={toggleYoloApprovalMode}
-        onSetGoal={startGoal}
         onClearGoal={() => applyGoal("")}
         onSwitchModel={switchModel}
         onSetEffort={setEffort}
@@ -2463,8 +2652,22 @@ export default function App() {
       activeScope={activeTab?.scope}
       activeWorkspaceRoot={activeTab?.workspaceRoot}
       activeTopicId={activeTab?.topicId}
+      profile={coworkActive ? "cowork" : "dev"}
       imTopicSources={imTopicSources}
       onOpenTopic={handleOpenTopic}
+      onOpenExpertSession={async (teamId, teamName) => {
+        try {
+          const meta = await app.OpenExpertSessionTab(teamId, teamName);
+          // Switch to task center so the main area shows the expert tab's
+          // ExpertSessionView (not the sidebar ExpertPanel).
+          window.dispatchEvent(new CustomEvent("cowork:reset-panel"));
+          await refreshTabMetas();
+          await syncActiveTab(true);
+          if (meta?.id) {
+            setTimeout(() => { void refreshTabMetas(); void syncActiveTab(true); }, 1000);
+          }
+        } catch { /* ignore */ }
+      }}
       onOpenProjectHistory={openProjectHistory}
       onCreateTopic={(scope, workspaceRoot) => openBlankSession(scope, scope === "project" ? workspaceRoot : "")}
       onTopicsChanged={refreshProjectsAndTabs}
@@ -2494,12 +2697,20 @@ export default function App() {
       >
         {coworkActive && (
           <CoWorkLayout
+            headerNode={headerNode}
             mainNode={mainNode}
             footerNode={footerNode}
             projectTreeNode={projectTreeNode}
-            rightDockOpen={workspacePanelRenderable}
+            rightDockOpen={coworkDockRenderable}
             sidebarCollapsed={sidebarCollapsed}
-            sessionActions={sessionActions}
+            onNewSession={() => void handleNewTab()}
+            dockCwd={state.meta?.cwd}
+            dockMaximized={workspacePanelMaximized}
+            dockOnClose={() => closeWorkspacePanel()}
+            dockOnToggleMaximized={() => {
+              closeTransientOverlays();
+              setWorkspacePanelMaximized((value) => !value);
+            }}
           />
         )}
         <AppChrome
@@ -2514,9 +2725,9 @@ export default function App() {
           sidebarCollapsed={sidebarCollapsed}
           sidebarToggleTitle={sidebarToggleTitle}
           workspacePanelMaximized={workspacePanelMaximized}
-          workspacePanelRenderable={workspacePanelRenderable}
+          workspacePanelRenderable={coworkActive ? coworkDockRenderable : workspacePanelRenderable}
           workspaceTogglePressed={workspaceTogglePressed}
-          workspacePanelLabel={workspacePanelRenderable ? t("rightDock.collapse") : t("rightDock.expand")}
+          workspacePanelLabel={(coworkActive ? coworkDockRenderable : workspacePanelRenderable) ? t("rightDock.collapse") : t("rightDock.expand")}
           onToggleSidebar={toggleSidebar}
           onToggleWorkspacePanel={toggleWorkspacePanel}
           onTabChange={(id) => void handleTabChange(id)}
@@ -2529,7 +2740,11 @@ export default function App() {
           onSwitchProfile={(name) => void switchProfile(name).catch(() => { /* revert handled in switchProfile */ })}
         />
 
-        <aside className={`sidebar${sidebarCollapsed ? " sidebar--collapsed" : ""}`} aria-label={t("sidebar.navigation")}>
+          <aside 
+            className={`sidebar${sidebarCollapsed ? " sidebar--collapsed" : ""}`} 
+            aria-label={t("sidebar.navigation")}
+            style={{ paddingBottom: '8px' }}
+          >
           <button
             className="sidebar__new"
             onClick={() => {
@@ -2544,18 +2759,13 @@ export default function App() {
             {projectTreeNode}
           </section>
 
-          {/* 编码偏好: inline editor for the active mode's portrait (dev.md under
-              dev, cowork.md under cowork). Placed at the sidebar bottom so it is
-              always reachable from the coding layout; clicking replaces the main
-              transcript with PreferencePanel until closed. */}
-          <section className="cowork-sidebar__group" style={{ padding: '0 8px', marginTop: 'auto', marginBottom: '8px' }}>
+          <section className="cowork-sidebar__group" style={{ padding: '0 8px', marginBottom: '16px' }}>
             <button
               className={`cowork-sidebar__item ${preferenceOpen ? "cowork-sidebar__item--active" : ""}`}
               onClick={() => {
                 closeTransientOverlays();
                 setPreferenceOpen(true);
               }}
-              title={t("preference.title") || "编码偏好"}
             >
               <SlidersHorizontal size={14} />
               <span>{t("preference.title") || "编码偏好"}</span>
@@ -2579,83 +2789,7 @@ export default function App() {
 
         <section className="chat-pane">
           <>
-          <header className="topicbar">
-            <div className="topicbar__identity">
-              <div className="topicbar__title-row">
-                {topicbarEditing ? (
-                  <div className="topicbar__title-edit">
-                    <input
-                      autoFocus
-                      className="topicbar__title-input"
-                      value={topicTitleDraft}
-                      onChange={(event) => setTopicTitleDraft(event.target.value)}
-                      onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          void commitActiveTopicRename();
-                        }
-                        if (event.key === "Escape") {
-                          event.preventDefault();
-                          cancelActiveTopicRename();
-                        }
-                      }}
-                      onBlur={() => void commitActiveTopicRename()}
-                    />
-                  </div>
-                ) : (
-                  <h1 title={sidebarImDetailConnection ? topicbarTitle : topicTitle(activeTab)}>{topicbarTitle}</h1>
-                )}
-                <Tooltip label={t("topicBar.renameSession")}>
-                  <button
-                    className="topicbar__icon-btn"
-                    type="button"
-                    disabled={Boolean(sidebarImDetailConnection) || !activeTab?.topicId || topicbarEditing}
-                    onClick={startActiveTopicRename}
-                    aria-label={t("topicBar.renameSession")}
-                  >
-                    <Pencil size={14} />
-                  </button>
-                </Tooltip>
-              </div>
-              {topicbarSubtitleVisible && (
-                <div className="topicbar__subtitle" title={topicbarSubtitleTitle}>
-                  {topicbarWorkspaceLabel && <span>{topicbarWorkspaceLabel}</span>}
-                  {topicbarImSourcePlatform && (
-                    <span className={`topicbar__source-chip topicbar__source-chip--${topicbarImSourcePlatform}`}>
-                      {topicbarImSourceLabel}
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-            <div className="topicbar__spacer" />
-            <div className="topicbar__actions">
-              {sessionActions}
-              <Tooltip label={t("workspace.changedTab")}>
-                <button
-                  className="topicbar__action-btn topicbar__action-btn--label"
-                  type="button"
-                  aria-label={t("workspace.changedTab")}
-                  aria-pressed={workspacePanelRenderable && rightDockMode === "changed"}
-                  onClick={() => openRightDockMode("changed")}
-                >
-                  <GitBranch size={14} />
-                  <span>{t("workspace.changedTab")}</span>
-                </button>
-              </Tooltip>
-              <Tooltip label={t("topicBar.command")}>
-                <button
-                  className="topicbar__action-btn topicbar__action-btn--label topicbar__action-btn--accent"
-                  type="button"
-                  aria-label={t("topicBar.command")}
-                  onClick={() => void openPalette()}
-                >
-                  <Command size={14} />
-                  <span>{t("topicBar.command")}</span>
-                </button>
-              </Tooltip>
-            </div>
-          </header>
+          {!coworkActive && headerNode}
 
           {state.meta?.startupErr && (
             <div className="banner banner--error">{t("topbar.startupError", { msg: state.meta.startupErr })}</div>
@@ -2666,7 +2800,7 @@ export default function App() {
           {!coworkActive && (
             <>
               {mainNode}
-              {footerNode}
+              {!preferenceOpen && footerNode}
             </>
           )}
           </>
