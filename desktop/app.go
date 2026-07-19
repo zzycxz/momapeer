@@ -1882,7 +1882,7 @@ func migrateLegacyWorkspacesIntoProjects(profileKey string) {
 		changed = true
 	}
 	if changed {
-		_ = saveProjectsFile(profileKey, f)
+		_ = saveProjectsFile(f, profileKey)
 	}
 }
 

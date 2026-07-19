@@ -487,6 +487,12 @@ type CoworkConfig struct {
 	// coordinates, so most slides don't need per-step VLM perception. Empty = no
 	// template, the CUA builds from a blank deck.
 	PPTActiveTemplate string `toml:"ppt_active_template"`
+	// PPTMode selects how the ppt-wizard skill builds decks. "" / "template"
+	// (default) uses PPTActiveTemplate when set, falling back to a blank deck;
+	// "blank" always builds from scratch. The desktop cowork settings panel
+	// exposes this as a dropdown so the user can override the template-driven
+	// flow without clearing PPTActiveTemplate.
+	PPTMode string `toml:"ppt_mode"`
 	// SMTP configures outbound email (email_send). All fields required to enable
 	// sending; empty SMTPHost disables email_send (it returns a config error).
 	SMTP SMTPConfig `toml:"smtp"`
@@ -2053,6 +2059,29 @@ func ProjectSessionDir(workspaceRoot string) string {
 		root = abs
 	}
 	return filepath.Join(base, "projects", WorkspaceSlug(root), "sessions")
+}
+
+// ProjectSessionDirFor returns the per-workspace session directory partitioned
+// by profile: <config root>/projects/<slug>/<profileKey>/sessions. The default
+// profile (empty/"dev") is backward compatible with ProjectSessionDir — it
+// returns the un-profiled path. Empty when the workspace root doesn't resolve.
+// Used by desktopSessionDirFor so each tab's session lands in its own profile
+// partition and dev/cowork conversations don't mix.
+func ProjectSessionDirFor(workspaceRoot, profile string) string {
+	base := MemoryUserDir()
+	root := strings.TrimSpace(workspaceRoot)
+	if base == "" || root == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	key := ProfileNameKey(profile)
+	if key == "" || key == ProfileDev || key == "default" {
+		// Default partition: un-profiled path (backward compatible).
+		return filepath.Join(base, "projects", WorkspaceSlug(root), "sessions")
+	}
+	return filepath.Join(base, "projects", WorkspaceSlug(root), key, "sessions")
 }
 
 // WorkspaceSlug flattens an absolute workspace path into the directory name

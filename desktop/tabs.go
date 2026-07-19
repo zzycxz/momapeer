@@ -493,7 +493,21 @@ func (a *App) ListTabs() []TabMeta {
 // OpenProjectTab builds a controller scoped to workspaceRoot and opens a tab
 // for the given topic. If a tab with the same (workspaceRoot, topicID) is
 // already open, it just activates the existing tab.
-func (a *App) OpenProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
+// OpenProjectTab opens (or activates) a project-scope tab for the given
+// workspace and topic. The profile-aware form takes (workspaceRoot, topicID,
+// profile); the legacy form takes (workspaceRoot, topicID). The profile is
+// stamped onto the new tab so its controller builds in the right partition and
+// its sessions land in the per-profile session dir.
+func (a *App) OpenProjectTab(args ...string) (TabMeta, error) {
+	var workspaceRoot, topicID, profile string
+	switch len(args) {
+	case 2: // legacy: workspaceRoot, topicID
+		workspaceRoot, topicID = args[0], args[1]
+	case 3: // profile-aware: workspaceRoot, topicID, profile
+		workspaceRoot, topicID, profile = args[0], args[1], args[2]
+	default:
+		return TabMeta{}, fmt.Errorf("OpenProjectTab: expected 2 or 3 args, got %d", len(args))
+	}
 	if workspaceRoot == "" {
 		return TabMeta{}, fmt.Errorf("workspaceRoot is required")
 	}
@@ -501,7 +515,7 @@ func (a *App) OpenProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 		workspaceRoot = abs
 	}
 	saveWorkspace(workspaceRoot)
-	_ = addProject(workspaceRoot, "")
+	_ = addProject(workspaceRoot, "", profile)
 
 	a.mu.Lock()
 	// If already open, just activate.
@@ -526,6 +540,7 @@ func (a *App) OpenProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 		mode:             "normal",
 		toolApprovalMode: control.ToolApprovalAsk,
 		disabledMCP:      map[string]ServerView{},
+		profile:          profile,
 	}
 	tab.sink = &tabEventSink{tabID: tabID, app: a}
 
@@ -1387,8 +1402,17 @@ func loadTabsFile() desktopTabsFile {
 	return f
 }
 
-func loadProjectsFile() desktopProjectFile {
-	path := filepath.Join(desktopConfigDir(), desktopProjectsFile)
+// loadProjectsFile reads the projects index. When profileKey is supplied it
+// reads the per-profile file (<config>/<profile>/projects.json); without an
+// argument it reads the legacy un-profiled desktop-projects.json. A missing or
+// corrupt file yields an empty (normalized) desktopProjectFile.
+func loadProjectsFile(profileKey ...string) desktopProjectFile {
+	var path string
+	if len(profileKey) > 0 && strings.TrimSpace(profileKey[0]) != "" {
+		path = projectsFilePath(profileKey[0])
+	} else {
+		path = filepath.Join(desktopConfigDir(), desktopProjectsFile)
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return desktopProjectFile{}
@@ -1400,17 +1424,25 @@ func loadProjectsFile() desktopProjectFile {
 
 var projectsMu sync.Mutex
 
-func saveProjectsFile(f desktopProjectFile) error {
+// saveProjectsFile writes the projects index. When profileKey is supplied it
+// writes the per-profile file; otherwise it writes the legacy un-profiled
+// desktop-projects.json.
+func saveProjectsFile(f desktopProjectFile, profileKey ...string) error {
 	projectsMu.Lock()
 	defer projectsMu.Unlock()
-	dir := desktopConfigDir()
+	var path string
+	if len(profileKey) > 0 && strings.TrimSpace(profileKey[0]) != "" {
+		path = projectsFilePath(profileKey[0])
+	} else {
+		path = filepath.Join(desktopConfigDir(), desktopProjectsFile)
+	}
+	dir := filepath.Dir(path)
 	os.MkdirAll(dir, 0o755)
 	f = normalizeProjectsFile(f)
 	b, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(dir, desktopProjectsFile)
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
 		return err
@@ -1639,41 +1671,41 @@ func globalProjectTitle() string {
 	return "Global"
 }
 
-func addProject(root, title string) error {
+func addProject(root, title string, profileKey ...string) error {
 	root = normalizeProjectRoot(root)
 	if root == "" {
 		return fmt.Errorf("project root is required")
 	}
 	title = strings.TrimSpace(title)
-	f := loadProjectsFile()
+	f := loadProjectsFile(profileKey...)
 	for i, p := range f.Projects {
 		if p.Root == root {
 			if title != "" {
 				f.Projects[i].Title = title
 			}
-			return saveProjectsFile(f)
+			return saveProjectsFile(f, profileKey...)
 		}
 	}
 	f.Projects = append(f.Projects, desktopProject{Root: root, Title: title})
-	return saveProjectsFile(f)
+	return saveProjectsFile(f, profileKey...)
 }
 
-func renameProject(root, title string) error {
+func renameProject(root, title string, profileKey ...string) error {
 	title = strings.TrimSpace(title)
-	f := loadProjectsFile()
+	f := loadProjectsFile(profileKey...)
 	if strings.TrimSpace(root) == "" {
 		f.GlobalTitle = title
-		return saveProjectsFile(f)
+		return saveProjectsFile(f, profileKey...)
 	}
 	root = normalizeProjectRoot(root)
 	for i, p := range f.Projects {
 		if p.Root == root {
 			f.Projects[i].Title = title
-			return saveProjectsFile(f)
+			return saveProjectsFile(f, profileKey...)
 		}
 	}
 	f.Projects = append(f.Projects, desktopProject{Root: root, Title: title})
-	return saveProjectsFile(f)
+	return saveProjectsFile(f, profileKey...)
 }
 
 func setProjectColor(root, color string) error {
@@ -1695,9 +1727,9 @@ func setProjectColor(root, color string) error {
 	return saveProjectsFile(f)
 }
 
-func removeProject(root string) error {
+func removeProject(root string, profileKey ...string) error {
 	root = normalizeProjectRoot(root)
-	f := loadProjectsFile()
+	f := loadProjectsFile(profileKey...)
 	projects := make([]desktopProject, 0, len(f.Projects))
 	for _, p := range f.Projects {
 		if p.Root != root {
@@ -1705,7 +1737,7 @@ func removeProject(root string) error {
 		}
 	}
 	f.Projects = projects
-	return saveProjectsFile(f)
+	return saveProjectsFile(f, profileKey...)
 }
 
 // --- topic helpers ----------------------------------------------------------
@@ -1822,7 +1854,19 @@ func loadTopicTitle(workspaceRoot, topicID string) string {
 	return loadTopicTitles(workspaceRoot)[topicID]
 }
 
-func loadTopicTitleSource(workspaceRoot, topicID string) string {
+// loadTopicTitleSource returns the title source ("auto"/"manual") for a topic.
+// The profile-aware form takes (workspaceRoot, profile, topicID); the legacy
+// form takes (workspaceRoot, topicID). The profile is currently unused (titles
+// are global per-workspace, not per-profile) but the argument is accepted so
+// callers can pass it without a separate code path.
+func loadTopicTitleSource(workspaceRoot string, rest ...string) string {
+	topicID := ""
+	if len(rest) == 1 {
+		topicID = rest[0]
+	} else if len(rest) >= 2 {
+		// rest[0] is profile (ignored for now), rest[1] is topicID.
+		topicID = rest[1]
+	}
 	return loadTopicTitleSources(workspaceRoot)[topicID]
 }
 
@@ -1905,7 +1949,21 @@ func deleteTopicCreatedAt(workspaceRoot, topicID string) {
 // repair its missing index.
 var topicIndexMu sync.Mutex
 
-func ensureTopicIndexed(scope, workspaceRoot, topicID, title, source string) error {
+// ensureTopicIndexed records a topic in the projects index and writes its title
+// sidecar. The profile-aware form takes scope, root, profile, topicID, title,
+// source (6 args); the legacy form is scope, root, topicID, title, source (5
+// args) and operates on the un-profiled index. The profile routes the projects
+// index to the per-profile file so dev/cowork topics stay separated.
+func ensureTopicIndexed(args ...string) error {
+	var scope, workspaceRoot, topicID, title, source, profile string
+	switch len(args) {
+	case 5: // legacy: scope, root, topicID, title, source
+		scope, workspaceRoot, topicID, title, source = args[0], args[1], args[2], args[3], args[4]
+	case 6: // profile-aware: scope, root, profile, topicID, title, source
+		scope, workspaceRoot, profile, topicID, title, source = args[0], args[1], args[2], args[3], args[4], args[5]
+	default:
+		return fmt.Errorf("ensureTopicIndexed: expected 5 or 6 args, got %d", len(args))
+	}
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" {
 		return fmt.Errorf("topicID is required")
@@ -1928,15 +1986,15 @@ func ensureTopicIndexed(scope, workspaceRoot, topicID, title, source string) err
 	if err := setTopicTitleWithSource(workspaceRoot, topicID, title, source); err != nil {
 		return err
 	}
-	f := loadProjectsFile()
+	f := loadProjectsFile(profile)
 	if workspaceRoot == "" {
 		f.GlobalTopics = prependUniqueString(f.GlobalTopics, topicID)
-		return saveProjectsFile(f)
+		return saveProjectsFile(f, profile)
 	}
 	for i, p := range f.Projects {
 		if p.Root == workspaceRoot {
 			f.Projects[i].Topics = prependUniqueString(p.Topics, topicID)
-			return saveProjectsFile(f)
+			return saveProjectsFile(f, profile)
 		}
 	}
 	f.Projects = append(f.Projects, desktopProject{Root: workspaceRoot, Topics: []string{topicID}})
@@ -2285,7 +2343,22 @@ type TopicMeta struct {
 }
 
 // CreateTopic creates a new topic under a project workspace and returns its metadata.
-func (a *App) CreateTopic(scope, workspaceRoot, title string) (TopicMeta, error) {
+// CreateTopic registers a new topic in the projects index and writes its title
+// sidecar. The profile-aware form takes (scope, workspaceRoot, profile, title);
+// the legacy form takes (scope, workspaceRoot, title). The profile routes the
+// topic into the matching per-profile projects index so dev/cowork topics stay
+// separated. An empty profile defaults to the un-profiled index (backward
+// compatible).
+func (a *App) CreateTopic(args ...string) (TopicMeta, error) {
+	var scope, workspaceRoot, title, profile string
+	switch len(args) {
+	case 3: // legacy: scope, workspaceRoot, title
+		scope, workspaceRoot, title = args[0], args[1], args[2]
+	case 4: // profile-aware: scope, workspaceRoot, profile, title
+		scope, workspaceRoot, profile, title = args[0], args[1], args[2], args[3]
+	default:
+		return TopicMeta{}, fmt.Errorf("CreateTopic: expected 3 or 4 args, got %d", len(args))
+	}
 	trimmedTitle := strings.TrimSpace(title)
 	titleSource := topicTitleSourceManual
 	if trimmedTitle == "" {
@@ -2301,7 +2374,7 @@ func (a *App) CreateTopic(scope, workspaceRoot, title string) (TopicMeta, error)
 		if abs, err := filepath.Abs(workspaceRoot); err == nil {
 			workspaceRoot = abs
 		}
-		_ = addProject(workspaceRoot, "")
+		_ = addProject(workspaceRoot, "", profile)
 	}
 	if err := setTopicTitleWithSource(workspaceRoot, topicID, trimmedTitle, titleSource); err != nil {
 		return TopicMeta{}, err
@@ -2311,15 +2384,15 @@ func (a *App) CreateTopic(scope, workspaceRoot, title string) (TopicMeta, error)
 	}
 	// New topics should appear first in their project/global group so the item
 	// just created is immediately visible and selected in the sidebar.
-	f := loadProjectsFile()
+	f := loadProjectsFile(profile)
 	if workspaceRoot == "" {
 		f.GlobalTopics = prependUniqueString(f.GlobalTopics, topicID)
-		_ = saveProjectsFile(f)
+		_ = saveProjectsFile(f, profile)
 	} else {
 		for i, p := range f.Projects {
 			if p.Root == workspaceRoot {
 				f.Projects[i].Topics = prependUniqueString(p.Topics, topicID)
-				_ = saveProjectsFile(f)
+				_ = saveProjectsFile(f, profile)
 				break
 			}
 		}
