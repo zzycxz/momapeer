@@ -542,6 +542,18 @@ export function onSchedulerChanged(cb: () => void): () => void {
   return () => {};
 }
 
+// onCalendarChanged fires when the calendar's event set changes (event added,
+// edited, deleted, or imported). Payload-free — the calendar panel re-lists on
+// this event so the grid and upcoming list stay live without polling. The
+// backend emits "calendar:changed" from the calendar tool after every mutating
+// operation.
+export function onCalendarChanged(cb: () => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("calendar:changed", () => cb());
+  }
+  return () => {};
+}
+
 // onSchedulerNotice fires when a task with OutputMode="notify" runs (in-app
 // desktop toast). Payload: {name, result}. The toast layer subscribes once at
 // app root so notices surface even when the user isn't on the automation tab.
