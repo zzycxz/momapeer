@@ -152,3 +152,5 @@ var docsAndIssueTerms = []string{
 	"prd", "issue", "requirements", "spec", "proposal", "roadmap",
 	"需求", "产品文档", "接口文档", "方案", "规划",
 }
+func NormalizeAutoPlan(mode string) string { return mode }
+const AutoPlanOn = "on"

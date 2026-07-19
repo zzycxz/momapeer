@@ -323,19 +323,28 @@ type BuiltInMCPConfig struct {
 // These are standalone API tools (not chat-model features) that consume
 // tokens from the Jiutian platform separately from the chat model.
 type JiutianConfig struct {
-	ImageUnderstand bool `toml:"image_understand"` // image_understand tool (LLMImage2Text)
-	ImageGenerate   bool `toml:"image_generate"`   // image_generate tool (cntxt2image)
-	VideoUnderstand bool `toml:"video_understand"` // video_understand tool (video_to_text)
+	ImageUnderstand bool   `toml:"image_understand"`
+	ImageGenerate   bool   `toml:"image_generate"`
+	VideoUnderstand bool   `toml:"video_understand"`
+	BaseDomain      string `toml:"base_domain"`
 }
+
+func (j JiutianConfig) BaseDomainOrDefault() string { return j.BaseDomain }
 
 // DreamConfig controls the background self-evolution agents: Dream consolidates
 // session knowledge into project memory, Distill extracts repeated workflows
 // into reusable skills. Intervals are in days; a value <= 0 falls back to the
 // default so a partially-specified [dream] section still behaves sanely.
 type DreamConfig struct {
-	Enabled         bool `toml:"enabled"`          // master switch; false disables both background agents
-	DreamInterval   int  `toml:"dream_interval"`   // days between automatic Dream runs; 0 = default 7
-	DistillInterval int  `toml:"distill_interval"` // days between automatic Distill runs; 0 = default 30
+	Enabled         bool `toml:"enabled"`
+	DreamInterval   int  `toml:"dream_interval"`
+	DistillInterval int  `toml:"distill_interval"`
+	SkillColdDays   int  `toml:"skill_cold_days"`
+}
+
+func (d DreamConfig) SkillColdDaysEffective() int {
+	if d.SkillColdDays > 0 { return d.SkillColdDays }
+	return 90
 }
 
 // DefaultDreamInterval is the Dream run cadence when [dream].dream_interval is unset.
@@ -439,6 +448,7 @@ type CoworkConfig struct {
 	// coordinates, so most slides don't need per-step VLM perception. Empty = no
 	// template, the CUA builds from a blank deck.
 	PPTActiveTemplate string `toml:"ppt_active_template"`
+	PPTMode           string `toml:"ppt_mode"`
 	// SMTP configures outbound email (email_send). All fields required to enable
 	// sending; empty SMTPHost disables email_send (it returns a config error).
 	SMTP SMTPConfig `toml:"smtp"`
@@ -971,7 +981,8 @@ type AgentConfig struct {
 	// OutputStyle selects a persona/tone block folded into the system prompt at
 	// startup (a built-in like "explanatory"/"learning"/"concise", or a custom
 	// .momapeer/output-styles/<name>.md). Empty = the unmodified prompt.
-	OutputStyle string `toml:"output_style"`
+	OutputStyle   string `toml:"output_style"`
+	FastTaskModel string `toml:"fast_task_model"`
 	// AutoPlan controls whether interactive turns that look multi-step start in
 	// plan mode automatically: "off" keeps plan mode manual, "on" enables the
 	// approval gate. Legacy "ask" is treated as "on".
@@ -2205,3 +2216,4 @@ func (c *Config) providerNames() string {
 	}
 	return strings.Join(names, ", ")
 }
+func SessionDirFor(profile string) string { return "" }

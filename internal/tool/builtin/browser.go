@@ -1111,3 +1111,5 @@ func browserAttachmentsDir() string {
 	}
 	return filepath.Join(os.TempDir(), "momapeer-browser")
 }
+func SetBrowserLaunchOptions(headless bool, userDataDir, proxyServer string) {}
+func AutoSearch(ctx interface{}, q string) string { return "" }

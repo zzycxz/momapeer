@@ -1,0 +1,181 @@
+{
+  "hash": "42e0b487",
+  "configHash": "5c1eb230",
+  "lockfileHash": "3f996e3c",
+  "browserHash": "c8f35bca",
+  "optimized": {
+    "react/jsx-dev-runtime": {
+      "src": "../../node_modules/.pnpm/react@19.2.7/node_modules/react/jsx-dev-runtime.js",
+      "file": "react_jsx-dev-runtime.js",
+      "fileHash": "f57dfe96",
+      "needsInterop": true
+    },
+    "react": {
+      "src": "../../node_modules/.pnpm/react@19.2.7/node_modules/react/index.js",
+      "file": "react.js",
+      "fileHash": "04b991ec",
+      "needsInterop": true
+    },
+    "react-dom/client": {
+      "src": "../../node_modules/.pnpm/react-dom@19.2.7_react@19.2.7/node_modules/react-dom/client.js",
+      "file": "react-dom_client.js",
+      "fileHash": "08609035",
+      "needsInterop": true
+    },
+    "lucide-react": {
+      "src": "../../node_modules/.pnpm/lucide-react@1.17.0_react@19.2.7/node_modules/lucide-react/dist/esm/lucide-react.mjs",
+      "file": "lucide-react.js",
+      "fileHash": "f8077c67",
+      "needsInterop": false
+    },
+    "react-dom": {
+      "src": "../../node_modules/.pnpm/react-dom@19.2.7_react@19.2.7/node_modules/react-dom/index.js",
+      "file": "react-dom.js",
+      "fileHash": "5a3968d7",
+      "needsInterop": true
+    },
+    "react-markdown": {
+      "src": "../../node_modules/.pnpm/react-markdown@10.1.0_@types+react@19.2.17_react@19.2.7/node_modules/react-markdown/index.js",
+      "file": "react-markdown.js",
+      "fileHash": "2b647e91",
+      "needsInterop": false
+    },
+    "rehype-katex": {
+      "src": "../../node_modules/.pnpm/rehype-katex@7.0.1/node_modules/rehype-katex/index.js",
+      "file": "rehype-katex.js",
+      "fileHash": "9a5dc1c1",
+      "needsInterop": false
+    },
+    "remark-gfm": {
+      "src": "../../node_modules/.pnpm/remark-gfm@4.0.1/node_modules/remark-gfm/index.js",
+      "file": "remark-gfm.js",
+      "fileHash": "2b4cc2be",
+      "needsInterop": false
+    },
+    "remark-math": {
+      "src": "../../node_modules/.pnpm/remark-math@6.0.0/node_modules/remark-math/index.js",
+      "file": "remark-math.js",
+      "fileHash": "75257db9",
+      "needsInterop": false
+    },
+    "qrcode.react": {
+      "src": "../../node_modules/.pnpm/qrcode.react@4.2.0_react@19.2.7/node_modules/qrcode.react/lib/esm/index.js",
+      "file": "qrcode__react.js",
+      "fileHash": "b4a05349",
+      "needsInterop": false
+    },
+    "highlight.js/lib/core": {
+      "src": "../../node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/core.js",
+      "file": "highlight__js_lib_core.js",
+      "fileHash": "b1d7bb54",
+      "needsInterop": false
+    },
+    "highlight.js/lib/languages/bash": {
+      "src": "../../node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/bash.js",
+      "file": "highlight__js_lib_languages_bash.js",
+      "fileHash": "a3dde4f4",
+      "needsInterop": false
+    },
+    "highlight.js/lib/languages/css": {
+      "src": "../../node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/css.js",
+      "file": "highlight__js_lib_languages_css.js",
+      "fileHash": "6643eecb",
+      "needsInterop": false
+    },
+    "highlight.js/lib/languages/diff": {
+      "src": "../../node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/diff.js",
+      "file": "highlight__js_lib_languages_diff.js",
+      "fileHash": "bdb6a4c7",
+      "needsInterop": false
+    },
+    "highlight.js/lib/languages/go": {
+      "src": "../../node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/go.js",
+      "file": "highlight__js_lib_languages_go.js",
+      "fileHash": "c3ae563e",
+      "needsInterop": false
+    },
+    "highlight.js/lib/languages/javascript": {
+      "src": "../../node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/javascript.js",
+      "file": "highlight__js_lib_languages_javascript.js",
+      "fileHash": "4af6a2a6",
+      "needsInterop": false
+    },
+    "highlight.js/lib/languages/json": {
+      "src": "../../node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/json.js",
+      "file": "highlight__js_lib_languages_json.js",
+      "fileHash": "7fd3465e",
+      "needsInterop": false
+    },
+    "highlight.js/lib/languages/markdown": {
+      "src": "../../node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/markdown.js",
+      "file": "highlight__js_lib_languages_markdown.js",
+      "fileHash": "eeec192e",
+      "needsInterop": false
+    },
+    "highlight.js/lib/languages/python": {
+      "src": "../../node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/python.js",
+      "file": "highlight__js_lib_languages_python.js",
+      "fileHash": "a8385734",
+      "needsInterop": false
+    },
+    "highlight.js/lib/languages/rust": {
+      "src": "../../node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/rust.js",
+      "file": "highlight__js_lib_languages_rust.js",
+      "fileHash": "db9740af",
+      "needsInterop": false
+    },
+    "highlight.js/lib/languages/typescript": {
+      "src": "../../node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/typescript.js",
+      "file": "highlight__js_lib_languages_typescript.js",
+      "fileHash": "871b6705",
+      "needsInterop": false
+    },
+    "highlight.js/lib/languages/xml": {
+      "src": "../../node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/xml.js",
+      "file": "highlight__js_lib_languages_xml.js",
+      "fileHash": "8c50e97c",
+      "needsInterop": false
+    },
+    "highlight.js/lib/languages/yaml": {
+      "src": "../../node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/yaml.js",
+      "file": "highlight__js_lib_languages_yaml.js",
+      "fileHash": "7698b181",
+      "needsInterop": false
+    },
+    "@tanstack/react-virtual": {
+      "src": "../../node_modules/.pnpm/@tanstack+react-virtual@3.1_b7da0afb5367f80b9699098c790b90d7/node_modules/@tanstack/react-virtual/dist/esm/index.js",
+      "file": "@tanstack_react-virtual.js",
+      "fileHash": "a6bbd600",
+      "needsInterop": false
+    }
+  },
+  "chunks": {
+    "chunk-XTFYPAMV": {
+      "file": "chunk-XTFYPAMV.js"
+    },
+    "chunk-4MAYDOGC": {
+      "file": "chunk-4MAYDOGC.js"
+    },
+    "chunk-2VKQIYRC": {
+      "file": "chunk-2VKQIYRC.js"
+    },
+    "chunk-JACYO6PI": {
+      "file": "chunk-JACYO6PI.js"
+    },
+    "chunk-O4FXRQZU": {
+      "file": "chunk-O4FXRQZU.js"
+    },
+    "chunk-KJAVHS33": {
+      "file": "chunk-KJAVHS33.js"
+    },
+    "chunk-GGBFPNQ2": {
+      "file": "chunk-GGBFPNQ2.js"
+    },
+    "chunk-WWXQYT6Q": {
+      "file": "chunk-WWXQYT6Q.js"
+    },
+    "chunk-DC5AMYBS": {
+      "file": "chunk-DC5AMYBS.js"
+    }
+  }
+}

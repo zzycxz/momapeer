@@ -27,6 +27,7 @@ type Set struct {
 type Options struct {
 	CWD     string
 	UserDir string
+	Profile string
 }
 
 // Load discovers all memory for a session: the hierarchical docs and the

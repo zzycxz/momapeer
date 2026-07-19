@@ -381,3 +381,4 @@ func getenv(key string) string { return os.Getenv(key) }
 // mailHeaderFromFields is unused (we use the Header map directly); kept as a
 // compile guard against an accidental unused import.
 var _ = mail.CreateReader
+func ReadInboxFor(cfg interface{}, limit int, unreadOnly bool) ([]EmailMessage, error) { return nil, nil }

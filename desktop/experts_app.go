@@ -196,7 +196,7 @@ func (r *desktopExpertRunner) Run(ctx context.Context, model, systemPrompt, task
 	}
 	// Build a provider for this model. boot.NewProvider auto-wraps it with the
 	// rate-limit decorator (background priority, since this runs in a team).
-	prov, err := boot.NewProviderWithProxy(entry, netclient.ProxySpec{Mode: netclient.ModeAuto})
+	prov, err := boot.NewProviderWithProxy(entry, netclient.ProxySpec{Mode: netclient.ModeAuto}, false, false)
 	if err != nil {
 		return "", fmt.Errorf("build provider for %s: %w", entry.Model, err)
 	}

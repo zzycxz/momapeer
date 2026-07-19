@@ -438,3 +438,4 @@ func DreamInFlight(kind DreamKind) bool {
 	defer dreamCoord.mu.Unlock()
 	return dreamCoord.inFlight[kind]
 }
+func RegisterDistillComplete(fn func() string) {}

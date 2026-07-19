@@ -337,7 +337,7 @@ func recognizeScreenshot(ctx context.Context, modelRef, imageB64 string) (string
 	if err != nil {
 		return "", err
 	}
-	prov, err := boot.NewProviderWithProxy(entry, netclient.ProxySpec{Mode: netclient.ModeAuto})
+	prov, err := boot.NewProviderWithProxy(entry, netclient.ProxySpec{Mode: netclient.ModeAuto}, false, false)
 	if err != nil {
 		return "", fmt.Errorf("build VLM provider: %w", err)
 	}

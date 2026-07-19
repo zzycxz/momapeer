@@ -688,3 +688,4 @@ func saveHistory(path string, recs []RunRecord) error {
 	}
 	return os.Rename(tmp, path)
 }
+func (s *Scheduler) SetAccountProber(p interface{}) {}

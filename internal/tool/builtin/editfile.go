@@ -95,3 +95,4 @@ func oldStringNotFoundError(path, oldString, content string) error {
 	}
 	return fmt.Errorf("old_string not found in %s", path)
 }
+func SetPostEditHook(fn interface{}) {}

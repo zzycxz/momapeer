@@ -52,6 +52,7 @@ type Spec struct {
 	// the server omits annotations.readOnlyHint. It is for first-party adapters
 	// with known semantics; user-configured plugins should rely on MCP metadata.
 	ReadOnlyToolNames map[string]bool
+	ExposeToolNames   map[string]bool
 	// StripRawPrefix, when non-empty, removes this prefix from each MCP tool's
 	// raw name before namespacing. For example, StripRawPrefix="codegraph_" turns
 	// "codegraph_context" into "context", yielding "mcp__codegraph__context"

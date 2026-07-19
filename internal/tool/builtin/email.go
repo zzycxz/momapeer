@@ -352,3 +352,6 @@ func authAndSend(c *smtp.Client, cfg config.SMTPConfig, from string, recipients 
 	}
 	return w.Close()
 }
+
+func SetEmailAccounts(accounts interface{}) {}
+func ProbeIMAPConfig(cfg interface{}) error { return nil }

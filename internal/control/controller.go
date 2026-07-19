@@ -248,6 +248,8 @@ type Options struct {
 	// no confinement). Frontends pass the cwd they launched the session in.
 	WorkspaceRoot string
 	AutoPlan      string
+	DreamProvider provider.Provider
+	RAGContextFn  func(ctx context.Context, query string) string
 	// GoalJudge enables the independent goal judge: when the model reports
 	// [goal:complete], a separate LLM call verifies completion based on the
 	// transcript. nil disables the judge (model self-report is trusted).
@@ -2305,8 +2307,8 @@ func (c *Controller) maybeDreamDistill(ctx context.Context) {
 	// self-evolution is disabled or not yet due.
 	// Tracked on autosaveWG so Close drains these instead of orphaning a
 	// background dream/distill mid-write to a closing store.
-	agent.SpawnDream(ctx, c.sessionDir, c.executor.Provider(), c.reg, c.executor.Session(), c.sink, &c.autosaveWG)
-	agent.SpawnDistill(ctx, c.sessionDir, c.executor.Provider(), c.reg, c.executor.Session(), c.sink, &c.autosaveWG)
+	agent.SpawnDream(ctx, c.sessionDir, c.executor.Provider(), c.reg, c.executor.Session(), c.sink)
+	agent.SpawnDistill(ctx, c.sessionDir, c.executor.Provider(), c.reg, c.executor.Session(), c.sink)
 }
 
 // TriggerDream runs a Dream consolidation pass on demand, blocking until it
@@ -3221,3 +3223,5 @@ func (c *Controller) emitRememberResult(r RememberResult) {
 		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf(i18n.M.PermissionAlreadyAllowedFmt, r.Path, r.CoveredBy)})
 	}
 }
+type ProfileView struct{ Path, Content string }
+func (c *Controller) Profile() ProfileView { return ProfileView{} }

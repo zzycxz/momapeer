@@ -840,3 +840,4 @@ func jiutianImageUnderstand(ctx context.Context, imageParam string) (string, err
 	}
 	return result.Result.Text, nil
 }
+func SetVLMBridge(fn interface{}) {}

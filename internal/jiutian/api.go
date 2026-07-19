@@ -86,3 +86,6 @@ func Truncate(s string, n int) string {
 	}
 	return s[:cut] + "..."
 }
+
+func SetClient(c interface{}) {}
+func SetBaseDomain(base string) {}

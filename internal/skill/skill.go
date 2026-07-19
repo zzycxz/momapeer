@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/zzycxz/momapeer/internal/config"
 	"github.com/zzycxz/momapeer/internal/frontmatter"
@@ -69,6 +70,7 @@ type Skill struct {
 	// index from the full (unfiltered) store; the filtered store still omits
 	// disabled skills entirely, keeping them uncallable.
 	Disabled bool
+	Cold      bool
 }
 
 // IsValidName reports whether name is a usable skill identifier.
@@ -88,6 +90,8 @@ type Options struct {
 	// os.Stderr. Set to io.Discard to suppress output (e.g. during model
 	// switch inside a bubbletea session).
 	Stderr io.Writer
+	StateDir        string
+	LegacyStatePath string
 }
 
 // Store resolves skills across the configured roots.
@@ -657,3 +661,5 @@ func dedupePaths(paths []string) []string {
 func splitFrontmatter(s string) (map[string]string, string) {
 	return frontmatter.Split(s)
 }
+
+func (s *Store) Usage() interface{ ColdSkillNames(time.Duration, bool, []string) []string } { return nil }

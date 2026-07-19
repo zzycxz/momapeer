@@ -509,3 +509,4 @@ func migrateLegacyCoworkEnv() {
 	// Every non-empty entry made it into the store; drop the plaintext residue.
 	_ = os.Remove(coworkEnvPath())
 }
+func openInFileExplorer(path string) error { return nil }

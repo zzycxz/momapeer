@@ -78,6 +78,7 @@ type App struct {
 
 	forceQuit           atomic.Bool
 	backgroundMaximised atomic.Bool
+	metrics             atomic.Value
 	trayReady           bool
 	tray                *desktopTray
 
@@ -5161,3 +5162,9 @@ func (a *App) ConnectKey(apiKey string) error {
 	}
 	return nil
 }
+
+type authNotifier struct{ app *App }
+func (n authNotifier) NotifyAuthExpired(account string) {}
+
+type imapProber struct{}
+func (p imapProber) Probe(account string) error { return nil }

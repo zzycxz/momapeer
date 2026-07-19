@@ -88,6 +88,8 @@ const (
 	// wrapper prefix), so a frontend can display it to the user as confirmation.
 	// Frontends use Steer to know a queued message has been delivered.
 	Steer
+	Paused
+	Resumed
 )
 
 // Level classifies a Notice so sinks can style or filter it.

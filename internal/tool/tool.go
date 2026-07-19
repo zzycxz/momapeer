@@ -215,3 +215,5 @@ func (r *Registry) Schemas() []provider.ToolSchema {
 	}
 	return out
 }
+
+func (r *Registry) Hide(name string) {}

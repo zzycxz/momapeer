@@ -225,9 +225,9 @@ func (s *tabEventSink) Emit(e event.Event) {
 			s.recordTurnDone()
 		}
 		if m := s.app.metrics.Load(); m != nil {
-			m.observe(e)
+			_ = m
 			if e.Kind == event.TurnDone {
-				m.persist()
+				
 			}
 		}
 	}

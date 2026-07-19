@@ -899,7 +899,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// longer load into the per-turn prefix (the portrait layer is the only thing
 	// injected) — the model reaches saved facts on demand, so the index stays out
 	// of every turn.
-	reg.Add(memory.NewRememberTool(mem.Store))
+	reg.Add(memory.NewRememberTool(mem.Store, nil))
 	reg.Add(memory.NewForgetTool(mem.Store))
 	reg.Add(memory.NewRecallTool(mem.Store))
 
