@@ -89,6 +89,15 @@ func TestBuiltinTeamsExpectedIDs(t *testing.T) {
 		"builtin_meeting",
 		"builtin_project",
 		"builtin_email",
+		"builtin_college_major",
+		"builtin_event_predict",
+		"builtin_research",
+		"builtin_legal",
+		"builtin_medical",
+		"builtin_exam_plan",
+		"builtin_stock",
+		"builtin_operation",
+		"builtin_dev_arch",
 	}
 	got := make([]string, 0, len(BuiltinTeams))
 	for _, tm := range BuiltinTeams {
@@ -100,6 +109,33 @@ func TestBuiltinTeamsExpectedIDs(t *testing.T) {
 	for i, id := range want {
 		if got[i] != id {
 			t.Fatalf("BuiltinTeams[%d]: expected ID %q, got %q (order matters — migration depends on stable IDs)", i, id, got[i])
+		}
+	}
+}
+
+// TestBuiltinTeamsAllowSearch pins the AllowSearch design intent: the three
+// scenario teams that need real-time data opt in (true), and everything else
+// stays on the fast one-shot path (false). If someone flips a team's flag by
+// mistake, this catches it — a wrong default either makes a research team
+// answer stale, or makes a translation team burn the RPM budget on useless
+// searches.
+func TestBuiltinTeamsAllowSearch(t *testing.T) {
+	wantSearch := map[string]bool{
+		"builtin_college_major": true,
+		"builtin_event_predict": true,
+		"builtin_research":      true,
+	}
+	for _, tm := range BuiltinTeams {
+		got := tm.AllowSearch
+		want, listed := wantSearch[tm.ID]
+		if listed {
+			if !got || !want {
+				t.Errorf("team %q should have AllowSearch=true (it needs real-time data)", tm.ID)
+			}
+		} else {
+			if got {
+				t.Errorf("team %q should have AllowSearch=false (default; user can enable in panel)", tm.ID)
+			}
 		}
 	}
 }

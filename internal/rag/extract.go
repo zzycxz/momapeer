@@ -21,6 +21,8 @@ package rag
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -33,8 +35,27 @@ import (
 // Extractor turns one chunk of text into entities + relations. The default
 // implementation calls an LLM (九天/OpenAI-compatible /chat/completions with a
 // JSON schema); a no-op stub is used in tests.
+//
+// nodePrompt and edgePrompt override the default extraction prompts when
+// non-empty. edgePrompt must contain exactly two %s verbs (known-nodes list,
+// chunk text). Pass "" for both to use the built-in general prompts.
 type Extractor interface {
-	Extract(ctx context.Context, chunk string) (ExtractResult, error)
+	Extract(ctx context.Context, chunk string, nodePrompt, edgePrompt string) (ExtractResult, error)
+}
+
+// BudgetSetter is an optional capability an Extractor may implement so boot
+// can install the global RPM limiter. Extractors that talk HTTP directly
+// (instead of going through the provider layer) need this to share the
+// per-minute quota with all other LLM calls. Type-assert to discover support.
+type BudgetSetter interface {
+	SetBudget(acquirer BudgetAcquirer, key string)
+}
+
+// BudgetAcquirer gates a request through the global RPM limiter. It's the
+// subset of *provider.RequestBudget this package needs, as an interface to
+// avoid a rag→provider dependency.
+type BudgetAcquirer interface {
+	Acquire(ctx context.Context, key string, priority bool) error
 }
 
 // ExtractResult is the parsed LLM output for one chunk.
@@ -58,11 +79,11 @@ type PipelineConfig struct {
 // errors" over throughput.
 func DefaultPipelineConfig() PipelineConfig {
 	return PipelineConfig{
-		Concurrency: 1,
+		Concurrency: 3,
 		Interval:    3 * time.Second,
 		MaxRetries:  3,
 		RetryBase:   2 * time.Second,
-		ChunkSize:   0, // use chunkDoc's 1200-char default
+		ChunkSize:   0, // use chunkDoc's default (3000 chars)
 	}
 }
 
@@ -110,6 +131,8 @@ type chunkTask struct {
 	Text        string
 	RootPath    string
 	RelPath     string
+	NodePrompt  string // override entity extraction prompt ("" = default)
+	EdgePrompt  string // override relation extraction prompt ("" = default)
 }
 
 // NewPipeline constructs a pipeline. store + extractor are required; emit/logf
@@ -154,6 +177,74 @@ func (p *Pipeline) Start() {
 	}
 }
 
+// Resume rehydrates the in-memory queue from durable state after a restart.
+// It finds all jobs left in pending/extracting status (interrupted mid-run),
+// re-reads each job's chunk text from FTS5, and re-enqueues the chunks that
+// were still pending or errored. Call this once after Start() at boot.
+//
+// This fulfills the restart-safety contract documented at the top of this file
+// and in Store.PendingChunksForJob. Without Resume, an interrupted extraction
+// leaves jobs stuck forever (workers gone, no tasks in memory). The prompt
+// overrides ARE persisted on the job row (node_prompt/edge_prompt, v2 schema),
+// so resumed tasks restore the original extraction prompts (e.g. a domain
+// template like finance/graph survives a restart).
+//
+// Returns the number of chunks re-enqueued.
+func (p *Pipeline) Resume() int {
+	if p.store == nil {
+		return 0
+	}
+	jobs, err := p.store.ResumableJobs()
+	if err != nil {
+		p.logf("rag: resume query failed: %v", err)
+		return 0
+	}
+	enqueued := 0
+	for _, j := range jobs {
+		// Re-read chunk texts from FTS5 (chunk text is not persisted on rag_chunks).
+		chunks, err := p.store.ChunksByPath(j.Collection, j.Path)
+		if err != nil {
+			p.logf("rag: resume %s read chunks failed: %v", j.Path, err)
+			continue
+		}
+		// Find which chunk indices are still pending/errored for this job.
+		pending, err := p.store.PendingChunksForJob(j.ID)
+		if err != nil {
+			p.logf("rag: resume %s pending list failed: %v", j.Path, err)
+			continue
+		}
+		p.mu.Lock()
+		for _, pc := range pending {
+			if pc.Idx < 0 || pc.Idx >= len(chunks) {
+				continue // chunk count changed since the job was created; skip
+			}
+			p.queue = append(p.queue, chunkTask{
+				JobID:       j.ID,
+				Collection:  j.Collection,
+				Path:        j.Path,
+				ChunkIdx:    pc.Idx,
+				ChunkID:     pc.ChunkID,
+				Text:        chunks[pc.Idx],
+				RootPath:    j.RootPath,
+				RelPath:     j.RelPath,
+				NodePrompt:  j.NodePrompt, // persisted on the job row (v2 schema)
+				EdgePrompt:  j.EdgePrompt,
+			})
+			enqueued++
+		}
+		p.mu.Unlock()
+	}
+	if enqueued > 0 {
+		p.logf("rag: resumed %d pending chunks across %d jobs", enqueued, len(jobs))
+		// Wake workers so they pick up the rehydrated tasks.
+		select {
+		case p.wake <- struct{}{}:
+		default:
+		}
+	}
+	return enqueued
+}
+
 // Stop signals workers to drain and exit. Pending tasks remain in the queue
 // (rehydrated on next Start via Resume).
 func (p *Pipeline) Stop() {
@@ -179,7 +270,7 @@ func (p *Pipeline) LatencyAvgMs() int64 {
 //
 // This is the "import" entrypoint from the UI: the user gets the file tree +
 // FTS5 search immediately, and extraction runs in the background with progress.
-func (p *Pipeline) EnqueuePaths(collection string, paths []string) ([]string, error) {
+func (p *Pipeline) EnqueuePaths(collection string, paths []string, nodePrompt, edgePrompt string) ([]string, error) {
 	collection = normalizeCollection(collection)
 	if collection == "" {
 		collection = "default"
@@ -192,7 +283,7 @@ func (p *Pipeline) EnqueuePaths(collection string, paths []string) ([]string, er
 			continue
 		}
 		for _, fpath := range files {
-			jid, err := p.enqueueFile(collection, root, fpath)
+			jid, err := p.enqueueFile(collection, root, fpath, nodePrompt, edgePrompt)
 			if err != nil {
 				p.logf("rag: enqueue %s failed: %v", fpath, err)
 				continue
@@ -212,22 +303,37 @@ func (p *Pipeline) EnqueuePaths(collection string, paths []string) ([]string, er
 
 // enqueueFile imports one file into FTS5 + creates an extraction job + queues
 // chunk tasks. Returns "" if the file can't be read (skipped, not an error).
-func (p *Pipeline) enqueueFile(collection, root, fpath string) (string, error) {
-	// 1. FTS5 import (synchronous, the "instant" layer).
-	n, err := p.store.Import(collection, fpath, nil)
+func (p *Pipeline) enqueueFile(collection, root, fpath, nodePrompt, edgePrompt string) (string, error) {
+	// 1. Read document once (markitdown for binary formats, direct read for text).
+	body, ext, err := readDoc(fpath)
+	if err != nil {
+		return "", err
+	}
+	// 2. FTS5 import using pre-read content (avoids re-reading binary files).
+	n, err := p.store.ImportContent(collection, fpath, body, ext)
 	if err != nil {
 		return "", fmt.Errorf("fts5 import %s: %w", fpath, err)
 	}
 	if n == 0 {
 		return "", nil // nothing to extract
 	}
-	// 2. Re-read chunks to build tasks (we don't persist chunk text on the job
-	//    row, so re-split here — cheap, milliseconds).
-	body, ext, err := readDoc(fpath)
-	if err != nil {
-		return "", err
-	}
+	// 2b. Dedup: compute a content hash over the chunked body and skip
+	// re-extraction when a prior job already completed with the SAME hash.
+	// Using a hash (not chunk count) catches content edits that don't change
+	// the chunk count (e.g. a few characters added within a 1200-char chunk).
+	// FTS5 (above) is already refreshed so text search stays current either way.
 	chunks := chunkDoc(body, ext)
+	h := sha256.New()
+	for _, c := range chunks {
+		h.Write([]byte(c))
+	}
+	contentHash := hex.EncodeToString(h.Sum(nil))
+	if jobID, status, _, _, qerr := p.store.JobStatusForPath(collection, fpath); qerr == nil && jobID != "" && status == JobDone {
+		if prevHash, herr := p.store.JobContentHashForPath(collection, fpath); herr == nil && prevHash == contentHash {
+			p.logf("rag: skip re-extract %s (job %s done, content hash unchanged)", fpath, jobID)
+			return jobID, nil
+		}
+	}
 	rel := relPath(root, fpath)
 	isDir := isDirPath(root)
 	jobID, err := p.store.CreateJob(JobRow{
@@ -237,6 +343,9 @@ func (p *Pipeline) enqueueFile(collection, root, fpath string) (string, error) {
 		RootPath:   root,
 		IsDir:      isDir,
 		Status:     JobPending,
+		ContentHash: contentHash,
+		NodePrompt:  nodePrompt,
+		EdgePrompt:  edgePrompt,
 	}, chunks)
 	if err != nil {
 		return "", err
@@ -253,6 +362,8 @@ func (p *Pipeline) enqueueFile(collection, root, fpath string) (string, error) {
 			Text:       text,
 			RootPath:   root,
 			RelPath:    rel,
+			NodePrompt: nodePrompt,
+			EdgePrompt: edgePrompt,
 		})
 	}
 	p.mu.Unlock()
@@ -327,13 +438,13 @@ func (p *Pipeline) processTask(workerID int, t chunkTask) {
 	// Mark job as extracting (idempotent; first chunk flips pending→extracting).
 	_ = p.store.SetJobStatus(t.JobID, JobExtracting)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 
 	start := time.Now()
 	var lastErr error
 	for attempt := 0; attempt < p.cfg.MaxRetries; attempt++ {
-		res, err := p.extractor.Extract(ctx, t.Text)
+		res, err := p.extractor.Extract(ctx, t.Text, t.NodePrompt, t.EdgePrompt)
 		if err == nil {
 			// Drop relations whose endpoints aren't in this chunk's entity set
 			// (LLM hallucinations) before upsert — mirrors HE's
@@ -525,7 +636,9 @@ func walkDocs(root string) ([]string, error) {
 func isSupportedExt(path string) bool {
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
 	switch ext {
-	case "", "txt", "md", "markdown", "csv", "tsv", "json", "html", "htm", "py", "go", "js", "ts", "tsx", "java", "c", "cpp", "h", "rs", "yaml", "yml":
+	case "", "txt", "md", "markdown", "csv", "tsv", "json", "html", "htm",
+		"py", "go", "js", "ts", "tsx", "java", "c", "cpp", "h", "rs", "yaml", "yml",
+		"docx", "xlsx", "xls", "pptx", "pdf", "epub": // office formats via markitdown
 		return true
 	}
 	return false
@@ -548,7 +661,7 @@ func isDirPath(root string) bool {
 // It returns no entities so the pipeline is exercised but produces no data.
 type noopExtractor struct{}
 
-func (noopExtractor) Extract(ctx context.Context, chunk string) (ExtractResult, error) {
+func (noopExtractor) Extract(_ context.Context, _ string, _, _ string) (ExtractResult, error) {
 	return ExtractResult{}, nil
 }
 
@@ -571,7 +684,14 @@ func pruneDanglingRelations(res ExtractResult) []Relation {
 	}
 	kept := res.Relations[:0]
 	for _, r := range res.Relations {
-		if known[normalizeName(r.Source)] && known[normalizeName(r.Target)] {
+		srcNorm := normalizeName(r.Source)
+		tgtNorm := normalizeName(r.Target)
+		// Drop self-loops (source == target) — these are LLM noise, not real
+		// knowledge (e.g. "故障处置 负责 故障处置" carries no information).
+		if srcNorm == tgtNorm {
+			continue
+		}
+		if known[srcNorm] && known[tgtNorm] {
 			kept = append(kept, r)
 		}
 	}
@@ -590,10 +710,11 @@ func ParseExtractJSON(b []byte) (ExtractResult, error) {
 			Description string `json:"description"`
 		} `json:"entities"`
 		Relations []struct {
-			Source      string `json:"source"`
-			Target      string `json:"target"`
-			Type        string `json:"type"`
-			Description string `json:"description"`
+			Source      string  `json:"source"`
+			Target      string  `json:"target"`
+			Type        string  `json:"type"`
+			Description string  `json:"description"`
+			Strength    float64 `json:"strength"`
 		} `json:"relations"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
@@ -613,6 +734,7 @@ func ParseExtractJSON(b []byte) (ExtractResult, error) {
 			Target:      r.Target,
 			Type:        r.Type,
 			Description: r.Description,
+			Strength:    r.Strength,
 		})
 	}
 	return res, nil
@@ -630,9 +752,10 @@ const ExtractionPrompt = `你是知识抽取助手。从下面这段文本中抽
 4. 只抽取文本明确提到的事实，不要推理或脑补
 5. 不要抽取纯代词或泛指（如"他/该产品/相关人员"），必须有独立指代意义
 6. 关系 type 用简短谓词，如 is_a/part_of/负责/属于/包含/相关/位于
+7. 每条关系给出 strength 评分(1-10整数)：10=核心/直接/明确的关系（如"负责""属于""包含"），5=一般关联，1=弱/间接/模糊关系
 
 只返回 JSON，格式如下：
-{"entities":[{"name":"张三","type":"person","description":"..."}],"relations":[{"source":"张三","target":"MoMAPeer","type":"负责","description":"..."}]}
+{"entities":[{"name":"张三","type":"person","description":"..."}],"relations":[{"source":"张三","target":"MoMAPeer","type":"负责","description":"...","strength":8}]}
 
 type 可选值：person, organization, project, product, concept, location, event, topic, other
 
@@ -668,40 +791,12 @@ const EdgeExtractionPrompt = `你是关系抽取助手。下面已给出本段�
 2. 只抽取文本明确提到的事实，不要推理或脑补
 3. 关系 type 用简短谓词，如 is_a/part_of/负责/属于/包含/相关/位于
 4. 描述简洁，控制在 50 字内
+5. 每条关系给出 strength 评分(1-10整数)：10=核心/直接/明确的关系（如"负责""属于""包含"），5=一般关联，1=弱/间接/模糊关系
 
 已知实体：
 %s
 
-只返回 JSON：{"relations":[{"source":"张三","target":"MoMAPeer","type":"负责","description":"..."}]}
+只返回 JSON：{"relations":[{"source":"张三","target":"MoMAPeer","type":"负责","description":"...","strength":8}]}
 
 ### 文本：
 %s`
-
-// Resume re-enqueues any extraction jobs that were interrupted by a prior
-// shutdown. Returns the number of paths re-enqueued.
-func (p *Pipeline) Resume() int {
-	if p.store == nil {
-		return 0
-	}
-	jobs, err := p.store.AllJobs()
-	if err != nil {
-		return 0
-	}
-	// Collect unique paths that were extracting or pending.
-	paths := map[string]string{} // path -> collection
-	for _, j := range jobs {
-		if j.Status == JobExtracting || j.Status == JobPending {
-			paths[j.Path] = j.Collection
-		}
-	}
-	if len(paths) == 0 {
-		return 0
-	}
-	count := 0
-	for path, collection := range paths {
-		if _, err := p.EnqueuePaths(collection, []string{path}); err == nil {
-			count++
-		}
-	}
-	return count
-}

@@ -77,6 +77,11 @@ type App struct {
 	activeTabID string
 	readyHook   func()
 
+	// metrics holds the opt-in aggregate agent-metrics aggregator (non-nil only
+	// when desktop.metrics is enabled in config). Swapped live by
+	// SetDesktopMetrics so the toggle takes effect without a restart.
+	metrics atomic.Pointer[metricsAggregator]
+
 	forceQuit           atomic.Bool
 	backgroundMaximised atomic.Bool
 	trayReady           bool

@@ -604,6 +604,59 @@ func (a *App) OpenGlobalTab(topicID string) (TabMeta, error) {
 	return meta, nil
 }
 
+// OpenExpertSessionTab opens (or activates) a dedicated tab for an expert
+// team's collaboration run. The tab lives in the cowork profile so its
+// transcript is partitioned from dev conversations, and the run's full history
+// persists there. The main chat is left untouched. Dedup: reuses an existing
+// expert tab for the same team if one is already open.
+func (a *App) OpenExpertSessionTab(teamID, teamName string) (TabMeta, error) {
+	teamID = strings.TrimSpace(teamID)
+	if teamID == "" {
+		return TabMeta{}, fmt.Errorf("teamID is required")
+	}
+
+	a.mu.Lock()
+	// Dedup: reuse an existing expert tab for this team if one is open.
+	for _, tab := range a.tabs {
+		if tab.IsExpertSession && tab.ExpertTeamID == teamID {
+			a.activeTabID = tab.ID
+			// Refresh the name in case the team was renamed.
+			tab.ExpertTeamName = teamName
+			meta := a.tabMeta(tab, true)
+			a.saveTabsLocked()
+			a.mu.Unlock()
+			return meta, nil
+		}
+	}
+
+	tabID := a.newUniqueTabIDLocked()
+	tab := &WorkspaceTab{
+		ID:               tabID,
+		Scope:            "expert",
+		WorkspaceRoot:    "",
+		TopicID:          "",
+		TopicTitle:       teamName,
+		profile:          config.ProfileCowork,
+		mode:             "normal",
+		toolApprovalMode: control.ToolApprovalAsk,
+		disabledMCP:      map[string]ServerView{},
+		IsExpertSession:  true,
+		ExpertTeamID:     teamID,
+		ExpertTeamName:   teamName,
+	}
+	tab.sink = &tabEventSink{tabID: tabID, app: a}
+
+	a.tabs[tabID] = tab
+	a.tabOrder = append(a.tabOrder, tabID)
+	a.activeTabID = tabID
+	a.saveTabsLocked()
+	meta := a.tabMeta(tab, true)
+	a.mu.Unlock()
+
+	a.startTabControllerBuild(tab)
+	return meta, nil
+}
+
 // EnsureBlankTab activates the existing blank tab for the target scope, or
 // creates one if none exists. Reusing a blank tab keeps repeated "new session"
 // clicks from piling up empty conversations.

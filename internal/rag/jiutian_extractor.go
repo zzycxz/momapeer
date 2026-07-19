@@ -18,11 +18,13 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/zzycxz/momapeer/internal/jiutian"
 )
 
 // JiutianExtractorConfig configures the LLM-backed extractor.
 type JiutianExtractorConfig struct {
-	BaseURL  string // e.g. "https://jiutian.10086.cn/largemodel/moma/api/v3" ("" = default)
+	BaseURL  string // e.g. "https://jiutian.10086.cn/largemodel/moma/api/v3" ("" = uses jiutian.BaseURL)
 	APIKey   string // env var name to read the key from (e.g. "JIUTIAN_API_KEY"); if empty, reads JIUTIAN_API_KEY
 	Model    string // chat model to use (e.g. the cowork main model)
 	TwoStage bool   // extract entities then relations in two LLM calls (higher quality, 2× tokens); false = single combined call
@@ -33,6 +35,19 @@ type jiutianExtractor struct {
 	cfg     JiutianExtractorConfig
 	baseURL string
 	client  *http.Client
+	// budget gates LLM calls through the global RPM limiter so extraction
+	// shares the same per-minute quota as the main agent, subagents, and
+	// dream/distill. nil = limiting disabled (no blocking). Set by boot.go
+	// via SetBudget; extraction runs at background priority (false) so it
+	// doesn't starve the interactive conversation.
+	budget    BudgetAcquirer
+	budgetKey string
+}
+
+// SetBudget installs the global RPM limiter. Implements rag.BudgetSetter.
+func (e *jiutianExtractor) SetBudget(b BudgetAcquirer, key string) {
+	e.budget = b
+	e.budgetKey = key
 }
 
 // NewJiutianExtractor builds the default extractor. The cfg passed from boot.go
@@ -40,12 +55,12 @@ type jiutianExtractor struct {
 func NewJiutianExtractor(cfg JiutianExtractorConfig) Extractor {
 	base := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	if base == "" {
-		base = "https://jiutian.10086.cn/largemodel/moma/api/v3"
+		base = jiutian.BaseURL
 	}
 	return &jiutianExtractor{
 		cfg:     cfg,
 		baseURL: base,
-		client:  &http.Client{Timeout: 90 * time.Second},
+		client:  &http.Client{Timeout: 180 * time.Second},
 	}
 }
 
@@ -55,7 +70,7 @@ func NewJiutianExtractor(cfg JiutianExtractorConfig) Extractor {
 // {known_nodes} — which forces relation endpoints to be real entities and cuts
 // hallucinated edges (mirrors HE graph.py:510). Two-stage costs ~2× tokens but
 // markedly improves graph quality; single-stage is the cheaper fallback.
-func (e *jiutianExtractor) Extract(ctx context.Context, chunk string) (ExtractResult, error) {
+func (e *jiutianExtractor) Extract(ctx context.Context, chunk string, nodePrompt, edgePrompt string) (ExtractResult, error) {
 	if strings.TrimSpace(chunk) == "" {
 		return ExtractResult{}, nil
 	}
@@ -69,9 +84,24 @@ func (e *jiutianExtractor) Extract(ctx context.Context, chunk string) (ExtractRe
 
 	text := truncateChunk(chunk, 6000)
 
+	// Resolve prompts: use custom if provided, otherwise built-in defaults.
+	np := nodePrompt
+	if np == "" {
+		np = NodeExtractionPrompt
+	}
+	ep := edgePrompt
+	if ep == "" {
+		ep = EdgeExtractionPrompt
+	}
+
 	if !e.cfg.TwoStage {
-		// Single combined call (original behavior).
-		content, err := e.chatJSON(ctx, apiKey, fmt.Sprintf(ExtractionPrompt, text))
+		// Single combined call — use nodePrompt for the combined extraction
+		// when a custom prompt is provided, otherwise use the default.
+		singlePrompt := ExtractionPrompt
+		if nodePrompt != "" {
+			singlePrompt = nodePrompt
+		}
+		content, err := e.chatJSON(ctx, apiKey, fmt.Sprintf(singlePrompt, text))
 		if err != nil {
 			return ExtractResult{}, err
 		}
@@ -83,7 +113,7 @@ func (e *jiutianExtractor) Extract(ctx context.Context, chunk string) (ExtractRe
 	}
 
 	// Two-stage: entities → relations seeded with the entity list.
-	nodeContent, err := e.chatJSON(ctx, apiKey, fmt.Sprintf(NodeExtractionPrompt, text))
+	nodeContent, err := e.chatJSON(ctx, apiKey, fmt.Sprintf(np, text))
 	if err != nil {
 		return ExtractResult{}, fmt.Errorf("stage1 (nodes): %w", err)
 	}
@@ -100,7 +130,7 @@ func (e *jiutianExtractor) Extract(ctx context.Context, chunk string) (ExtractRe
 		return res, nil // no entities → no relations to extract
 	}
 	knownNodes := formatKnownNodes(res.Entities)
-	edgeContent, err := e.chatJSON(ctx, apiKey, fmt.Sprintf(EdgeExtractionPrompt, knownNodes, text))
+	edgeContent, err := e.chatJSON(ctx, apiKey, fmt.Sprintf(ep, knownNodes, text))
 	if err != nil {
 		// Stage 2 failed: keep the entities we got, skip relations.
 		return res, fmt.Errorf("stage2 (edges): %w", err)
@@ -117,6 +147,14 @@ func (e *jiutianExtractor) Extract(ctx context.Context, chunk string) (ExtractRe
 // chatJSON sends one user message and returns the assistant's content string
 // (JSON fences stripped). Shared by both single- and two-stage paths.
 func (e *jiutianExtractor) chatJSON(ctx context.Context, apiKey, userMsg string) (string, error) {
+	// Gate through the global RPM limiter so extraction shares the per-minute
+	// quota with all other LLM calls. Background priority (false) so extraction
+	// doesn't starve the interactive conversation under tight RPM limits.
+	if e.budget != nil {
+		if err := e.budget.Acquire(ctx, e.budgetKey, false); err != nil {
+			return "", fmt.Errorf("extract rate-limited: %w", err)
+		}
+	}
 	reqBody := chatCompletionsRequest{
 		Model: e.cfg.Model,
 		Messages: []chatMessage{
@@ -201,10 +239,11 @@ func parseNodesJSON(b []byte) (ExtractResult, error) {
 func parseRelationsJSON(b []byte) ([]Relation, error) {
 	var raw struct {
 		Relations []struct {
-			Source      string `json:"source"`
-			Target      string `json:"target"`
-			Type        string `json:"type"`
-			Description string `json:"description"`
+			Source      string  `json:"source"`
+			Target      string  `json:"target"`
+			Type        string  `json:"type"`
+			Description string  `json:"description"`
+			Strength    float64 `json:"strength"`
 		} `json:"relations"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
@@ -217,6 +256,7 @@ func parseRelationsJSON(b []byte) ([]Relation, error) {
 			Target:      r.Target,
 			Type:        r.Type,
 			Description: r.Description,
+			Strength:    r.Strength,
 		})
 	}
 	return out, nil
