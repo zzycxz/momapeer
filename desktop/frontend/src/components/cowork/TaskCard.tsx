@@ -46,6 +46,7 @@ export function TaskCard({
         <div className="cowork-task-card__title">
           <span className={`cowork-task-card__dot ${task.enabled ? "cowork-task-card__dot--on" : ""}`} />
           <span className="cowork-task-card__name">{task.name}</span>
+          {task.source === "calendar" && <span className="cowork-task-card__badge cowork-task-card__badge--calendar">📅 日历</span>}
           {task.oneShot && <span className="cowork-task-card__badge">{t("cowork.automationOneShot")}</span>}
           {!task.enabled && <span className="cowork-task-card__badge cowork-task-card__badge--muted">{t("cowork.automationPaused")}</span>}
         </div>

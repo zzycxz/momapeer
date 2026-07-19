@@ -1,12 +1,12 @@
 // TeamManager is the create/edit modal for an expert team: name, collaboration
 // defaults, and a dynamic list of experts (name + model + perspective). The
-// model field is a free-text "provider/model" ref (matching the agent's model
-// picker) — we keep it simple rather than embedding the full ModelSwitcher.
+// model field is a dropdown of available models from the user's configuration.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { X, Plus, Trash2 } from "lucide-react";
 
-import type { ExpertView, TeamView } from "../../lib/types";
+import { app } from "../../lib/bridge";
+import type { ExpertView, ModelInfo, TeamView } from "../../lib/types";
 import { useT } from "../../lib/i18n";
 
 export function TeamManager({
@@ -22,19 +22,39 @@ export function TeamManager({
   const [name, setName] = useState(initial?.name ?? "");
   const [mode, setMode] = useState(initial?.defaultMode ?? "debate");
   const [rounds, setRounds] = useState(initial?.defaultRounds ?? 2);
+  const [allowSearch, setAllowSearch] = useState(initial?.allowSearch ?? false);
   const [experts, setExperts] = useState<ExpertView[]>(
     initial?.experts ?? [
       { name: "", model: "", perspective: "" },
       { name: "", model: "", perspective: "" },
     ]
   );
+  // Stable React keys per expert row (parallel to `experts`). Using the array
+  // index as key makes React reuse DOM nodes by position, so deleting a middle
+  // expert shifts every row below it and the text-cursor/focus jumps to the
+  // wrong input. A stable per-row id avoids that while keeping index-based
+  // update/remove logic intact.
+  const [expertKeys, setExpertKeys] = useState<string[]>(() =>
+    Array.from({ length: initial?.experts?.length ?? 2 }, () => crypto.randomUUID())
+  );
   const [saving, setSaving] = useState(false);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+
+  useEffect(() => {
+    app.Models().then(setModels).catch(() => {});
+  }, []);
 
   const updateExpert = (idx: number, field: keyof ExpertView, val: string) => {
     setExperts((prev) => prev.map((e, i) => (i === idx ? { ...e, [field]: val } : e)));
   };
-  const addExpert = () => setExperts((prev) => [...prev, { name: "", model: "", perspective: "" }]);
-  const removeExpert = (idx: number) => setExperts((prev) => prev.filter((_, i) => i !== idx));
+  const addExpert = () => {
+    setExperts((prev) => [...prev, { name: "", model: "", perspective: "" }]);
+    setExpertKeys((prev) => [...prev, crypto.randomUUID()]);
+  };
+  const removeExpert = (idx: number) => {
+    setExperts((prev) => prev.filter((_, i) => i !== idx));
+    setExpertKeys((prev) => prev.filter((_, i) => i !== idx));
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -45,6 +65,7 @@ export function TeamManager({
         experts: experts.filter((e) => e.name.trim()),
         defaultMode: mode,
         defaultRounds: rounds,
+        allowSearch,
       });
     } finally {
       setSaving(false);
@@ -89,11 +110,32 @@ export function TeamManager({
           </div>
 
           <div className="cowork-taskform__section">
+            <label className="cowork-expert__search-toggle">
+              <input
+                type="checkbox"
+                checked={allowSearch}
+                onChange={(e) => setAllowSearch(e.target.checked)}
+              />
+              <span className="cowork-expert__search-toggle-label">{t("cowork.expertAllowSearch")}</span>
+            </label>
+            <div className="cowork-expert__search-toggle-hint">{t("cowork.expertSearchHint")}</div>
+          </div>
+
+          <div className="cowork-taskform__section">
             <span className="cowork-taskform__labeltext">{t("cowork.expertMembers")}</span>
             {experts.map((ex, i) => (
-              <div key={i} className="cowork-expert__member-row">
+              <div key={expertKeys[i] ?? i} className="cowork-expert__member-row">
                 <input className="cowork-taskform__input cowork-expert__member-name" placeholder={t("cowork.expertMemberName")} value={ex.name} onChange={(e) => updateExpert(i, "name", e.target.value)} />
-                <input className="cowork-taskform__input cowork-expert__member-model" placeholder={t("cowork.expertModel") + " (provider/model)"} value={ex.model} onChange={(e) => updateExpert(i, "model", e.target.value)} />
+                <select
+                  className="cowork-taskform__input cowork-expert__member-model"
+                  value={ex.model}
+                  onChange={(e) => updateExpert(i, "model", e.target.value)}
+                >
+                  <option value="">{t("cowork.expertDefaultModel")}</option>
+                  {models.map((m) => (
+                    <option key={m.ref} value={m.ref}>{m.provider}/{m.model}</option>
+                  ))}
+                </select>
                 <input className="cowork-taskform__input cowork-expert__member-perspective" placeholder={t("cowork.expertPerspective")} value={ex.perspective} onChange={(e) => updateExpert(i, "perspective", e.target.value)} />
                 {experts.length > 1 && (
                   <button className="cowork-task-card__btn cowork-task-card__btn--danger" onClick={() => removeExpert(i)}><Trash2 size={14} /></button>

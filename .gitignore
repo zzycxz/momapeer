@@ -1,89 +1,75 @@
+
+!/.momapeer/commands/
+!/.momapeer/commands/review.md
+!/desktop/frontend/dist/.gitkeep
 # Build artifacts
-/bin/
-/dist/
-/stage/
-/npm/.stage/
-/momapeer
-/momapeer.exe
-
-# Website (Astro) — not part of the CLI distribution; kept local only
-/site/
-
+# Build/CI binary artifacts and tool dirs (not project source)
+# CodeGraph per-project index (rebuilt locally; never committed)
+# Editor / OS
+# Environment / local config (momapeer.example.toml is the shared template)
+# Generated tool output and CUA replay traces (rebuilt at runtime, not source)
 # Go test/build scratch
-*.test
-*.out
-*.coverprofile
-coverage.out
-cpu.prof
-mem.prof
-
+# Local test / benchmark outputs
+# Local test / migration artifacts
+# Node / frontend dependencies and caches
+# Project-local momapeer state; keep the checked-in review command.
+# Scratch / experiment code (one-off debug scripts, never part of the build)
+# Stray root-level test/debug artifacts (CUA notepad probes, demo outputs)
 # Wails desktop artifacts
+# Website (Astro) — not part of the CLI distribution; kept local only
+# Windows reserved-name stray file (empty artifact, not project content)
+*.coverprofile
+*.local
+*.out
+*.test
+.DS_Store
+.codegraph/
+.env
+.env.local
+.idea/
+.npm/
+.pnpm-store/
+.vscode/
+/.claude/
+/.momapeer.zip
+/.momapeer/*
+/bin/
+/cua-replay-trace/
+/cua-test.txt
+/desktop.exe
+/desktop/.env
 /desktop/build/bin/
 /desktop/build/obj/
 /desktop/desktop
 /desktop/desktop.exe
-/desktop/keys/
 /desktop/frontend/dist/*
-!/desktop/frontend/dist/.gitkeep
-/desktop/frontend/wailsjs/
 /desktop/frontend/package.json.md5
-
-# Local test / benchmark outputs
-jobs_latest.json
-runs_latest.json
-
-# Environment / local config (momapeer.example.toml is the shared template)
-.env
-.env.local
-*.local
-/momapeer.toml
-/desktop/.env
+/desktop/frontend/wailsjs/
+/desktop/keys/
 /desktop/momapeer.toml
-
-# Node / frontend dependencies and caches
-node_modules/
-.pnpm-store/
-.npm/
-
-# Project-local momapeer state; keep the checked-in review command.
-/.momapeer/*
-!/.momapeer/commands/
-!/.momapeer/commands/review.md
-
-# CodeGraph per-project index (rebuilt locally; never committed)
-.codegraph/
-
-# Editor / OS
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
-
-benchmarks/context-maintenance-e2e/run/
-
-# Local test / migration artifacts
+/dist/
+/momapeer
+/momapeer.exe
+/momapeer.toml
+/npm/.stage/
+/output.pptx
+/output/
+/read-notepad.ps1
+/scratch/
+/site/
+/stage/
+/test_silent.wav
 /tests/
 /updateFile/
-cua-vlm-trace/
-
-# Scratch / experiment code (one-off debug scripts, never part of the build)
-/scratch/
-
-# Generated tool output and CUA replay traces (rebuilt at runtime, not source)
-/output/
-/cua-replay-trace/
-
-# Stray root-level test/debug artifacts (CUA notepad probes, demo outputs)
-/cua-test.txt
-/output.pptx
-/read-notepad.ps1
 /verify_notepad.py
-
-# Windows reserved-name stray file (empty artifact, not project content)
+Thumbs.db
+benchmarks/context-maintenance-e2e/run/
+coverage.out
+cpu.prof
+cua-vlm-trace/
+desktop/frontend/.vite/
+jobs_latest.json
+mem.prof
+node_modules/
 nul
-
-# Build/CI binary artifacts and tool dirs (not project source)
-/desktop.exe
-/.momapeer.zip
-/.claude/
-/test_silent.wav
+runs_latest.json

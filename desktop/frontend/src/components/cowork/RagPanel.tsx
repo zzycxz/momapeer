@@ -1,83 +1,110 @@
-// RagPanel is the coWork "资料库" panel: a file/folder tree of imported
-// documents with per-file FTS5 + extraction status, deep-extract controls, and
-// an embedded search bar. It subscribes to rag:changed (tree refresh) and
-// rag:progress (live chunk progress) so the UI stays current without polling.
-//
-// Two-layer RAG by design:
-//   - FTS5 (instant): every imported file is searchable the moment it lands.
-//   - Deep extract (explicit): user clicks ⚡ to turn a file into a structured
-//     entity/relation graph in the background, with a progress bar + ETA.
-//
-// Drag-and-drop is supported: drop files/folders onto the panel to import them.
+// RagPanel is the coWork "知识库" panel, redesigned as a graph-first layout.
+// The knowledge graph occupies the full center area. CoworkDock handles the
+// navigation sidebar (collections, entities, files). This panel owns:
+// - Empty state (import prompt)
+// - GraphToolbar (top)
+// - GraphCanvas (center, full screen)
+// - KnowledgeRefBar (bottom, when selection mode is active)
+// - GraphLegend (bottom-right overlay)
 
 import { useCallback, useEffect, useState } from "react";
-import { FolderPlus, FilePlus, Search } from "lucide-react";
+import { FolderPlus } from "lucide-react";
 
-import { app, onFilesDropped, onRagChanged, onRagProgress } from "../../lib/bridge";
-import type { RagCollectionView, RagNodeView, RagProgressEvent, RagSearchHitView } from "../../lib/types";
-import { useT } from "../../lib/i18n";
+import { app, onFilesDropped, onRagChanged } from "../../lib/bridge";
+import type { RagCollectionView } from "../../lib/types";
+import { asArray } from "../../lib/array";
 import { useToast } from "../../lib/toast";
-import { RagNode } from "./RagNode";
+import { useT } from "../../lib/i18n";
+import { GraphCanvas } from "./GraphCanvas";
+import { GraphToolbar, type SearchMode } from "./GraphToolbar";
+import { GraphLegend } from "./GraphLegend";
+import { KnowledgeRefBar } from "./KnowledgeRefBar";
+import { SkillSelectModal } from "./SkillSelectModal";
 
 export function RagPanel() {
-  const t = useT();
   const { showToast } = useToast();
-  const [collections, setCollections] = useState<RagCollectionView[] | null>(null);
-  const [activeCollection, setActiveCollection] = useState<string>("");
-  const [tree, setTree] = useState<RagNodeView[] | null>(null);
-  // Live progress overlays keyed by jobId — merged into the tree on render so
-  // we don't refetch the whole tree on every chunk completion.
-  const [progressMap, setProgressMap] = useState<Record<string, RagProgressEvent>>({});
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchHits, setSearchHits] = useState<RagSearchHitView | null>(null);
-  const [searching, setSearching] = useState(false);
+  const t = useT();
 
-  // Refresh tree + collections.
+  // Data state.
+  const [collections, setCollections] = useState<RagCollectionView[]>([]);
+  const [activeCollection, setActiveCollection] = useState("");
+  const [hasData, setHasData] = useState(false);
+
+  // UI state.
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchMode, setSearchMode] = useState<SearchMode>("keyword");
+  const [filterTypes, setFilterTypes] = useState<string[]>([]);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedEntities, setSelectedEntities] = useState<string[]>([]);
+  const [selectedRelations, setSelectedRelations] = useState<string[]>([]);
+  const [showSkillModal, setShowSkillModal] = useState(false);
+  const [summary, setSummary] = useState<{ summary: string; themes: string[] } | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  // Supported file formats, fetched from the backend so the empty-state hint
+  // always matches what rag actually accepts (previously hardcoded & stale).
+  const [supportedFormats, setSupportedFormats] = useState<string[]>([]);
+  const [hasCommunities, setHasCommunities] = useState(false);
+
+  useEffect(() => {
+    app.RagListTemplates().then(setSupportedFormats).catch(() => setSupportedFormats([]));
+  }, []);
+
+  // Check if the active collection has communities assigned. Used to toggle
+  // the community legend section. Debounced to avoid request storms during
+  // extraction (which fires many rag:changed events).
+  useEffect(() => {
+    const check = () => {
+      app.GetTopEntities(activeCollection || "", 5).then((data) => {
+        setHasCommunities(data.nodes.some((n) => n.community >= 0));
+      }).catch(() => {});
+    };
+    check();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const off = onRagChanged(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(check, 1000);
+    });
+    return () => { off(); if (timer) clearTimeout(timer); };
+  }, [activeCollection]);
+
+  // Refresh collections.
   const refresh = useCallback(async () => {
     try {
-      const [cols, nodes] = await Promise.all([
-        app.ListRagCollections(),
-        app.ListRagTree(activeCollection),
-      ]);
+      const cols = await app.ListRagCollections();
       setCollections(cols);
-      setTree(nodes);
+      setHasData(cols.length > 0 && cols.some((c) => c.documents > 0));
     } catch {
       setCollections([]);
-      setTree([]);
+      setHasData(false);
+    }
+  }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => onRagChanged(() => void refresh()), [refresh]);
+
+  // Fetch summary when collection changes and has data.
+  const fetchSummary = useCallback(async () => {
+    if (!activeCollection) { setSummary(null); return; }
+    setSummaryLoading(true);
+    try {
+      const s = await app.RagSummarize(activeCollection);
+      setSummary(s.summary ? s : null);
+    } catch {
+      setSummary(null);
+    } finally {
+      setSummaryLoading(false);
     }
   }, [activeCollection]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
-
-  // Re-fetch on any backend mutation (import/remove/status change).
-  useEffect(() => onRagChanged(() => void refresh()), [refresh]);
-
-  // Merge live progress into the tree without refetching. We keep a map of
-  // jobId → latest event and apply it at render time so a 50-file folder
-  // doesn't cause 50 full tree refetches.
+  // Auto-select the first collection when only one exists.
   useEffect(() => {
-    return onRagProgress((ev) => {
-      setProgressMap((prev) => ({ ...prev, [ev.jobId]: ev }));
-    });
-  }, []);
-
-  // Debounced search.
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      setSearchHits(null);
-      return;
+    if (collections.length === 1 && !activeCollection) {
+      setActiveCollection(collections[0].name);
     }
-    setSearching(true);
-    const h = setTimeout(() => {
-      void app.RagSearch(activeCollection, searchQuery, 5).then((hits) => {
-        setSearchHits(hits);
-        setSearching(false);
-      }).catch(() => setSearching(false));
-    }, 300);
-    return () => clearTimeout(h);
-  }, [searchQuery, activeCollection]);
+  }, [collections, activeCollection]);
 
-  const handleImportFolder = async () => {
+  // Import handler.
+  const handleImport = async () => {
     try {
       const path = await app.PickWorkspace();
       if (!path) return;
@@ -89,21 +116,7 @@ export function RagPanel() {
     }
   };
 
-  const handleImportFile = async () => {
-    // No multi-file picker binding; reuse dropped-files UX via a single folder
-    // pick, or show a hint. For now route to folder pick (most common case).
-    try {
-      const path = await app.PickWorkspace();
-      if (!path) return;
-      const res = await app.RagImportPaths(activeCollection || "default", [path]);
-      showToast(res.message, "info");
-      void refresh();
-    } catch (e) {
-      showToast(String(e), "error");
-    }
-  };
-
-  // Drag-and-drop import: files dropped on the panel are imported directly.
+  // Drag-and-drop import.
   useEffect(() => {
     return onFilesDropped((paths) => {
       if (paths.length === 0) return;
@@ -114,169 +127,166 @@ export function RagPanel() {
     });
   }, [activeCollection, refresh, showToast]);
 
-  const onStartExtract = async (node: RagNodeView) => {
+  // Selection mode: clear when toggling off.
+  useEffect(() => {
+    if (!selectionMode) {
+      setSelectedEntities([]);
+      setSelectedRelations([]);
+    }
+  }, [selectionMode]);
+
+  // Knowledge reference: write temp file and invoke skill.
+  const handleSkillConfirm = async (skillName: string) => {
     try {
-      await app.RagStartExtract(node.collection || activeCollection || "default", node.path);
-      showToast(`深度提取已开始：${node.label}`, "info");
+      const refPath = await app.WriteKnowledgeRef(activeCollection || "default", selectedEntities, selectedRelations);
+      await app.RunSkillWithKnowledge(skillName, refPath);
+      showToast(t("cowork.ragImportStarted", { skill: skillName }), "info");
+      setShowSkillModal(false);
+      setSelectionMode(false);
     } catch (e) {
       showToast(String(e), "error");
     }
   };
-  const onCancel = async (node: RagNodeView) => {
-    if (!node.jobId) return;
-    try { await app.RagCancelExtract(node.jobId); } catch (e) { showToast(String(e), "error"); }
-  };
-  const onRemove = async (node: RagNodeView) => {
-    if (!window.confirm(`${t("cowork.ragRemove")}: ${node.label}?`)) return;
+
+  // Export Obsidian.
+  const handleExportObsidian = async () => {
     try {
-      await app.RagRemovePath(node.collection || activeCollection || "default", node.path);
-      void refresh();
-    } catch (e) { showToast(String(e), "error"); }
+      const outDir = await app.PickWorkspace();
+      if (!outDir) return;
+      await app.ExportObsidian(activeCollection || "default", outDir);
+      showToast(t("cowork.ragObsidianExported"), "info");
+    } catch (e) {
+      showToast(String(e), "error");
+    }
   };
 
-  // Apply live progress overlays to the tree (deep merge by jobId).
-  const treeWithProgress = tree ? applyProgress(tree, progressMap) : null;
-  const totalEntities = collections?.reduce((s, c) => s + c.entities, 0) ?? 0;
+  const handleDetectCommunities = async () => {
+    try {
+      await app.RagDetectCommunities(activeCollection || "");
+      showToast("社区检测中…完成后图谱自动刷新显示色环", "info");
+    } catch (e) {
+      showToast(String(e), "error");
+    }
+  };
+
+  // Node click: dispatch entity-click event with the node's own collection so
+  // EntityDetail can find it even in "all collections" scope.
+  const handleNodeClick = (name: string, entityCollection: string) => {
+    window.dispatchEvent(new CustomEvent("rag:entity-click", { detail: { name, collection: entityCollection } }));
+  };
+
+  // Empty state.
+  if (!hasData) {
+    return (
+      <div
+        className="rag-panel rag-panel--empty"
+        style={{ "--wails-drop-target": "drop" } as React.CSSProperties}
+        role="region"
+        aria-label={t("cowork.ragDropRegion")}
+      >
+        <div className="rag-panel__empty-content">
+          <div className="rag-panel__empty-text">{t("cowork.ragDropToStart")}</div>
+          <div className="rag-panel__empty-hint">
+            {supportedFormats.length > 0
+              ? `支持 ${supportedFormats.join(" / ")}`
+              : "支持 md / docx / pdf / xlsx / csv / 代码 等格式"}
+          </div>
+          <button className="btn btn--primary" onClick={() => void handleImport()}>
+            <FolderPlus size={14} />
+            <span>导入文件</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
-      className="cowork-rag"
-      // Wails only delivers drops to elements carrying this custom property.
+      className="rag-panel"
       style={{ "--wails-drop-target": "drop" } as React.CSSProperties}
     >
-      <header className="cowork-main__header">
-        <h2>{t("cowork.ragCollection")}</h2>
-        <div className="cowork-rag__header-actions">
-          <button className="btn btn--small" onClick={() => void handleImportFile()} title={t("cowork.ragImportFile")}>
-            <FilePlus size={14} />
-            {t("cowork.ragImportFile")}
-          </button>
-          <button className="btn btn--primary btn--small" onClick={() => void handleImportFolder()} title={t("cowork.ragImportFolder")}>
-            <FolderPlus size={14} />
-            {t("cowork.ragImportFolder")}
-          </button>
-        </div>
-      </header>
+      {/* Top toolbar */}
+      <GraphToolbar
+        collection={activeCollection}
+        collections={collections}
+        onCollectionChange={setActiveCollection}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchMode={searchMode}
+        onSearchModeChange={setSearchMode}
+        filterTypes={filterTypes}
+        onFilterChange={setFilterTypes}
+        selectionMode={selectionMode}
+        onToggleSelectionMode={() => setSelectionMode(!selectionMode)}
+        onImport={() => void handleImport()}
+        onExportObsidian={() => void handleExportObsidian()}
+        onDetectCommunities={() => void handleDetectCommunities()}
+      />
 
-      <div className="cowork-rag__body">
-        {/* Collection dropdown + stats */}
-        <div className="cowork-rag__meta">
-          {collections && collections.length > 0 && (
-            <select
-              className="cowork-rag__select"
-              value={activeCollection}
-              onChange={(e) => setActiveCollection(e.target.value)}
-            >
-              <option value="">{t("cowork.ragCollection")}（全部）</option>
-              {collections.map((c) => (
-                <option key={c.name} value={c.name}>
-                  {c.name} · {t("cowork.ragDocs").replace("{n}", String(c.documents))} · {t("cowork.ragEntities").replace("{n}", String(c.entities))}
-                </option>
-              ))}
-            </select>
-          )}
-          {totalEntities > 0 && (
-            <span className="cowork-rag__stat">{t("cowork.ragEntities").replace("{n}", String(totalEntities))}</span>
-          )}
-        </div>
-
-        {/* Embedded search bar */}
-        <div className="cowork-rag__search">
-          <Search size={13} className="cowork-rag__search-icon" />
-          <input
-            className="cowork-rag__search-input"
-            placeholder={t("cowork.ragSearchPlaceholder")}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          {searching && <span className="cowork-rag__search-spinner">…</span>}
-        </div>
-        {searchHits && (searchHits.entities.length > 0 || searchHits.snippets.length > 0) && (
-          <div className="cowork-rag__hits">
-            {searchHits.entities.length > 0 && (
-              <div className="cowork-rag__hits-layer">
-                <div className="cowork-rag__hits-label">{t("cowork.ragLayerEntities")}（{searchHits.entities.length}）</div>
-                {searchHits.entities.map((e, i) => (
-                  <div key={i} className="cowork-rag__entity">
-                    <span className="rag-node__badge rag-node__badge--enriched">{e.type}</span>
-                    <span className="cowork-rag__entity-name">{e.name}</span>
-                    {e.description && <span className="cowork-rag__entity-desc">· {e.description}</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-            {searchHits.snippets.length > 0 && (
-              <div className="cowork-rag__hits-layer">
-                <div className="cowork-rag__hits-label">{t("cowork.ragLayerSnippets")}（{searchHits.snippets.length}）</div>
-                {searchHits.snippets.map((s, i) => (
-                  <div key={i} className="cowork-rag__snippet">
-                    <span className="cowork-rag__snippet-path">{s.path}</span>
-                    <span className="cowork-rag__snippet-body">{s.snippet}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* File tree */}
-        {treeWithProgress === null ? (
-          <div className="cowork-rag__loading">…</div>
-        ) : treeWithProgress.length === 0 ? (
-          <div className="cowork-rag__empty">
-            <div>{t("cowork.ragEmpty")}</div>
-            <div className="cowork-rag__drop-hint">{t("cowork.ragDropHint")}</div>
-          </div>
-        ) : (
-          <div className="cowork-rag__tree">
-            {treeWithProgress.map((node) => (
-              <RagNode
-                key={node.key}
-                node={node}
-                depth={0}
-                onStartExtract={(n) => void onStartExtract(n)}
-                onCancel={(n) => void onCancel(n)}
-                onRemove={(n) => void onRemove(n)}
-              />
+      {/* Knowledge summary card */}
+      {summary && (
+        <div className="rag-summary">
+          <div className="rag-summary__text">{summary.summary}</div>
+          <div className="rag-summary__themes">
+            {asArray(summary.themes).map((t) => (
+              <span key={t} className="rag-summary__theme" onClick={() => setSearchQuery(t)}>{t}</span>
             ))}
           </div>
-        )}
+        </div>
+      )}
+      {!summary && !summaryLoading && activeCollection && hasData && (
+        <div className="rag-summary rag-summary--prompt">
+          <button className="btn btn--link" onClick={() => void fetchSummary()}>
+            生成知识摘要
+          </button>
+        </div>
+      )}
+
+      {/* Graph canvas */}
+
+      {/* Graph canvas */}
+      <div className="rag-panel__graph">
+        <GraphCanvas
+          collection={activeCollection}
+          searchQuery={searchQuery}
+          searchMode={searchMode}
+          filterTypes={filterTypes}
+          selectionMode={selectionMode}
+          selectedEntities={selectedEntities}
+          selectedRelations={selectedRelations}
+          onNodeClick={handleNodeClick}
+          onSelectionChange={(ents, rels) => {
+            setSelectedEntities(ents);
+            setSelectedRelations(rels);
+          }}
+        />
       </div>
+
+      {/* Legend overlay */}
+      <GraphLegend hasCommunities={hasCommunities} />
+
+      {/* Knowledge reference bar (selection mode) */}
+      {selectionMode && (
+        <KnowledgeRefBar
+          selectedEntities={selectedEntities}
+          selectedRelations={selectedRelations}
+          onClear={() => {
+            setSelectedEntities([]);
+            setSelectedRelations([]);
+          }}
+          onUseFor={() => setShowSkillModal(true)}
+        />
+      )}
+
+      {/* Skill selection modal */}
+      {showSkillModal && (
+        <SkillSelectModal
+          selectedEntities={selectedEntities}
+          selectedRelations={selectedRelations}
+          onConfirm={(skill) => handleSkillConfirm(skill)}
+          onClose={() => setShowSkillModal(false)}
+        />
+      )}
     </div>
   );
-}
-
-// applyProgress deep-merges live progress events into the tree by jobId. Each
-// event carries the latest doneChunks/totalChunks/status for a job, so we walk
-// the tree and update any matching file node.
-function applyProgress(nodes: RagNodeView[], progress: Record<string, RagProgressEvent>): RagNodeView[] {
-  if (Object.keys(progress).length === 0) return nodes;
-  return nodes.map((n) => {
-    const ev = n.jobId ? progress[n.jobId] : undefined;
-    const updated: RagNodeView = ev
-      ? {
-          ...n,
-          doneChunks: ev.doneChunks,
-          totalChunks: ev.totalChunks,
-          status: mapEventStatus(ev.status),
-        }
-      : { ...n };
-    if (updated.children) {
-      updated.children = applyProgress(updated.children, progress);
-    }
-    return updated;
-  });
-}
-
-// mapEventStatus translates the job status from a ProgressEvent into the UI's
-// node-status vocabulary.
-function mapEventStatus(s: string): string {
-  switch (s) {
-    case "done": return "enriched";
-    case "error": return "error";
-    case "cancelled": return "cancelled";
-    case "extracting":
-    case "pending": return "extracting";
-    default: return s;
-  }
 }

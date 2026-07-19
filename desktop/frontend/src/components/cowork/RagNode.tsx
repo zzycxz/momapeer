@@ -1,18 +1,21 @@
 // RagNode renders one node (file or folder) of the RAG tree, recursively for
-// folders. File nodes carry FTS5 + extraction status, a progress bar (when
-// extracting), and action buttons (deep extract / cancel / remove). The ETA
-// tooltip on the progress bar shows "已 X/Y 块 · 平均 Zs/块 · 预计还需 N分M秒".
+// folders. Styled to match the coding-mode workspace tree (workspace-tree__row):
+// clean rows, shared --tree-row-* variables, chevron + icon + name. The
+// RAG-specific action buttons (extract / cancel / remove) appear on hover so
+// the resting row is as quiet as the coding tree, but stay one click away.
 //
-// The node is presentational except for hover-triggered ETA probes — it calls
-// back up to RagPanel for mutations so the network surface stays centralized.
+// Folder rows expand/collapse via the chevron; file rows open the document
+// preview via onFileClick (passing the node's own collection so preview works
+// even when the dock is in "all collections" scope).
 
 import { useEffect, useState } from "react";
-import { ChevronRight, File as FileIcon, Folder, FolderOpen, Info, Zap, Ban, Trash2, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen, Info, Zap, Ban, Trash2, RefreshCw } from "lucide-react";
 
 import type { RagETAView, RagNodeView } from "../../lib/types";
 import { app } from "../../lib/bridge";
 import { useT, type Translator } from "../../lib/i18n";
 import { Tooltip } from "../Tooltip";
+import { fileIconColor } from "./fileTypeColors";
 
 export function RagNode({
   node,
@@ -20,23 +23,27 @@ export function RagNode({
   onStartExtract,
   onCancel,
   onRemove,
+  onFileClick,
+  selectedPath,
 }: {
   node: RagNodeView;
   depth: number;
   onStartExtract: (node: RagNodeView) => void;
   onCancel: (node: RagNodeView) => void;
   onRemove: (node: RagNodeView) => void;
+  onFileClick?: (node: RagNodeView) => void;
+  selectedPath?: string;
 }) {
   const t = useT();
   const [expanded, setExpanded] = useState(depth < 1); // auto-expand first level
   const [eta, setEta] = useState<RagETAView | null>(null);
 
-  const pad = 8 + depth * 16;
+  const active = !!selectedPath && node.path === selectedPath;
   const hasChildren = node.kind === "folder" && node.children && node.children.length > 0;
   const isExtracting = node.status === "extracting";
+  const iconColor = node.kind === "file" ? fileIconColor(node.label) : undefined;
 
-  // Poll ETA when extracting (throttled on hover). We fetch on a 3s interval
-  // while the node is in the extracting state, so the tooltip stays fresh.
+  // Poll ETA when extracting so the tooltip stays fresh.
   useEffect(() => {
     if (!isExtracting || !node.jobId) {
       setEta(null);
@@ -52,67 +59,85 @@ export function RagNode({
   }, [isExtracting, node.jobId]);
 
   return (
-    <div className="rag-node">
+    <div className={`ragft-node${node.status === "enriched" ? " ragft-node--enriched" : ""}${node.status === "error" ? " ragft-node--error" : ""}`}>
       <div
-        className={`rag-node__row ${node.kind === "folder" ? "rag-node__row--folder" : "rag-node__row--file"}`}
-        style={{ paddingLeft: pad }}
+        className={`ragft-row${active ? " ragft-row--active" : ""}`}
+        style={{ paddingLeft: 8 + depth * 14 }}
       >
+        {/* Folder: chevron toggles expand. File: no chevron (placeholder keeps alignment). */}
         {node.kind === "folder" ? (
-          <>
-            <button
-              className="rag-node__chevron"
-              onClick={() => setExpanded((v) => !v)}
-              title={expanded ? "collapse" : "expand"}
-            >
-              <ChevronRight size={12} className={expanded ? "rag-node__chevron--open" : ""} />
-            </button>
-            {expanded ? <FolderOpen size={13} /> : <Folder size={13} />}
-            <span className="rag-node__label">{node.label}</span>
-          </>
+          <button
+            type="button"
+            className="ragft-chev-btn"
+            onClick={() => setExpanded((v) => !v)}
+            title={expanded ? "collapse" : "expand"}
+          >
+            {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          </button>
         ) : (
+          <span className="ragft-chev" />
+        )}
+        {/* Icon + label. Folder label is static; file label opens preview. */}
+        {node.kind === "folder" ? (
+          expanded ? <FolderOpen size={14} className="ragft-icon ragft-icon--dir" /> : <Folder size={14} className="ragft-icon ragft-icon--dir" />
+        ) : (
+          <FileText size={14} className="ragft-icon" style={iconColor ? { color: iconColor } : undefined} />
+        )}
+        <span
+          className="ragft-name"
+          title={node.kind === "file" ? statusTitle(node, t) : node.label}
+          style={node.kind === "file" && onFileClick ? { cursor: "pointer" } : undefined}
+          onClick={node.kind === "file" && onFileClick ? () => onFileClick(node) : undefined}
+        >
+          {node.label}
+        </span>
+
+        {/* File-only extras: status text (tiny, faded), inline progress while
+            extracting, action buttons on hover. */}
+        {node.kind === "file" && (
           <>
-            <span className="rag-node__chevron rag-node__chevron--placeholder" />
-            <FileIcon size={13} />
-            <span className="rag-node__label" title={node.path}>{node.label}</span>
-            <StatusBadge node={node} t={t} />
-            {isExtracting && (
-              <div className="rag-node__progress">
-                <progress
-                  className="rag-progress-bar"
-                  value={node.doneChunks}
-                  max={node.totalChunks || 1}
-                />
-                <span className="rag-node__pct">
-                  {node.totalChunks > 0 ? Math.round((node.doneChunks / node.totalChunks) * 100) : 0}%
-                </span>
-                <Tooltip label={etaLabel(eta, node, t)} side="top">
-                  <Info size={13} className="rag-node__eta-icon" />
-                </Tooltip>
-              </div>
+            {/* Status text: a tiny faded label at the right edge — always visible
+                but quiet (10px, --fg-faint). Shows entity count for enriched,
+                error hint for failures; empty when there's nothing to say so the
+                resting row stays clean like the coding tree. */}
+            {!isExtracting && statusText(node, t) && (
+              <span className={`ragft-status ragft-status--${node.status}`} title={statusTitle(node, t)}>
+                {statusText(node, t)}
+              </span>
             )}
-            <div className="rag-node__actions">
+            {isExtracting ? (
+              <span className="ragft-progress">
+                <progress className="ragft-progress-bar" value={node.doneChunks} max={node.totalChunks || 1} />
+                <span className="ragft-pct">{node.totalChunks > 0 ? Math.round((node.doneChunks / node.totalChunks) * 100) : 0}%</span>
+                <Tooltip label={etaLabel(eta, node, t)} side="top">
+                  <Info size={12} className="ragft-eta-icon" />
+                </Tooltip>
+              </span>
+            ) : null}
+            <div className="ragft-actions">
               {isExtracting ? (
-                <button className="rag-node__btn" title={t("cowork.ragCancel")} onClick={() => onCancel(node)}>
-                  <Ban size={14} />
+                <button type="button" className="ragft-btn" title={t("cowork.ragCancel")} onClick={() => onCancel(node)}>
+                  <Ban size={13} />
                 </button>
               ) : (
                 <button
-                  className="rag-node__btn rag-node__btn--accent"
+                  type="button"
+                  className="ragft-btn ragft-btn--accent"
                   title={node.status === "enriched" ? t("cowork.ragReExtract") : t("cowork.ragDeepExtract")}
                   onClick={() => onStartExtract(node)}
                 >
-                  {node.status === "error" ? <RefreshCw size={14} /> : <Zap size={14} />}
+                  {node.status === "error" ? <RefreshCw size={13} /> : <Zap size={13} />}
                 </button>
               )}
-              <button className="rag-node__btn rag-node__btn--danger" title={t("cowork.ragRemove")} onClick={() => onRemove(node)}>
-                <Trash2 size={14} />
+              <button type="button" className="ragft-btn ragft-btn--danger" title={t("cowork.ragRemove")} onClick={() => onRemove(node)}>
+                <Trash2 size={13} />
               </button>
             </div>
           </>
         )}
       </div>
       {hasChildren && expanded && (
-        <div className="rag-node__children">
+        <div className="ragft-children">
           {node.children!.map((child) => (
             <RagNode
               key={child.key}
@@ -121,6 +146,8 @@ export function RagNode({
               onStartExtract={onStartExtract}
               onCancel={onCancel}
               onRemove={onRemove}
+              onFileClick={onFileClick}
+              selectedPath={selectedPath}
             />
           ))}
         </div>
@@ -129,30 +156,43 @@ export function RagNode({
   );
 }
 
-// StatusBadge renders the small colored chip next to a file: FTS5✓ / 抽取中 /
-// 已抽取 N 实体 / 出错 / 已取消.
-function StatusBadge({ node, t }: { node: RagNodeView; t: Translator }) {
-  const cls = `rag-node__badge rag-node__badge--${node.status}`;
+// statusTitle gives the file label hover tooltip a short status line.
+function statusTitle(node: RagNodeView, t: Translator): string {
   switch (node.status) {
-    case "extracting":
-      return <span className={cls}>{t("cowork.ragStatusExtracting")}</span>;
     case "enriched":
-      return <span className={cls}>{t("cowork.ragStatusEnriched")}</span>;
+      return t("cowork.ragStatusEnriched") + (node.entityCount > 0 ? ` · ${node.entityCount}` : "");
+    case "extracting":
+      return t("cowork.ragStatusExtracting");
     case "error":
-      return <span className={cls} title={node.errorMsg}>{t("cowork.ragStatusError")}</span>;
+      return t("cowork.ragStatusError") + (node.errorMsg ? `: ${node.errorMsg}` : "");
     case "cancelled":
-      return <span className={cls}>{t("cowork.ragStatusCancelled")}</span>;
+      return t("cowork.ragStatusCancelled");
     default:
-      return node.hasFts5 ? <span className={cls}>{t("cowork.ragStatusIndexed")}</span> : null;
+      return node.hasFts5 ? t("cowork.ragStatusIndexed") : node.label;
+  }
+}
+
+// statusText returns a compact always-visible label for the right edge of a
+// file row: the entity count for enriched files, a short error tag for
+// failures, etc. Returns "" when there's nothing meaningful (keeps the row
+// clean for plain indexed/empty files). Truncated so it never wraps.
+function statusText(node: RagNodeView, t: Translator): string {
+  switch (node.status) {
+    case "enriched":
+      return node.entityCount > 0 ? `${node.entityCount}` : t("cowork.ragStatusEnriched");
+    case "extracting":
+      return ""; // progress bar handles this state
+    case "error":
+      return t("cowork.ragStatusError");
+    case "cancelled":
+      return t("cowork.ragStatusCancelled");
+    default:
+      return node.hasFts5 ? "✓" : "";
   }
 }
 
 // etaLabel formats the hover tooltip: "已 X/Y 块 · 平均 Zs/块 · 预计还需 N分M秒".
-function etaLabel(
-  eta: RagETAView | null,
-  node: RagNodeView,
-  t: Translator,
-): string {
+function etaLabel(eta: RagETAView | null, node: RagNodeView, t: Translator): string {
   const done = eta?.doneChunks ?? node.doneChunks;
   const total = eta?.totalChunks ?? node.totalChunks;
   const avgMs = eta?.avgLatencyMs ?? 0;

@@ -53,6 +53,9 @@ export function TaskForm({
   const [prompt, setPrompt] = useState(initial?.prompt ?? seedTpl?.prompt ?? "");
   const [outputMode, setOutputMode] = useState(initial?.outputMode ?? seedTpl?.outputMode ?? "notify");
   const [outputDest, setOutputDest] = useState(initial?.outputDest ?? "");
+  const [outputDir, setOutputDir] = useState(initial?.outputDir ?? "");
+  const [color, setColor] = useState(initial?.color ?? "#4488FF");
+  const [location, setLocation] = useState(initial?.location ?? "");
   const [preview, setPreview] = useState<SchedulePreview | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>("");
@@ -104,10 +107,6 @@ export function TaskForm({
       setError(t("cowork.automationFormExpression"));
       return;
     }
-    if (!prompt.trim()) {
-      setError(t("cowork.automationFormPrompt"));
-      return;
-    }
     setSaving(true);
     try {
       await onSubmit({
@@ -117,6 +116,9 @@ export function TaskForm({
         prompt: prompt.trim(),
         outputMode,
         outputDest: outputDest.trim(),
+        outputDir: outputDir.trim(),
+        color,
+        location: location.trim(),
       });
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
@@ -146,6 +148,29 @@ export function TaskForm({
               onChange={(e) => setName(e.target.value)}
             />
           </label>
+
+          {/* Color & Location */}
+          <div className="cowork-taskform__section">
+            <label className="cowork-taskform__label">
+              <span className="cowork-taskform__labeltext">颜色与地点</span>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <input
+                  type="color"
+                  className="cowork-taskform__input"
+                  style={{ width: "40px", padding: "0" }}
+                  value={color}
+                  onChange={(e) => setColor(e.target.value)}
+                />
+                <input
+                  className="cowork-taskform__input"
+                  style={{ flex: 1 }}
+                  value={location}
+                  placeholder="地点 (如：会议室A)"
+                  onChange={(e) => setLocation(e.target.value)}
+                />
+              </div>
+            </label>
+          </div>
 
           {/* Templates */}
           {!isEdit && templates.length > 0 && (
@@ -238,6 +263,21 @@ export function TaskForm({
                 />
               </label>
             )}
+          </div>
+
+          {/* Output directory — soft isolation: concentrates the task's file
+              artifacts (CSV/report/docs) into one folder instead of the shared
+              workspace root. Optional; empty falls back to the active workspace. */}
+          <div className="cowork-taskform__section">
+            <label className="cowork-taskform__label">
+              <span className="cowork-taskform__labeltext">{t("cowork.automationFormOutputDir")}</span>
+              <input
+                className="cowork-taskform__input"
+                value={outputDir}
+                placeholder={t("cowork.automationFormOutputDirHint")}
+                onChange={(e) => setOutputDir(e.target.value)}
+              />
+            </label>
           </div>
 
           {error && <div className="cowork-taskform__error">{error}</div>}
