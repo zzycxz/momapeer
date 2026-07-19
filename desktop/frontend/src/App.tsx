@@ -6,6 +6,7 @@ import {
   Command,
   Download,
   SquarePen,
+  SlidersHorizontal,
   FileDown,
   FileImage,
   FileText,
@@ -27,6 +28,7 @@ import { useController, type Item, type LiveStream } from "./lib/useController";
 import { app, onEvent, onProjectTreeChanged } from "./lib/bridge";
 import { onProfileChanged } from "./lib/bridge";
 import { CoWorkLayout } from "./layouts/CoWorkLayout";
+import { PreferencePanel } from "./components/cowork/PreferencePanel";
 import { Transcript } from "./components/Transcript";
 import { Composer } from "./components/Composer";
 import { TodoPanel } from "./components/TodoPanel";
@@ -665,6 +667,11 @@ export default function App() {
   const [sidebarImConnections, setSidebarImConnections] = useState<SidebarImConnection[]>([]);
   const [imTopicSources, setImTopicSources] = useState<Record<string, SidebarImTopicSource>>({});
   const [sidebarImDetailConnectionId, setSidebarImDetailConnectionId] = useState("");
+  // preferenceOpen toggles the inline "编码偏好"/"办公偏好" panel in the dev
+  // (coding) layout. When true, the main transcript area is replaced by
+  // PreferencePanel so the user can edit the active mode's portrait
+  // (cowork.md / dev.md). Mirrors the cowork sidebar's preference tab.
+  const [preferenceOpen, setPreferenceOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [sidebarResizing, setSidebarResizing] = useState(false);
@@ -2345,7 +2352,12 @@ export default function App() {
 
   const mainNode = (
     <main className="main">
-      {sidebarImDetailConnection ? (
+      {preferenceOpen ? (
+        <PreferencePanel
+          title={t("preference.title") || "编码偏好"}
+          onClose={() => setPreferenceOpen(false)}
+        />
+      ) : sidebarImDetailConnection ? (
         <SidebarImConnectionDetail
           connection={sidebarImDetailConnection}
           onClose={() => setSidebarImDetailConnectionId("")}
@@ -2530,6 +2542,24 @@ export default function App() {
 
           <section className="sidebar__section sidebar__section--projects">
             {projectTreeNode}
+          </section>
+
+          {/* 编码偏好: inline editor for the active mode's portrait (dev.md under
+              dev, cowork.md under cowork). Placed at the sidebar bottom so it is
+              always reachable from the coding layout; clicking replaces the main
+              transcript with PreferencePanel until closed. */}
+          <section className="cowork-sidebar__group" style={{ padding: '0 8px', marginTop: 'auto', marginBottom: '8px' }}>
+            <button
+              className={`cowork-sidebar__item ${preferenceOpen ? "cowork-sidebar__item--active" : ""}`}
+              onClick={() => {
+                closeTransientOverlays();
+                setPreferenceOpen(true);
+              }}
+              title={t("preference.title") || "编码偏好"}
+            >
+              <SlidersHorizontal size={14} />
+              <span>{t("preference.title") || "编码偏好"}</span>
+            </button>
           </section>
 
         </aside>
