@@ -561,7 +561,12 @@ func (a *App) OpenProjectTab(args ...string) (TabMeta, error) {
 
 // OpenGlobalTab opens a new global-scope tab (no project root). The global
 // workspace root is the momapeer user config directory.
-func (a *App) OpenGlobalTab(topicID string) (TabMeta, error) {
+// OpenGlobalTab opens (or activates) a global-scope tab. The profile-aware form
+// takes (topicID, profile); the legacy form takes (topicID) and defaults profile
+// to "". The profile routes the new tab into the right partition (dev/cowork)
+// and is stamped on the WorkspaceTab so the controller builds correctly.
+func (a *App) OpenGlobalTab(topicID, profile string) (TabMeta, error) {
+	profile = strings.TrimSpace(profile)
 	globalRoot := globalWorkspaceRoot()
 	if err := os.MkdirAll(globalRoot, 0o755); err != nil {
 		return TabMeta{}, fmt.Errorf("create global workspace: %w", err)
@@ -589,6 +594,7 @@ func (a *App) OpenGlobalTab(topicID string) (TabMeta, error) {
 		mode:             "normal",
 		toolApprovalMode: control.ToolApprovalAsk,
 		disabledMCP:      map[string]ServerView{},
+		profile:          profile,
 	}
 	tab.sink = &tabEventSink{tabID: tabID, app: a}
 
@@ -660,7 +666,15 @@ func (a *App) OpenExpertSessionTab(teamID, teamName string) (TabMeta, error) {
 // EnsureBlankTab activates the existing blank tab for the target scope, or
 // creates one if none exists. Reusing a blank tab keeps repeated "new session"
 // clicks from piling up empty conversations.
-func (a *App) EnsureBlankTab(scope, workspaceRoot string) (TabMeta, error) {
+// EnsureBlankTab activates the existing blank tab for the target scope, or
+// creates one if none exists. Reusing a blank tab keeps repeated "new session"
+// clicks from piling up empty conversations.
+//
+// The profile-aware form takes (scope, workspaceRoot, profile); the legacy form
+// takes (scope, workspaceRoot) and defaults profile to "". The profile is
+// stamped on the new tab so the controller builds in the right partition.
+func (a *App) EnsureBlankTab(scope, workspaceRoot, profile string) (TabMeta, error) {
+	profile = strings.TrimSpace(profile)
 	scope = strings.TrimSpace(scope)
 	if scope != "project" {
 		scope = "global"
@@ -676,7 +690,7 @@ func (a *App) EnsureBlankTab(scope, workspaceRoot string) (TabMeta, error) {
 			workspaceRoot = abs
 		}
 		saveWorkspace(workspaceRoot)
-		_ = addProject(workspaceRoot, "")
+		_ = addProject(workspaceRoot, "", profile)
 	} else {
 		workspaceRoot = ""
 		globalRoot = globalWorkspaceRoot()
@@ -701,9 +715,9 @@ func (a *App) EnsureBlankTab(scope, workspaceRoot string) (TabMeta, error) {
 	if topicID := a.indexedBlankTopicIDLocked(scope, workspaceRoot); topicID != "" {
 		a.mu.Unlock()
 		if scope == "global" {
-			return a.OpenGlobalTab(topicID)
+			return a.OpenGlobalTab(topicID, profile)
 		}
-		return a.OpenProjectTab(workspaceRoot, topicID)
+		return a.OpenProjectTab(workspaceRoot, topicID, profile)
 	}
 
 	topicID := newTopicID()
@@ -712,15 +726,15 @@ func (a *App) EnsureBlankTab(scope, workspaceRoot string) (TabMeta, error) {
 		a.mu.Unlock()
 		return TabMeta{}, err
 	}
-	f := loadProjectsFile()
+	f := loadProjectsFile(profile)
 	if workspaceRoot == "" {
 		f.GlobalTopics = prependUniqueString(f.GlobalTopics, topicID)
-		_ = saveProjectsFile(f)
+		_ = saveProjectsFile(f, profile)
 	} else {
 		for i, p := range f.Projects {
 			if p.Root == workspaceRoot {
 				f.Projects[i].Topics = prependUniqueString(p.Topics, topicID)
-				_ = saveProjectsFile(f)
+				_ = saveProjectsFile(f, profile)
 				break
 			}
 		}
@@ -739,6 +753,7 @@ func (a *App) EnsureBlankTab(scope, workspaceRoot string) (TabMeta, error) {
 		TopicTitle:       topicTitleForTab(scope, workspaceRoot, topicID),
 		mode:             "normal",
 		toolApprovalMode: control.ToolApprovalAsk,
+		profile:          profile,
 		disabledMCP:      map[string]ServerView{},
 	}
 	created.sink = &tabEventSink{tabID: tabID, app: a}
@@ -2475,9 +2490,13 @@ func (a *App) SetProjectColor(workspaceRoot, color string) error {
 }
 
 // ReorderProjects persists the user-defined order of project folders and,
-// when present, the virtual Global sidebar section.
-func (a *App) ReorderProjects(workspaceRoots []string) error {
-	f := loadProjectsFile()
+// when present, the virtual Global sidebar section. The profile-aware form
+// takes (workspaceRoots, profile) so the reorder lands in the per-profile
+// projects index; the legacy form takes (workspaceRoots) and uses the
+// un-profiled index. The profile argument is the active profile key
+// ("dev"/"cowork") so reordering dev's sidebar doesn't reorder cowork's.
+func (a *App) ReorderProjects(workspaceRoots []string, profile string) error {
+	f := loadProjectsFile(profile)
 	byRoot := make(map[string]desktopProject, len(f.Projects))
 	for _, project := range f.Projects {
 		byRoot[project.Root] = project
@@ -2518,7 +2537,7 @@ func (a *App) ReorderProjects(workspaceRoots []string) error {
 	} else {
 		f.SidebarOrder = nil
 	}
-	if err := saveProjectsFile(f); err != nil {
+	if err := saveProjectsFile(f, profile); err != nil {
 		return err
 	}
 	a.emitProjectTreeChanged()
@@ -2817,7 +2836,7 @@ func (a *App) TrashTopic(topicID string) error {
 			return err
 		}
 		if fallbackScope == "global" {
-			_, err = a.OpenGlobalTab(topic.ID)
+			_, err = a.OpenGlobalTab(topic.ID, "")
 		} else {
 			_, err = a.OpenProjectTab(fallbackRoot, topic.ID)
 		}
