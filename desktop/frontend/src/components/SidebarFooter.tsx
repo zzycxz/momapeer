@@ -1,12 +1,15 @@
-// SidebarFooter renders the four always-available controls at the bottom of
-// the sidebar: IM connections, session history, trash, and settings. It is
-// shared by both the coding sidebar (App.tsx) and the cowork sidebar
-// (CoWorkLayout.tsx) so the office mode gets the same entry points — the only
-// thing that differs is which sessions history/trash show, which the caller
-// handles by passing a profile-scoped openAllHistory/openTrash.
+// SidebarFooter renders the four always-available controls at the bottom bar
+// of the window (the global-bottom-bar that spans under the sidebar + chat +
+// workspace). It is shared by both the coding sidebar (App.tsx) and the cowork
+// sidebar (CoWorkLayout.tsx) so the office mode gets the same entry points.
 //
-// Keeping this as a standalone component (rather than inlining twice) means a
-// single source of truth for the icons, labels, tooltips, and ordering.
+// The footer uses footer__nav / footer__navitem classes (NOT sidebar__nav) so
+// the bottom-bar-scoped CSS in styles.css applies: 28x28 icon-only buttons with
+// hover backgrounds, IM dot in the top-right corner, tooltips opening upward
+// (side="top") since the bar is at the window bottom.
+//
+// Keeping this as a standalone component means a single source of truth for the
+// icons, labels, tooltips, and ordering across both product profiles.
 
 import { History, MessageSquare, Settings as SettingsIcon, Trash2 } from "lucide-react";
 
@@ -34,48 +37,47 @@ export function SidebarFooter({
 }: SidebarFooterProps) {
   const t = useT();
   return (
-    <nav className="sidebar__nav">
+    <nav className="footer__nav">
       <Tooltip
         label={imConnectionCount === 0 ? t("sidebar.imEmpty") : t("sidebar.im")}
         fill
-        side="right"
+        side="top"
         disabled={tooltipDisabled}
       >
         <button
-          className="sidebar__navitem sidebar__navitem--im"
+          className="footer__navitem footer__navitem--im"
           type="button"
           onClick={() => void onOpenIm()}
         >
-          <MessageSquare size={15} />
-          <span>{t("sidebar.im")}</span>
+          <MessageSquare size={16} />
           {imOnline && <span className="sidebar-im-dot" />}
         </button>
       </Tooltip>
-      <Tooltip label={t("sidebar.allHistory")} fill side="right" disabled={tooltipDisabled}>
+      <Tooltip label={t("sidebar.allHistory")} fill side="top" disabled={tooltipDisabled}>
         <button
-          className="sidebar__navitem"
+          className="footer__navitem"
+          type="button"
           onClick={() => void onOpenHistory()}
         >
-          <History size={15} />
-          <span>{t("sidebar.allHistory")}</span>
+          <History size={16} />
         </button>
       </Tooltip>
-      <Tooltip label={t("sidebar.trash")} fill side="right" disabled={tooltipDisabled}>
+      <Tooltip label={t("sidebar.trash")} fill side="top" disabled={tooltipDisabled}>
         <button
-          className="sidebar__navitem"
+          className="footer__navitem"
+          type="button"
           onClick={() => void onOpenTrash()}
         >
-          <Trash2 size={15} />
-          <span>{t("sidebar.trash")}</span>
+          <Trash2 size={16} />
         </button>
       </Tooltip>
-      <Tooltip label={t("topbar.settings")} fill side="right" disabled={tooltipDisabled}>
+      <Tooltip label={t("topbar.settings")} fill side="top" disabled={tooltipDisabled}>
         <button
-          className="sidebar__navitem"
+          className="footer__navitem"
+          type="button"
           onClick={() => void onOpenSettings()}
         >
-          <SettingsIcon size={15} />
-          <span>{t("topbar.settings")}</span>
+          <SettingsIcon size={16} />
         </button>
       </Tooltip>
     </nav>
