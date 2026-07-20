@@ -1,51 +1,74 @@
-// CoworkDock is the cowork-mode right-side panel: a tabbed overview of today's
-// events, the user's mailbox status, and the active workspace's files. It
-// mirrors the coding-mode workbench-dock in structure but presents cowork-
-// flavored content (calendar events, scheduled tasks, mail probe).
+// CoworkDock is the cowork-mode right-side panel.
 //
-// Tabs:
-//   - 今日 (today): today's calendar events + upcoming scheduled tasks.
-//   - 邮件 (mail): mailbox connection status (ProbeMailAccount: ok/error/
-//     unconfigured). The lightweight probe is all we show here — full mail
-//     reading lives in the dedicated mail tools.
-//   - 文件 (files): a flat list of the active workspace's top-level entries
-//     (ListDir ""), so the user can browse/peek project files without leaving
-//     cowork mode.
+// Two modes:
+//   - mode="default" (the classic cowork dock): 3 tabs — 今日 / 邮件 / 文件
+//     (today's calendar events, mailbox probe status, workspace files).
+//   - mode="rag" (knowledge base navigation): 4 tabs — 集合 / 实体 / 文件 / 提取.
+//     This mirrors the navigation sidebar described in RagPanel.tsx: a list of
+//     collections, the active collection's entities, its file tree, and the
+//     deep-extraction UI (TemplateSelect). Tab strip styling intentionally
+//     matches the coding-mode workbench-dock (see styles.css comment:
+//     "Tab strip mirrors .workbench-dock__tools/__tabs/__tab so the two docks
+//     read as the same control").
 //
-// When mode === "rag" (the user opened the knowledge base panel), the dock
-// shows a knowledge nav: collections list. The graph canvas itself lives in
-// RagPanel; this nav complements it.
+// Sub-views (EntityDetail / DocPreview) replace the __body content with a
+// "返回" affordance back to the tab list.
 //
-// Go methods used (all verified to exist):
+// Go methods used (all verified to exist on AppBindings):
 //   - ListCalendarEvents(since, before string) → []CalendarEventView
 //   - ListScheduledTasks() → []TaskView
-//   - ProbeMailAccount() → MailProbeResult {OK, Status, Message}
-//   - ListDir(rel string) → []DirEntry {Name, IsDir}
+//   - ProbeMailAccount() → MailProbeResult
+//   - ListDir(rel string) → []DirEntry
 //   - ListRagCollections() → []RagCollectionView
+//   - ListRagTree(collection string) → []RagNodeView
+//   - GetTopEntities(collection string, limit number) → GraphDataView
+//   - GetEntityDetail(collection, name string) → EntityDetailView
+//   - GetDocumentPreview(collection, docPath string) → DocPreviewView
+//   - RagExtractResult(collection string) → RagExtractResultView
+//   - RagImportPaths(collection, paths string[]) → RagImportResult
+//   - RagCleanCollection(collection string) → void
+//   - PickWorkspace() → string
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
+  Circle,
+  FileText,
+  Folder,
+  FolderOpen,
   Inbox,
   Mail,
-  RefreshCw,
-  Folder,
-  FileText,
   Network as NetworkIcon,
-  Circle,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  Zap,
 } from "lucide-react";
 
-import { app, onCalendarChanged, onSchedulerChanged, onRagChanged } from "../../lib/bridge";
+import { app, onCalendarChanged, onFilesDropped, onRagChanged, onSchedulerChanged } from "../../lib/bridge";
 import type {
   CalendarEventView,
-  TaskView,
+  DirEntry,
+  GraphDataView,
+  GraphNodeView,
   MailProbeResult,
   RagCollectionView,
-  DirEntry,
+  RagNodeView,
+  TaskView,
 } from "../../lib/types";
 import { useT } from "../../lib/i18n";
+import { useToast } from "../../lib/toast";
+import { ENTITY_TYPES, ENTITY_TYPE_LABELS, colorFor } from "./entityTypes";
+import { fileIconColor } from "./fileTypeColors";
+import { TemplateSelect } from "./TemplateSelect";
+import { EntityDetail } from "./EntityDetail";
+import { DocPreview } from "./DocPreview";
 
 type DockTab = "today" | "mail" | "files";
+
+// RAG-mode tabs: 集合 / 实体 / 文件 / 提取
+type RagTab = "collections" | "entities" | "files" | "extract";
 
 export interface CoworkDockProps {
   cwd?: string;
@@ -68,11 +91,6 @@ interface FilesData {
   loading: boolean;
 }
 
-interface RagNavData {
-  collections: RagCollectionView[];
-  loading: boolean;
-}
-
 // todayRange returns {since, before} ISO-ish strings for the local today
 // (00:00 → 23:59), matching ListCalendarEvents's "2006-01-02T15:04" format.
 function todayRange(): { since: string; before: string } {
@@ -89,11 +107,13 @@ export function CoworkDock({
   onClose,
   onToggleMaximized,
   mode = "default",
-  onEntityClick: _onEntityClick,
+  onEntityClick,
   onFileClick,
 }: CoworkDockProps) {
   const t = useT();
+  const isRag = mode === "rag";
   const [tab, setTab] = useState<DockTab>("today");
+  const [ragTab, setRagTab] = useState<RagTab>("collections");
 
   // --- today data ---
   const [today, setToday] = useState<TodayData>({ events: [], tasks: [], loading: true });
@@ -105,7 +125,6 @@ export function CoworkDock({
         app.ListCalendarEvents(since, before).catch(() => [] as CalendarEventView[]),
         app.ListScheduledTasks().catch(() => [] as TaskView[]),
       ]);
-      // Upcoming = enabled tasks with a future nextRun.
       const upcoming = (tasks ?? []).filter(
         (tk) => tk.enabled && tk.nextRun && new Date(tk.nextRun).getTime() > Date.now() - 86400000,
       );
@@ -130,7 +149,7 @@ export function CoworkDock({
     }
   }, []);
 
-  // --- files data ---
+  // --- files data (default mode: workspace top-level entries) ---
   const [files, setFiles] = useState<FilesData>({ entries: [], loading: true });
   const refreshFiles = useCallback(async () => {
     setFiles({ entries: [], loading: true });
@@ -142,23 +161,40 @@ export function CoworkDock({
     }
   }, []);
 
-  // --- rag nav data ---
-  const [ragNav, setRagNav] = useState<RagNavData>({ collections: [], loading: true });
-  const refreshRagNav = useCallback(async () => {
-    setRagNav({ collections: [], loading: true });
+  // --- RAG collections ---
+  const [collections, setCollections] = useState<RagCollectionView[]>([]);
+  const [collectionsLoading, setCollectionsLoading] = useState(true);
+  const [collectionsError, setCollectionsError] = useState<string | null>(null);
+  const refreshCollections = useCallback(async () => {
+    setCollectionsLoading(true);
+    setCollectionsError(null);
     try {
-      const cols = await app.ListRagCollections().catch(() => [] as RagCollectionView[]);
-      setRagNav({ collections: cols ?? [], loading: false });
-    } catch {
-      setRagNav({ collections: [], loading: false });
+      const cols = await app.ListRagCollections().catch((e) => {
+        throw e;
+      });
+      setCollections(cols ?? []);
+    } catch (e) {
+      setCollections([]);
+      setCollectionsError(String(e));
+    } finally {
+      setCollectionsLoading(false);
     }
   }, []);
 
+  // Active collection: persisted in window so RagPanel and CoworkDock agree.
+  // Default to first collection once loaded.
+  const [activeCollection, setActiveCollection] = useState<string>("");
+  useEffect(() => {
+    if (!activeCollection && collections.length > 0) {
+      setActiveCollection(collections[0].name);
+    }
+  }, [collections, activeCollection]);
+
   // Initial load + live refresh subscriptions.
   useEffect(() => {
-    if (mode === "rag") {
-      void refreshRagNav();
-      return onRagChanged(() => void refreshRagNav());
+    if (isRag) {
+      void refreshCollections();
+      return onRagChanged(() => void refreshCollections());
     }
     void refreshToday();
     void refreshMail();
@@ -169,17 +205,37 @@ export function CoworkDock({
       unsub1();
       unsub2();
     };
-  }, [mode, refreshToday, refreshMail, refreshFiles, refreshRagNav]);
+  }, [isRag, refreshToday, refreshMail, refreshFiles, refreshCollections]);
 
   return (
     <aside className="cowork-dock" aria-label={t("coworkDock.label") || "办公概览"}>
       <div className="cowork-dock__tools">
-        {mode === "rag" ? (
+        {isRag ? (
           <div className="cowork-dock__tabs">
-            <button className="cowork-dock__tab cowork-dock__tab--active" type="button">
-              <NetworkIcon size={13} />
-              <span className="cowork-dock__tab-label">{t("cowork.knowledge") || "知识库"}</span>
-            </button>
+            <RagTabButton
+              active={ragTab === "collections"}
+              onClick={() => setRagTab("collections")}
+              icon={<NetworkIcon size={13} />}
+              label={t("coworkDock.collections") || "集合"}
+            />
+            <RagTabButton
+              active={ragTab === "entities"}
+              onClick={() => setRagTab("entities")}
+              icon={<NetworkIcon size={13} />}
+              label={t("coworkDock.entities") || "实体"}
+            />
+            <RagTabButton
+              active={ragTab === "files"}
+              onClick={() => setRagTab("files")}
+              icon={<FileText size={13} />}
+              label={t("coworkDock.files") || "文件"}
+            />
+            <RagTabButton
+              active={ragTab === "extract"}
+              onClick={() => setRagTab("extract")}
+              icon={<Zap size={13} />}
+              label={t("coworkDock.extract") || "提取"}
+            />
           </div>
         ) : (
           <div className="cowork-dock__tabs">
@@ -236,8 +292,22 @@ export function CoworkDock({
       </div>
 
       <div className="cowork-dock__body">
-        {mode === "rag" ? (
-          <RagNavView data={ragNav} />
+        {isRag ? (
+          <RagBody
+            tab={ragTab}
+            collections={collections}
+            collectionsLoading={collectionsLoading}
+            collectionsError={collectionsError}
+            activeCollection={activeCollection}
+            onSelectCollection={(name) => {
+              setActiveCollection(name);
+              // Notify the graph (and anything listening) of the active switch.
+              window.dispatchEvent(new CustomEvent("rag:active-collection", { detail: { collection: name } }));
+            }}
+            onRefreshCollections={() => void refreshCollections()}
+            onEntityClick={onEntityClick}
+            onFileClick={onFileClick}
+          />
         ) : tab === "today" ? (
           <TodayView data={today} />
         ) : tab === "mail" ? (
@@ -247,6 +317,612 @@ export function CoworkDock({
         )}
       </div>
     </aside>
+  );
+}
+
+// --- RAG tab button (wrapper to keep the strip tidy) -----------------------
+
+function RagTabButton({
+  active,
+  onClick,
+  icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <button
+      className={`cowork-dock__tab ${active ? "cowork-dock__tab--active" : ""}`}
+      type="button"
+      onClick={onClick}
+      title={label}
+    >
+      {icon}
+      <span className="cowork-dock__tab-label">{label}</span>
+    </button>
+  );
+}
+
+// --- RAG body router: renders the active tab's content ---------------------
+
+function RagBody({
+  tab,
+  collections,
+  collectionsLoading,
+  collectionsError,
+  activeCollection,
+  onSelectCollection,
+  onRefreshCollections,
+  onEntityClick,
+  onFileClick,
+}: {
+  tab: RagTab;
+  collections: RagCollectionView[];
+  collectionsLoading: boolean;
+  collectionsError: string | null;
+  activeCollection: string;
+  onSelectCollection: (name: string) => void;
+  onRefreshCollections: () => void;
+  onEntityClick?: (name: string) => void;
+  onFileClick?: (path: string) => void;
+}) {
+  // Sub-view navigation: when set, replaces the tab list with a detail panel.
+  const [entityDetailName, setEntityDetailName] = useState<string | null>(null);
+  const [docPreviewPath, setDocPreviewPath] = useState<string | null>(null);
+
+  // Reset sub-views when switching tabs (back to the tab list).
+  useEffect(() => {
+    setEntityDetailName(null);
+    setDocPreviewPath(null);
+  }, [tab]);
+
+  // 集合 tab -------------------------------------------------------------
+  if (tab === "collections") {
+    return (
+      <CollectionsTab
+        collections={collections}
+        loading={collectionsLoading}
+        error={collectionsError}
+        activeCollection={activeCollection}
+        onSelect={onSelectCollection}
+        onRefresh={onRefreshCollections}
+      />
+    );
+  }
+
+  // 实体 tab -------------------------------------------------------------
+  if (tab === "entities") {
+    if (entityDetailName) {
+      return (
+        <EntityDetail
+          collection={activeCollection}
+          entityName={entityDetailName}
+          onBack={() => setEntityDetailName(null)}
+          onHighlightInGraph={(name) => onEntityClick?.(name)}
+          onNavigatePeer={(name) => setEntityDetailName(name)}
+        />
+      );
+    }
+    return (
+      <EntitiesTab
+        collection={activeCollection}
+        onOpenEntity={(name) => setEntityDetailName(name)}
+        onEntityClick={onEntityClick}
+      />
+    );
+  }
+
+  // 文件 tab -------------------------------------------------------------
+  if (tab === "files") {
+    if (docPreviewPath) {
+      return (
+        <DocPreview
+          collection={activeCollection}
+          docPath={docPreviewPath}
+          onBack={() => setDocPreviewPath(null)}
+        />
+      );
+    }
+    return (
+      <FilesTab
+        collection={activeCollection}
+        onOpenFile={(path) => setDocPreviewPath(path)}
+        onFileClick={onFileClick}
+      />
+    );
+  }
+
+  // 提取 tab -------------------------------------------------------------
+  return <TemplateSelect collection={activeCollection} onBack={() => { /* no-op: stay in dock */ }} />;
+}
+
+// --- 集合 tab: list collections, switch active, create/delete -----------
+
+function CollectionsTab({
+  collections,
+  loading,
+  error,
+  activeCollection,
+  onSelect,
+  onRefresh,
+}: {
+  collections: RagCollectionView[];
+  loading: boolean;
+  error: string | null;
+  activeCollection: string;
+  onSelect: (name: string) => void;
+  onRefresh: () => void;
+}) {
+  const t = useT();
+  const { showToast } = useToast();
+
+  if (loading) {
+    return <div className="cowork-dock__loading">{t("common.loading") || "加载中…"}</div>;
+  }
+  if (error) {
+    return (
+      <div className="cowork-dock__empty-state">
+        <NetworkIcon size={22} />
+        <p>{t("coworkDock.loadFailed") || "加载失败"}</p>
+        <span className="cowork-dock__empty-hint">{error}</span>
+        <button className="cowork-dock__tab" type="button" onClick={onRefresh} title="刷新">
+          <RefreshCw size={12} />
+        </button>
+      </div>
+    );
+  }
+  if (collections.length === 0) {
+    return (
+      <div className="cowork-dock__empty-state">
+        <NetworkIcon size={22} />
+        <p>{t("cowork.ragComingSoon") || "知识库为空"}</p>
+        <span className="cowork-dock__empty-hint">
+          {t("coworkDock.collectionsEmptyHint") || "导入文件后此处显示集合导航"}
+        </span>
+        <button className="cowork-dock__tab" type="button" onClick={onRefresh} title="刷新">
+          <RefreshCw size={12} />
+        </button>
+      </div>
+    );
+  }
+
+  const handleCreate = async () => {
+    const name = window.prompt(t("coworkDock.createCollectionPrompt") || "输入新集合名称：", "");
+    if (!name) return;
+    try {
+      // Importing into a new collection name creates it implicitly.
+      const picked = await app.PickWorkspace().catch(() => "");
+      if (!picked) return;
+      const res = await app.RagImportPaths(name, [picked]);
+      showToast(res.message || `集合 ${name} 已创建`, "info");
+      onRefresh();
+    } catch (e) {
+      showToast(`${t("coworkDock.createFailed") || "创建失败"}：${String(e)}`, "error");
+    }
+  };
+
+  const handleDelete = async (name: string) => {
+    if (!window.confirm(t("coworkDock.confirmDelete") || `确认清理集合「${name}」的知识？文档不会被删除。`)) return;
+    try {
+      await app.RagCleanCollection(name);
+      showToast(`已清理 ${name}`, "info");
+      onRefresh();
+    } catch (e) {
+      showToast(`${t("coworkDock.deleteFailed") || "清理失败"}：${String(e)}`, "error");
+    }
+  };
+
+  return (
+    <div className="cowork-rag__body">
+      <div className="cowork-mailtab__head">
+        <span className="cowork-mailtab__status">
+          {t("coworkDock.collections") || "集合"} ({collections.length})
+        </span>
+        <button className="cowork-mailtab__refresh" type="button" onClick={() => void handleCreate()} title="新建集合">
+          <Plus size={13} />
+        </button>
+        <button className="cowork-mailtab__refresh" type="button" onClick={onRefresh} title="刷新">
+          <RefreshCw size={12} />
+        </button>
+      </div>
+      <div className="cowork-dock__group">
+        <ul className="cowork-today__list">
+          {collections.map((c) => {
+            const active = c.name === activeCollection;
+            return (
+              <li
+                key={c.name}
+                className={`cowork-today__row${active ? " cowork-today__row--active" : ""}`}
+                onClick={() => onSelect(c.name)}
+                style={{ cursor: "pointer" }}
+                title={c.name}
+              >
+                {active ? <FolderOpen size={13} /> : <Folder size={13} />}
+                <span className="cowork-today__text" style={{ flex: 1, minWidth: 0 }}>
+                  {c.name}
+                </span>
+                {c.documents > 0 && (
+                  <span className="cowork-dock__empty-hint" style={{ margin: 0 }}>
+                    {c.documents}文 / {c.entities}实
+                  </span>
+                )}
+                <button
+                  className="cowork-mailtab__refresh"
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleDelete(c.name);
+                  }}
+                  title={t("cowork.ragRemove") || "清理"}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+// --- 实体 tab: list entities in active collection, filter by type --------
+
+function EntitiesTab({
+  collection,
+  onOpenEntity,
+  onEntityClick,
+}: {
+  collection: string;
+  onOpenEntity: (name: string) => void;
+  onEntityClick?: (name: string) => void;
+}) {
+  const t = useT();
+  const [data, setData] = useState<GraphDataView | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [filterTypes, setFilterTypes] = useState<string[]>([]);
+
+  const refresh = useCallback(async () => {
+    if (!collection) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const d = await app.GetTopEntities(collection, 200);
+      setData(d);
+    } catch (e) {
+      setData(null);
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [collection]);
+
+  useEffect(() => {
+    void refresh();
+    return onRagChanged(() => void refresh());
+  }, [refresh]);
+
+  const filtered = useMemo(() => {
+    const nodes = data?.nodes ?? [];
+    const q = query.trim().toLowerCase();
+    return nodes.filter((n) => {
+      if (filterTypes.length > 0 && !filterTypes.includes(n.type)) return false;
+      if (q && !(`${n.label} ${n.description}`.toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }, [data, query, filterTypes]);
+
+  if (!collection) {
+    return (
+      <div className="cowork-dock__empty-state">
+        <NetworkIcon size={22} />
+        <p>{t("coworkDock.selectCollectionFirst") || "请先选择一个集合"}</p>
+        <span className="cowork-dock__empty-hint">
+          {t("coworkDock.selectCollectionHint") || "在「集合」tab 中选择或创建一个集合"}
+        </span>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return <div className="cowork-dock__loading">{t("common.loading") || "加载中…"}</div>;
+  }
+  if (error) {
+    return (
+      <div className="cowork-dock__empty-state">
+        <NetworkIcon size={22} />
+        <p>{t("coworkDock.loadFailed") || "加载失败"}</p>
+        <span className="cowork-dock__empty-hint">{error}</span>
+        <button className="cowork-dock__tab" type="button" onClick={() => void refresh()} title="刷新">
+          <RefreshCw size={12} />
+        </button>
+      </div>
+    );
+  }
+
+  const toggleType = (key: string) => {
+    setFilterTypes((cur) => (cur.includes(key) ? cur.filter((x) => x !== key) : [...cur, key]));
+  };
+
+  return (
+    <div className="cowork-rag__body">
+      {/* Search box */}
+      <div className="cowork-rag__search">
+        <Search size={13} className="cowork-rag__search-icon" />
+        <input
+          className="cowork-rag__search-input"
+          type="text"
+          placeholder={t("coworkDock.searchEntities") || "搜索实体…"}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <button className="cowork-mailtab__refresh" type="button" onClick={() => void refresh()} title="刷新">
+          <RefreshCw size={12} />
+        </button>
+      </div>
+
+      {/* Type filter chips */}
+      <div className="cowork-rag__entity" style={{ flexWrap: "wrap", gap: 4 }}>
+        {ENTITY_TYPES.map((def) => {
+          const on = filterTypes.includes(def.key);
+          return (
+            <button
+              key={def.key}
+              type="button"
+              className={`cowork-dock__tab${on ? " cowork-dock__tab--active" : ""}`}
+              onClick={() => toggleType(def.key)}
+              style={{
+                fontSize: 10.5,
+                padding: "1px 6px",
+                height: 18,
+                color: on ? def.color : undefined,
+                borderColor: on ? def.color : undefined,
+              }}
+              title={def.label}
+            >
+              {def.label}
+            </button>
+          );
+        })}
+        {filterTypes.length > 0 && (
+          <button
+            type="button"
+            className="cowork-dock__tab"
+            onClick={() => setFilterTypes([])}
+            style={{ fontSize: 10.5, padding: "1px 6px", height: 18 }}
+          >
+            ✕
+          </button>
+        )}
+      </div>
+
+      {/* Entity list */}
+      {filtered.length === 0 ? (
+        <div className="cowork-dock__empty-state">
+          <NetworkIcon size={22} />
+          <p>{(data?.nodes ?? []).length === 0 ? (t("coworkDock.noEntities") || "暂无实体") : (t("coworkDock.noMatch") || "无匹配实体")}</p>
+          <span className="cowork-dock__empty-hint">
+            {(data?.nodes ?? []).length === 0
+              ? (t("coworkDock.runExtractHint") || "在「提取」tab 中运行深度提取以生成实体")
+              : ""}
+          </span>
+        </div>
+      ) : (
+        <ul className="cowork-today__list">
+          {filtered.map((node) => (
+            <EntityRow
+              key={node.id}
+              node={node}
+              onOpen={() => onOpenEntity(node.id)}
+              onClick={() => onEntityClick?.(node.id)}
+            />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function EntityRow({
+  node,
+  onOpen,
+  onClick,
+}: {
+  node: GraphNodeView;
+  onOpen: () => void;
+  onClick?: () => void;
+}) {
+  const label = ENTITY_TYPE_LABELS[node.type] ?? node.type;
+  const color = colorFor(node.type);
+  return (
+    <li
+      className="cowork-today__row cowork-rag__entity"
+      style={{ cursor: "pointer", alignItems: "center" }}
+      title={node.description || node.label}
+      onClick={() => {
+        onClick?.();
+        onOpen();
+      }}
+    >
+      <span
+        style={{
+          flex: "0 0 auto",
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+          background: color,
+          display: "inline-block",
+        }}
+      />
+      <span className="cowork-rag__entity-name" style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {node.label}
+      </span>
+      <span className="cowork-dock__empty-hint" style={{ margin: 0, fontSize: 10.5 }}>
+        {label}
+        {node.relationCnt > 0 ? ` · ${node.relationCnt}` : ""}
+      </span>
+    </li>
+  );
+}
+
+// --- 文件 tab: file tree of the active collection ------------------------
+
+function FilesTab({
+  collection,
+  onOpenFile,
+  onFileClick,
+}: {
+  collection: string;
+  onOpenFile: (path: string) => void;
+  onFileClick?: (path: string) => void;
+}) {
+  const t = useT();
+  const { showToast } = useToast();
+  const [tree, setTree] = useState<RagNodeView[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!collection) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const nodes = await app.ListRagTree(collection);
+      setTree(nodes ?? []);
+    } catch (e) {
+      setTree([]);
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [collection]);
+
+  useEffect(() => {
+    void refresh();
+    return onRagChanged(() => void refresh());
+  }, [refresh]);
+
+  // Drag-and-drop import: hand dropped paths to RagImportPaths.
+  useEffect(() => {
+    if (!collection) return;
+    return onFilesDropped((paths) => {
+      if (!paths || paths.length === 0) return;
+      void app
+        .RagImportPaths(collection, paths)
+        .then((res) => {
+          showToast(res.message, "info");
+          void refresh();
+        })
+        .catch((e) => showToast(String(e), "error"));
+    });
+  }, [collection, refresh, showToast]);
+
+  if (!collection) {
+    return (
+      <div className="cowork-dock__empty-state">
+        <FileText size={22} />
+        <p>{t("coworkDock.selectCollectionFirst") || "请先选择一个集合"}</p>
+        <span className="cowork-dock__empty-hint">
+          {t("coworkDock.selectCollectionHint") || "在「集合」tab 中选择或创建一个集合"}
+        </span>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return <div className="cowork-dock__loading">{t("common.loading") || "加载中…"}</div>;
+  }
+  if (error) {
+    return (
+      <div className="cowork-dock__empty-state">
+        <FileText size={22} />
+        <p>{t("coworkDock.loadFailed") || "加载失败"}</p>
+        <span className="cowork-dock__empty-hint">{error}</span>
+        <button className="cowork-dock__tab" type="button" onClick={() => void refresh()} title="刷新">
+          <RefreshCw size={12} />
+        </button>
+      </div>
+    );
+  }
+
+  // Flatten the tree into a simple depth-aware list (folders + files).
+  const flat: Array<{ node: RagNodeView; depth: number }> = [];
+  const walk = (nodes: RagNodeView[], depth: number) => {
+    for (const n of nodes) {
+      flat.push({ node: n, depth });
+      if (n.children && n.children.length > 0) walk(n.children, depth + 1);
+    }
+  };
+  walk(tree, 0);
+
+  if (flat.length === 0) {
+    return (
+      <div className="cowork-dock__empty-state" style={{ "--wails-drop-target": "drop" } as React.CSSProperties}>
+        <FolderOpen size={22} />
+        <p>{t("coworkDock.dragFilesHint") || "拖入文件以导入"}</p>
+        <span className="cowork-dock__empty-hint">
+          {t("coworkDock.dragFilesHint2") || "支持 md / docx / pdf / xlsx / csv / 代码 等格式"}
+        </span>
+        <button className="cowork-dock__tab" type="button" onClick={() => void refresh()} title="刷新">
+          <RefreshCw size={12} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="cowork-rag__tree cowork-rag__body" style={{ "--wails-drop-target": "drop" } as React.CSSProperties}>
+      <div className="cowork-mailtab__head">
+        <span className="cowork-mailtab__status">
+          {t("coworkDock.files") || "文件"} ({flat.filter((f) => f.node.kind === "file").length})
+        </span>
+        <button className="cowork-mailtab__refresh" type="button" onClick={() => void refresh()} title="刷新">
+          <RefreshCw size={12} />
+        </button>
+      </div>
+      <ul className="cowork-today__list">
+        {flat.map(({ node, depth }) => {
+          const isDir = node.kind === "folder" || node.isDir;
+          const iconColor = !isDir ? fileIconColor(node.label) : undefined;
+          return (
+            <li
+              key={node.key || node.path || node.label}
+              className="cowork-today__row"
+              style={{
+                cursor: isDir ? "default" : "pointer",
+                paddingLeft: 8 + depth * 14,
+              }}
+              title={node.label}
+              onClick={() => {
+                if (isDir) return;
+                onFileClick?.(node.path || node.relPath || node.label);
+                onOpenFile(node.path || node.relPath || node.label);
+              }}
+            >
+              {isDir ? <Folder size={13} /> : <FileText size={13} style={iconColor ? { color: iconColor } : undefined} />}
+              <span className="cowork-today__text" style={{ flex: 1, minWidth: 0 }}>
+                {node.label}
+              </span>
+              {!isDir && node.status === "enriched" && node.entityCount > 0 && (
+                <span className="cowork-dock__empty-hint" style={{ margin: 0 }}>
+                  {node.entityCount}实
+                </span>
+              )}
+              {!isDir && node.status === "extracting" && (
+                <span className="cowork-dock__empty-hint" style={{ margin: 0 }}>
+                  {node.totalChunks > 0 ? Math.round((node.doneChunks / node.totalChunks) * 100) : 0}%
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -377,7 +1053,7 @@ function MailView({ data, onRefresh }: { data: { probe: MailProbeResult | null; 
   );
 }
 
-// --- 文件 view: workspace top-level entries --------------------------
+// --- 文件 view: workspace top-level entries (default mode) ------------------
 
 function FilesView({
   data,
@@ -429,38 +1105,3 @@ function FilesView({
   );
 }
 
-// --- RAG knowledge nav (mode="rag") ----------------------------------
-
-function RagNavView({ data }: { data: RagNavData }) {
-  const t = useT();
-  if (data.loading) {
-    return <div className="cowork-dock__loading">{t("common.loading") || "加载中…"}</div>;
-  }
-  if (data.collections.length === 0) {
-    return (
-      <div className="cowork-dock__empty-state">
-        <NetworkIcon size={22} />
-        <p>{t("cowork.ragComingSoon") || "知识库为空"}</p>
-        <span className="cowork-dock__empty-hint">导入文件后此处显示集合导航</span>
-      </div>
-    );
-  }
-  return (
-    <div className="cowork-rag__body">
-      <div className="cowork-dock__group">
-        <h3 className="cowork-today__heading">
-          <Folder size={12} />
-          知识库集合
-        </h3>
-        <ul className="cowork-today__list">
-          {data.collections.slice(0, 20).map((c, i) => (
-            <li key={c.id ?? i} className="cowork-today__row" title={c.name}>
-              <Folder size={13} />
-              <span className="cowork-today__text">{c.name}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
-  );
-}
