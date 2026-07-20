@@ -442,6 +442,17 @@ type TabMeta struct {
 	// the frontend layout selection. Read alongside the per-tab "profile:changed"
 	// event so a switch updates the active tab immediately.
 	Profile string `json:"profile,omitempty"`
+	// IsExpertSession marks a tab hosting an expert-team collaboration run
+	// (Scope=="expert"). The frontend uses this to render the tab differently
+	// (🤝 icon, team name as title) and to route expert_collab events.
+	IsExpertSession bool `json:"isExpertSession,omitempty"`
+	// ExpertTeamID is the team identifier for an expert-session tab; empty for
+	// normal tabs. The frontend uses it to dedup expert tabs per team and to
+	// drive the project-tree's expert_topic node (clicking it opens this tab).
+	ExpertTeamID string `json:"expertTeamId,omitempty"`
+	// ExpertTeamName is the display name of the team for an expert-session tab.
+	// The frontend shows it as the tab's title instead of the topic title.
+	ExpertTeamName string `json:"expertTeamName,omitempty"`
 }
 
 func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
@@ -474,6 +485,12 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 	if tab.Ctrl != nil {
 		m.Running = tab.Ctrl.Running()
 	}
+	// Surface expert-session fields so the frontend can render the tab as an
+	// expert-team collaboration view (🤝 icon, team name title, project-tree
+	// expert_topic node). Empty for normal tabs (omitempty drops them).
+	m.IsExpertSession = tab.IsExpertSession
+	m.ExpertTeamID = strings.TrimSpace(tab.ExpertTeamID)
+	m.ExpertTeamName = strings.TrimSpace(tab.ExpertTeamName)
 	return m
 }
 
@@ -2116,7 +2133,7 @@ func loadTelemetry(path string) tabTelemetrySnapshot {
 // topic leaf).
 type ProjectNode struct {
 	Key            string        `json:"key"`  // stable key for React
-	Kind           string        `json:"kind"` // "project" | "topic" | "global_folder" | "global_topic"
+	Kind           string        `json:"kind"` // "project" | "topic" | "global_folder" | "global_topic" | "expert_topic"
 	Label          string        `json:"label"`
 	Root           string        `json:"root,omitempty"` // project workspace root
 	TopicID        string        `json:"topicId,omitempty"`
@@ -2128,6 +2145,13 @@ type ProjectNode struct {
 	Running        bool          `json:"running,omitempty"`
 	Status         string        `json:"status,omitempty"`
 	Children       []ProjectNode `json:"children,omitempty"`
+	// ExpertTeamID is set when Kind=="expert_topic" — the team this expert
+	// session belongs to. The frontend uses it to open/activate the expert tab
+	// on click and to render the 🤝 icon. Empty for non-expert nodes.
+	ExpertTeamID string `json:"expertTeamId,omitempty"`
+	// ExpertTeamName is the display name of the team for an expert_topic node.
+	// Shown as the node's label when the user hasn't typed a custom topic title.
+	ExpertTeamName string `json:"expertTeamName,omitempty"`
 }
 
 func normalizeTopicStatus(status string) string {
@@ -2988,6 +3012,42 @@ func (a *App) ListProjectTree(profile string) []ProjectNode {
 		node.Children = children
 		out = append(out, node)
 	}
+
+	// Expert-session nodes: one per open expert tab. These render as 🤝 rows in
+	// the project tree (kind=="expert_topic") so the user can click back into a
+	// team's collaboration run. Only tabs matching the requested profile are
+	// shown — expert sessions always live in the cowork profile, so they only
+	// surface when the cowork sidebar is rendered.
+	a.mu.RLock()
+	profileKey := config.ProfileNameKey(profile)
+	for _, tab := range a.tabs {
+		if !tab.IsExpertSession || tab.ExpertTeamID == "" {
+			continue
+		}
+		// Expert sessions live in cowork; skip when listing dev's tree.
+		if profileKey != "" && profileKey != config.ProfileCowork {
+			continue
+		}
+		teamName := strings.TrimSpace(tab.ExpertTeamName)
+		if teamName == "" {
+			teamName = tab.ExpertTeamID
+		}
+		label := teamName
+		if t := strings.TrimSpace(tab.TopicTitle); t != "" && t != teamName {
+			label = t
+		}
+		out = append(out, ProjectNode{
+			Key:            "expert_topic_" + tab.ExpertTeamID,
+			Kind:           "expert_topic",
+			Label:          label,
+			TopicID:        tab.TopicID,
+			Open:           tab.ID == a.activeTabID,
+			Running:        tab.Ctrl != nil && tab.Ctrl.Running(),
+			ExpertTeamID:   tab.ExpertTeamID,
+			ExpertTeamName: teamName,
+		})
+	}
+	a.mu.RUnlock()
 
 	return applyProjectTreeOrder(out, f.SidebarOrder)
 }

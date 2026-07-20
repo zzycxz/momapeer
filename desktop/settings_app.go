@@ -147,6 +147,10 @@ type JiutianView struct {
 type SettingsView struct {
 	DefaultModel      string          `json:"defaultModel"`
 	PlannerModel      string          `json:"plannerModel"`
+	// FastTaskModel is the lightweight model dream/distill run on (background
+	// tasks). The SettingsPanel exposes a per-model picker next to the default
+	// model so the user can route background tasks to a cheaper/faster model.
+	FastTaskModel     string          `json:"fastTaskModel"`
 	SubagentModel     string          `json:"subagentModel"`
 	SubagentEffort    string          `json:"subagentEffort"`
 	AutoPlan          string          `json:"autoPlan"`
@@ -357,6 +361,7 @@ func (a *App) Settings() SettingsView {
 	v := SettingsView{
 		DefaultModel:      cfg.DefaultModel,
 		PlannerModel:      cfg.Agent.PlannerModel,
+		FastTaskModel:     cfg.Agent.FastTaskModel,
 		SubagentModel:     cfg.Agent.SubagentModel,
 		SubagentEffort:    cfg.Agent.SubagentEffort,
 		AutoPlan:          desktopAutoPlanMode(cfg.Agent.AutoPlan),

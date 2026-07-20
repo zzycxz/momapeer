@@ -59,6 +59,11 @@ type RagNodeView struct {
 
 // RagCollectionView is one named collection summary (for the dropdown).
 type RagCollectionView struct {
+	// ID is the collection's stable identifier. The frontend uses it as the
+	// React key and for selection toggles (GetSessionCollections/SetSessionCollections),
+	// so two collections sharing a Name don't collide. Falls back to Name when
+	// the store doesn't expose a separate ID.
+	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Documents int    `json:"documents"`
 	Chunks    int    `json:"chunks"`
@@ -121,7 +126,10 @@ func (a *App) ListRagCollections() []RagCollectionView {
 	for _, c := range cols {
 		ent, _ := a.ragStore.EntityCount(c.Name)
 		out = append(out, RagCollectionView{
-			Name: c.Name, Documents: c.Documents, Chunks: c.Chunks, Entities: ent,
+			// Collections are name-keyed in the store (no separate ID column),
+			// so the name IS the stable identifier. Mirror it into ID so the
+			// frontend has a dedicated field without needing to know this.
+			ID: c.Name, Name: c.Name, Documents: c.Documents, Chunks: c.Chunks, Entities: ent,
 		})
 	}
 	return out
@@ -974,6 +982,10 @@ type GraphNodeView struct {
 	RelationCnt int           `json:"relationCnt"`
 	Collection  string        `json:"collection"`
 	Community   int           `json:"community"`
+	// Degree is the number of edges touching this node (in + out). The graph
+	// canvas scales node size by degree so high-degree entities (mentioned in
+	// many relations) render larger, giving a visual sense of importance.
+	Degree int `json:"degree"`
 }
 
 // GraphEdgeView is one edge in the knowledge graph visualization.
@@ -1055,6 +1067,9 @@ func (a *App) GetGraphData(collection string) GraphDataView {
 	// Flatten the relation map into deduped edges.
 	edgeSeen := make(map[string]bool, len(entities)*2)
 	edges := make([]GraphEdgeView, 0, len(entities)*2)
+	// degree counts distinct neighbors per node — drive the canvas's node-size
+	// scaling so high-connectivity entities render larger.
+	degree := make(map[string]int, len(entities))
 	for _, rels := range relMap {
 		for _, r := range rels {
 			key := r.Source + "|" + r.Target + "|" + r.Type
@@ -1066,7 +1081,13 @@ func (a *App) GetGraphData(collection string) GraphDataView {
 				Source: r.Source, Target: r.Target,
 				Type: r.Type, Description: r.Description, Weight: r.Weight, Strength: r.Strength,
 			})
+			degree[r.Source]++
+			degree[r.Target]++
 		}
+	}
+	// Stamp degree onto nodes (already constructed above).
+	for i := range nodes {
+		nodes[i].Degree = degree[nodes[i].ID]
 	}
 	return GraphDataView{Nodes: nodes, Edges: edges}
 }
@@ -1102,6 +1123,7 @@ func (a *App) GetTopEntities(collection string, limit int) GraphDataView {
 	}
 	edgeSeen := make(map[string]bool)
 	edges := make([]GraphEdgeView, 0, len(entities))
+	degree := make(map[string]int, len(entities))
 	for _, rels := range relMap {
 		for _, r := range rels {
 			if !topSet[r.Source] || !topSet[r.Target] {
@@ -1116,7 +1138,12 @@ func (a *App) GetTopEntities(collection string, limit int) GraphDataView {
 				Source: r.Source, Target: r.Target,
 				Type: r.Type, Description: r.Description, Weight: r.Weight, Strength: r.Strength,
 			})
+			degree[r.Source]++
+			degree[r.Target]++
 		}
+	}
+	for i := range nodes {
+		nodes[i].Degree = degree[nodes[i].ID]
 	}
 	return GraphDataView{Nodes: nodes, Edges: edges}
 }
