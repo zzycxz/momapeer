@@ -188,20 +188,8 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
         <span className="rag-template__value">{collection || "全部"}</span>
       </div>
 
-      {/* Empty state: no documents in collection */}
-      {docCount === 0 && (
-        <div className="rag-template__empty-state">
-          <FolderOpen size={28} />
-          <p>当前集合暂无文档</p>
-          <p className="rag-template__empty-hint">请先在「文件」tab 中导入文档，然后再进行深度提取</p>
-          <button className="btn btn--primary" onClick={onBack}>
-            返回文件列表
-          </button>
-        </div>
-      )}
-
       {/* HE service status */}
-      {heReady !== null && docCount > 0 && (
+      {heReady !== null && (
         <div className="rag-template__section">
           <span className="rag-template__label">提取引擎</span>
           <span className={`rag-template__status ${heReady ? "rag-template__status--ok" : "rag-template__status--info"}`}>
@@ -213,7 +201,6 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
       )}
 
       {/* Template selection */}
-      {docCount > 0 && (
       <div className="rag-template__section">
         <span className="rag-template__label">提取模板</span>
         <div className="rag-template__list">
@@ -258,10 +245,8 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
           )}
         </div>
       </div>
-      )}
 
-      {/* Action buttons — only when documents exist */}
-      {docCount > 0 && (
+      {/* Action buttons */}
       <div className="rag-template__actions">
         <button
           className="btn rag-template__btn"
@@ -280,7 +265,6 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
           <span>立即理解</span>
         </button>
       </div>
-      )}
 
       {/* Live stats during extraction */}
       {loading && result && (

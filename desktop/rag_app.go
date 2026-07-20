@@ -910,6 +910,7 @@ func (a *App) RagListHETemplates() []HETemplateView {
 		heClient = a.heService.Client()
 	}
 	templates := rag.ListTemplates(heClient)
+	slog.Info("RagListHETemplates", "heClient", heClient != nil, "templates", len(templates))
 	out := make([]HETemplateView, 0, len(templates))
 	for _, t := range templates {
 		out = append(out, HETemplateView{

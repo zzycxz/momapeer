@@ -4,6 +4,7 @@ package rag
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -265,6 +266,7 @@ func ListTemplates(heClient *HEClient) []TemplateInfo {
 	// to non-nil empty slices so they never JSON-encode as null (the frontend
 	// calls .length/.map on them unconditionally). Rebuild into a fresh slice
 	// to avoid exposing the shared package-level builtinTemplates to callers.
+	slog.Info("rag.ListTemplates: HE unavailable, falling back to built-in templates", "count", len(builtinTemplates))
 	out := make([]TemplateInfo, 0, len(builtinTemplates))
 	for _, bt := range builtinTemplates {
 		ef := bt.EntityFields
