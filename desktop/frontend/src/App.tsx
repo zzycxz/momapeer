@@ -25,7 +25,7 @@ import { useToast } from "./lib/toast";
 import { asArray } from "./lib/array";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, useI18n, useT, type Translator } from "./lib/i18n";
 import { useController, type Item, type LiveStream } from "./lib/useController";
-import { app, onEvent, onProjectTreeChanged } from "./lib/bridge";
+import { app, onEvent, onProjectTreeChanged, onSchedulerNotice } from "./lib/bridge";
 import { onProfileChanged } from "./lib/bridge";
 import { CoWorkLayout } from "./layouts/CoWorkLayout";
 import { PreferencePanel } from "./components/cowork/PreferencePanel";
@@ -901,6 +901,19 @@ export default function App() {
       showToast(e.message ?? "已紧急停止 AI 操作", "error");
     });
   }, [showToast]);
+
+  // Global scheduler notice: when a scheduled task with output_mode="notify"
+  // fires, the backend emits "scheduler:notice". This listener is registered at
+  // the app root (not inside AutomationPanel/CalendarTaskPanel) so the toast
+  // surfaces regardless of which panel the user is currently viewing —
+  // previously the notice was only visible while the automation/calendar panel
+  // was mounted, and switching to experts/rag/chat silently swallowed it.
+  useEffect(() => {
+    return onSchedulerNotice((e) => {
+      showToast(`${e.name}: ${(e.result || "").slice(0, 100)}`, "info");
+    });
+  }, [showToast]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onResize = () => setViewportWidth(window.innerWidth);
