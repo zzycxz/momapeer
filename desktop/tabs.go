@@ -2831,9 +2831,14 @@ func (a *App) TrashTopic(topicID string) error {
 
 // ListProjectTree builds the sidebar tree: project folders each containing
 // their topics, plus a Global section.
-func (a *App) ListProjectTree() []ProjectNode {
+// ListProjectTree returns the project-tree sidebar model. The profile argument
+// routes the projects index to the per-profile file so dev/cowork show only
+// their own conversations. An empty profile ("") reads the legacy un-profiled
+// index (backward compatible). Wails binds this as a 1-arg method; the frontend
+// always passes a profile ("dev"/"cowork").
+func (a *App) ListProjectTree(profile string) []ProjectNode {
 	migrateLegacySessionsIntoGlobalTopics(config.SessionDir())
-	f := loadProjectsFile()
+	f := loadProjectsFile(profile)
 	out := []ProjectNode{}
 	type topicSummary struct {
 		turns          int
