@@ -2381,7 +2381,7 @@ export default function App() {
   const sidebarToggleTitle = sidebarCollapsed
       ? t("sidebar.expand")
       : t("sidebar.collapse");
-  const sidebarNavTooltipDisabled = !sidebarCollapsed;
+
   const browserPreviewChrome = typeof window !== "undefined" && !window.runtime;
   const workspacePanelResetWidth = rightDockDetailActive
     ? RIGHT_DOCK_PREVIEW_DEFAULT_WIDTH
@@ -2925,7 +2925,7 @@ export default function App() {
         <SidebarFooter
           imConnectionCount={sidebarImConnections.length}
           imOnline={sidebarImOnline}
-          tooltipDisabled={sidebarNavTooltipDisabled}
+          tooltipDisabled={false}
           onOpenIm={() => void showSidebarImDetail()}
           onOpenHistory={() => void openAllHistory()}
           onOpenTrash={() => void openTrash()}

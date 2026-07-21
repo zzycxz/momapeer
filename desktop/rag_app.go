@@ -291,6 +291,10 @@ func (a *App) RagImportPaths(collection string, paths []string) (RagImportResult
 // template's domain-specific prompts. Existing entities/relations are cleared
 // first so the graph reflects the new template's focus.
 func (a *App) RagStartExtract(collection, template string) error {
+	// Normalize empty collection to "default" to match import behavior.
+	if collection == "" {
+		collection = "default"
+	}
 	isTemplate := rag.IsTemplate(template)
 
 	// Template-based extraction: prefer Hyper-Extract (Python) when available.
