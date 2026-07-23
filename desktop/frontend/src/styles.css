@@ -22905,8 +22905,9 @@ a[href] {
   width: 100%;
   height: 36px;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
+  padding-bottom: 4px;
   border-top: 1px solid var(--border-soft);
   background: var(--bg-elev, #fff);
   z-index: var(--z-raised);
