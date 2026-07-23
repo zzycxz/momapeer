@@ -62,22 +62,7 @@ export function reportCrash(label: string, err: unknown, extra?: string) {
   paint(format(label, err, extra));
 }
 
-// isNoiseError filters known browser-engine noise that should NOT trigger the
-// crash overlay. Currently: ResizeObserver loop (Chromium layout noise from
-// React/ReactFlow/Konva during rapid resize — harmless, Chrome downgrades to
-// console but WebView2 surfaces as uncaught error popup).
-function isNoiseError(err: unknown): boolean {
-  const msg = typeof err === "string" ? err : (err as { message?: string })?.message ?? String(err);
-  return msg.includes("ResizeObserver loop");
-}
-
 export function installGlobalCrashHandlers() {
-  window.addEventListener("error", (e) => {
-    if (isNoiseError(e.error ?? e.message)) return;
-    reportCrash("window.error", e.error ?? e.message);
-  });
-  window.addEventListener("unhandledrejection", (e) => {
-    if (isNoiseError(e.reason)) return;
-    reportCrash("unhandledrejection", e.reason);
-  });
+  window.addEventListener("error", (e) => reportCrash("window.error", e.error ?? e.message));
+  window.addEventListener("unhandledrejection", (e) => reportCrash("unhandledrejection", e.reason));
 }
