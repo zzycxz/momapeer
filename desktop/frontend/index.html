@@ -4,6 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>momapeer</title>
+    <script>
+      // Suppress the Chromium ResizeObserver loop warning. It's harmless
+      // browser-engine noise (React/Konva/ReactFlow trigger it during layout)
+      // that Chrome downgrades to console but WebView2 surfaces as a popup.
+      (function () {
+        var orig = window.onerror;
+        window.onerror = function (msg) {
+          if (typeof msg === 'string' && msg.indexOf('ResizeObserver loop') !== -1) return true;
+          return orig ? orig.apply(this, arguments) : false;
+        };
+        window.addEventListener('unhandledrejection', function (e) {
+          if (e.reason && typeof e.reason.message === 'string' && e.reason.message.indexOf('ResizeObserver loop') !== -1) {
+            e.preventDefault();
+          }
+        });
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
