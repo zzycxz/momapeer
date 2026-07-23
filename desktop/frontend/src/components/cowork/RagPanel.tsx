@@ -44,6 +44,9 @@ export function RagPanel() {
   // always matches what rag actually accepts (previously hardcoded & stale).
   const [supportedFormats, setSupportedFormats] = useState<string[]>([]);
   const [hasCommunities, setHasCommunities] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newCollectionName, setNewCollectionName] = useState("");
+  const [newCollectionParent, setNewCollectionParent] = useState("");
 
   useEffect(() => {
     app.RagListTemplates().then(setSupportedFormats).catch(() => setSupportedFormats([]));
@@ -160,6 +163,32 @@ export function RagPanel() {
     }
   };
 
+  // Create collection.
+  const handleCreateCollection = async () => {
+    const parent = newCollectionParent.trim();
+    const name = newCollectionName.trim();
+    if (!name) return;
+    const full = parent ? `${parent}/${name}` : name;
+    try {
+      await app.RagCreateCollection(full);
+      showToast(`分类"${full}"已创建`, "info");
+      setShowCreateModal(false);
+      setNewCollectionName("");
+      setNewCollectionParent("");
+      void refresh();
+    } catch (e) {
+      showToast(String(e), "error");
+    }
+  };
+
+  // Template presets for new collections.
+  const collectionTemplates = [
+    { label: "工作", value: "工作" },
+    { label: "学习", value: "学习" },
+    { label: "个人", value: "个人" },
+    { label: "项目", value: "项目" },
+  ];
+
   const handleDetectCommunities = async () => {
     try {
       await app.RagDetectCommunities(activeCollection || "");
@@ -212,12 +241,7 @@ export function RagPanel() {
           <button
             className="rag-tree__new-btn"
             title="新建分类"
-            onClick={() => {
-              const name = window.prompt("输入分类名称（可用 / 分层，如 工作/领导材料）");
-              if (name) {
-                app.RagCreateCollection(name).then(() => void refresh()).catch((e) => showToast(String(e), "error"));
-              }
-            }}
+            onClick={() => setShowCreateModal(true)}
           >
             +
           </button>
@@ -335,6 +359,83 @@ export function RagPanel() {
           />
         )}
       </div>
+
+      {/* Create collection modal */}
+      {showCreateModal && (
+        <div className="rag-create-overlay" onClick={() => setShowCreateModal(false)}>
+          <div className="rag-create-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="rag-create-modal__head">
+              <h3 className="rag-create-modal__title">新建分类</h3>
+              <button className="rag-create-modal__close" onClick={() => setShowCreateModal(false)}>✕</button>
+            </div>
+            <div className="rag-create-modal__body">
+              {/* Template quick picks */}
+              <div className="rag-create-modal__section">
+                <label className="rag-create-modal__label">选择模板或自定义</label>
+                <div className="rag-create-modal__templates">
+                  {collectionTemplates.map((tpl) => (
+                    <button
+                      key={tpl.value}
+                      className={`rag-create-modal__template ${
+                        newCollectionParent === tpl.value ? "rag-create-modal__template--selected" : ""
+                      }`}
+                      onClick={() => setNewCollectionParent(tpl.value)}
+                    >
+                      📁 {tpl.label}
+                    </button>
+                  ))}
+                  <button
+                    className={`rag-create-modal__template ${
+                      newCollectionParent === "" ? "rag-create-modal__template--selected" : ""
+                    }`}
+                    onClick={() => setNewCollectionParent("")}
+                  >
+                    ✏️ 自定义
+                  </button>
+                </div>
+              </div>
+
+              {/* Parent display (read-only, from template pick) */}
+              {newCollectionParent && (
+                <div className="rag-create-modal__section">
+                  <label className="rag-create-modal__label">父分类</label>
+                  <div className="rag-create-modal__parent">{newCollectionParent}/</div>
+                </div>
+              )}
+
+              {/* Name input */}
+              <div className="rag-create-modal__section">
+                <label className="rag-create-modal__label">分类名称</label>
+                <input
+                  className="rag-create-modal__input"
+                  placeholder={newCollectionParent ? "如：领导材料" : "如：工作 或 工作/领导材料"}
+                  value={newCollectionName}
+                  onChange={(e) => setNewCollectionName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") void handleCreateCollection(); }}
+                  autoFocus
+                />
+              </div>
+
+              {/* Preview full path */}
+              <div className="rag-create-modal__preview">
+                {newCollectionParent && newCollectionName
+                  ? `${newCollectionParent}/${newCollectionName}`
+                  : newCollectionName || "（请输入名称）"}
+              </div>
+            </div>
+            <div className="rag-create-modal__foot">
+              <button className="btn btn--small" onClick={() => setShowCreateModal(false)}>取消</button>
+              <button
+                className="btn btn--primary btn--small"
+                disabled={!newCollectionName.trim()}
+                onClick={() => void handleCreateCollection()}
+              >
+                创建
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
