@@ -110,7 +110,7 @@ export function CoWorkLayout({
 
 
 
-          <section className="cowork-sidebar__group" style={{ marginBottom: '16px' }}>
+          <section className="cowork-sidebar__group" style={{ marginBottom: '16px', marginTop: 'auto' }}>
             <button
               className={`cowork-sidebar__item ${activePanel === "preference" ? "cowork-sidebar__item--active" : ""}`}
               onClick={() => setActivePanel("preference")}

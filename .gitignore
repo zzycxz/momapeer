@@ -1,6 +1,4 @@
 
-!/.momapeer/commands/
-!/.momapeer/commands/review.md
 !/desktop/frontend/dist/.gitkeep
 # Build artifacts
 # Build/CI binary artifacts and tool dirs (not project source)
@@ -12,7 +10,7 @@
 # Local test / benchmark outputs
 # Local test / migration artifacts
 # Node / frontend dependencies and caches
-# Project-local momapeer state; keep the checked-in review command.
+# Project-local momapeer state (commands/ removed; skills/ is tracked).
 # Scratch / experiment code (one-off debug scripts, never part of the build)
 # Stray root-level test/debug artifacts (CUA notepad probes, demo outputs)
 # Wails desktop artifacts
@@ -33,6 +31,8 @@
 /.claude/
 /.momapeer.zip
 /.momapeer/*
+!/.momapeer/skills/
+!/.momapeer/skills/**
 /bin/
 /cua-replay-trace/
 /cua-test.txt
