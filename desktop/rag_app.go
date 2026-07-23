@@ -958,6 +958,51 @@ func (a *App) RagCleanCollection(collection string) error {
 	return nil
 }
 
+// RagCreateCollection creates a new (initially empty) collection so it appears
+// in the tree immediately. Uses a placeholder FTS5 row filtered from search.
+func (a *App) RagCreateCollection(name string) error {
+	if a.ragStore == nil {
+		return fmt.Errorf("RAG store offline")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("collection name is required")
+	}
+	if err := a.ragStore.CreateCollection(name); err != nil {
+		return err
+	}
+	a.emitRagChanged()
+	return nil
+}
+
+// RagRenameCollection renames a collection (and its path-prefix children).
+// "工作" → "工作资料" also updates "工作/领导材料" → "工作资料/领导材料".
+func (a *App) RagRenameCollection(oldName, newName string) error {
+	if a.ragStore == nil {
+		return fmt.Errorf("RAG store offline")
+	}
+	if err := a.ragStore.RenameCollection(oldName, newName); err != nil {
+		return err
+	}
+	a.emitRagChanged()
+	return nil
+}
+
+// RagDeleteCollection removes a collection and all its path-prefix children.
+// Documents themselves are deleted; the user must re-import if they want them
+// back. Uses DeleteCollectionTree which wraps Delete + child cleanup in a
+// transaction.
+func (a *App) RagDeleteCollection(name string) error {
+	if a.ragStore == nil {
+		return fmt.Errorf("RAG store offline")
+	}
+	if err := a.ragStore.DeleteCollectionTree(name); err != nil {
+		return err
+	}
+	a.emitRagChanged()
+	return nil
+}
+
 // RagDetectCommunities runs Louvain community detection on the collection's
 // knowledge graph and persists results to rag_entities.community. Async — the
 // method returns immediately and emits rag:changed when done.

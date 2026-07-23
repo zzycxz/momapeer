@@ -608,6 +608,11 @@ func (s *Store) Search(query, collection string, limit int) ([]Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Filter out placeholder rows (virtual paths like "placeholder://...")
+	// so they never pollute search results. Placeholder rows exist only to
+	// give a collection at least one FTS5 entry so it shows up in the list.
+	const placeholderFilter = ` AND path NOT LIKE 'placeholder://%'`
+
 	var rows *sql.Rows
 	var err error
 	if collection == "" {
@@ -616,18 +621,20 @@ func (s *Store) Search(query, collection string, limit int) ([]Result, error) {
 				snippet(rag_fts, 4, '<<', '>>', '...', 40) AS snip,
 				bm25(rag_fts) AS score
 			FROM rag_fts
-			WHERE rag_fts MATCH ?
+			WHERE rag_fts MATCH ?`+placeholderFilter+`
 			ORDER BY score
 			LIMIT ?`, ftsQuery, limit)
 	} else {
+		// Path-prefix matching: selecting "工作" should also search "工作/领导材料".
+		// We match collection = ? OR collection LIKE ? || '/%'.
 		rows, err = s.db.Query(`
 			SELECT collection, path, chunk,
 				snippet(rag_fts, 4, '<<', '>>', '...', 40) AS snip,
 				bm25(rag_fts) AS score
 			FROM rag_fts
-			WHERE rag_fts MATCH ? AND collection = ?
+			WHERE rag_fts MATCH ?`+placeholderFilter+` AND (collection = ? OR collection LIKE ?)
 			ORDER BY score
-			LIMIT ?`, ftsQuery, collection, limit)
+			LIMIT ?`, ftsQuery, collection, collection+"/%", limit)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("rag search: %w", err)
@@ -839,6 +846,98 @@ func (s *Store) List(name string) ([]CollectionInfo, error) {
 }
 
 func normalizeCollection(c string) string { return strings.ToLower(strings.TrimSpace(c)) }
+
+// RenameCollection updates all tables from oldName to newName (a path prefix
+// rename: "工作" → "工作资料" also updates "工作/领导材料" → "工作资料/领导材料").
+// Used by the collection tree's right-click rename. Transaction-wrapped so the
+// rename either fully applies or not at all.
+func (s *Store) RenameCollection(oldName, newName string) error {
+	oldName = normalizeCollection(oldName)
+	newName = normalizeCollection(newName)
+	if oldName == "" || newName == "" || oldName == newName {
+		return fmt.Errorf("invalid rename: %q → %q", oldName, newName)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Rename exact match and path-prefix children ("工作" → "工作资料",
+	// "工作/领导材料" → "工作资料/领导材料").
+	tables := []string{"rag_fts", "rag_jobs", "rag_entities", "rag_relations", "rag_chunks"}
+	for _, table := range tables {
+		// Exact match.
+		if _, err := tx.Exec(fmt.Sprintf(`UPDATE %s SET collection = ? WHERE collection = ?`, table), newName, oldName); err != nil {
+			return err
+		}
+		// Path-prefix children: "工作/xxx" → "工作资料/xxx"
+		oldPrefix := oldName + "/"
+		newPrefix := newName + "/"
+		if _, err := tx.Exec(fmt.Sprintf(`UPDATE %s SET collection = ? || substr(collection, ?) WHERE collection LIKE ?`, table, newPrefix, len(oldPrefix)+1, oldPrefix+"%"), newPrefix, oldPrefix+"%"); err != nil {
+			// rag_chunks may not have collection column — skip gracefully.
+			continue
+		}
+	}
+	return tx.Commit()
+}
+
+// CreateCollection creates an empty collection by inserting a placeholder
+// FTS5 row so it appears in List(). The placeholder is filtered from Search()
+// results by the "path NOT LIKE 'placeholder://%'" clause. When the user
+// imports real documents the placeholder is replaced.
+func (s *Store) CreateCollection(name string) error {
+	name = normalizeCollection(name)
+	if name == "" {
+		return fmt.Errorf("collection name is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Check if already exists.
+	var count int
+	if err := s.db.QueryRow(`SELECT count(*) FROM rag_fts WHERE collection = ?`, name).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil // already exists, no-op
+	}
+	virtualPath := "placeholder://" + name
+	_, err := s.db.Exec(`INSERT INTO rag_fts (collection, path, chunk, body) VALUES (?, ?, 0, '')`,
+		name, virtualPath)
+	return err
+}
+
+// DeleteCollectionTree removes a collection and all its path-prefix children
+// (e.g. deleting "工作" also deletes "工作/领导材料"). Delegates to Delete with
+// empty path for the exact collection, then deletes children.
+func (s *Store) DeleteCollectionTree(name string) error {
+	name = normalizeCollection(name)
+	if name == "" {
+		return fmt.Errorf("collection name is required")
+	}
+	// First delete the collection itself.
+	if err := s.Delete(name, ""); err != nil {
+		return err
+	}
+	// Then delete all path-prefix children.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prefix := name + "/%"
+	for _, stmt := range []string{
+		`DELETE FROM rag_chunks WHERE job_id IN (SELECT id FROM rag_jobs WHERE collection LIKE ?)`,
+		`DELETE FROM rag_jobs WHERE collection LIKE ?`,
+		`DELETE FROM rag_entities WHERE collection LIKE ?`,
+		`DELETE FROM rag_relations WHERE collection LIKE ?`,
+		`DELETE FROM rag_fts WHERE collection LIKE ?`,
+	} {
+		if _, err := s.db.Exec(stmt, prefix); err != nil {
+			// rag_chunks may not have the column — skip gracefully.
+			continue
+		}
+	}
+	return nil
+}
 
 // readDoc reads a file and returns its text + an extension hint for chunking.
 // Phase 3 supports text-like formats (txt, md, code, csv, json, html). Binary

@@ -129,6 +129,19 @@ func AutoSearch(ctx context.Context, query string) string {
 				results = results[:topK]
 			}
 		}
+		// Relative score filter: drop results scoring below 20% of the best
+		// match. BM25 absolute scores aren't comparable across queries, so a
+		// fixed threshold doesn't work — but a ratio within one result set does.
+		if len(results) > 1 && results[0].Score > 0 {
+			cutoff := results[0].Score * 0.2
+			filtered := results[:1]
+			for _, r := range results[1:] {
+				if r.Score >= cutoff {
+					filtered = append(filtered, r)
+				}
+			}
+			results = filtered
+		}
 		tryWrite("知识库文档片段：\n")
 		snippetShown := 0
 		for _, r := range results {
