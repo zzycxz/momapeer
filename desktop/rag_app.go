@@ -57,14 +57,18 @@ type RagNodeView struct {
 	Children    []RagNodeView `json:"children,omitempty"` // folder recursion
 }
 
-// RagCollectionView is one named collection summary (for the dropdown).
+// RagCollectionView is one named collection summary. Supports path-style
+// collections (e.g. "工作/领导材料") for hierarchical tree display.
 type RagCollectionView struct {
-	// ID is the collection's stable identifier. The frontend uses it as the
-	// React key and for selection toggles (GetSessionCollections/SetSessionCollections),
-	// so two collections sharing a Name don't collide. Falls back to Name when
-	// the store doesn't expose a separate ID.
-	ID        string `json:"id"`
-	Name      string `json:"name"`
+	// ID is the collection's stable identifier (= full path or flat name).
+	ID   string `json:"id"`
+	Name string `json:"name"`   // display name (last path segment, e.g. "领导材料")
+	// Path is the full path (e.g. "工作/领导材料"); same as Name for flat
+	// collections without a "/" separator.
+	Path string `json:"path"`
+	// Parent is the parent path (e.g. "工作"); "" for root-level collections.
+	// The frontend uses it to build a tree: group collections by Parent.
+	Parent    string `json:"parent"`
 	Documents int    `json:"documents"`
 	Chunks    int    `json:"chunks"`
 	Entities  int    `json:"entities"`
@@ -125,11 +129,19 @@ func (a *App) ListRagCollections() []RagCollectionView {
 	out := make([]RagCollectionView, 0, len(cols))
 	for _, c := range cols {
 		ent, _ := a.ragStore.EntityCount(c.Name)
+		// Derive display name and parent from path-style collection names.
+		// "工作/领导材料" → Name="领导材料", Parent="工作", Path="工作/领导材料"
+		// "default" → Name="default", Parent="", Path="default"
+		path := c.Name
+		name := path
+		parent := ""
+		if idx := strings.LastIndex(path, "/"); idx >= 0 {
+			name = path[idx+1:]
+			parent = path[:idx]
+		}
 		out = append(out, RagCollectionView{
-			// Collections are name-keyed in the store (no separate ID column),
-			// so the name IS the stable identifier. Mirror it into ID so the
-			// frontend has a dedicated field without needing to know this.
-			ID: c.Name, Name: c.Name, Documents: c.Documents, Chunks: c.Chunks, Entities: ent,
+			ID: path, Name: name, Path: path, Parent: parent,
+			Documents: c.Documents, Chunks: c.Chunks, Entities: ent,
 		})
 	}
 	return out

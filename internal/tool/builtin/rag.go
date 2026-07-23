@@ -48,34 +48,75 @@ var globalRAGSessionResolver func() []string
 // LLM-driven searches. Called once at cowork boot.
 func SetRAGSessionResolver(fn func() []string) { globalRAGSessionResolver = fn }
 
+// autoSearchMaxChars is the soft budget for RAG context injected into each user
+// message. Items (entities, snippets) are added one by one; when the budget is
+// reached, remaining items are omitted entirely (not truncated mid-sentence).
+// ~3000 chars ≈ 1500-2000 tokens — bounded so it never eats a disproportionate
+// chunk of the context window or triggers premature compaction.
+const autoSearchMaxChars = 3000
+
 // AutoSearch performs a lightweight knowledge-base retrieval for auto-injection
 // into the main chat. Returns a formatted context string (entities + snippets)
 // or "" when there are no matches or the store is offline. This lets the
 // controller prepend knowledge-base context to user messages without exposing
 // the rag_search tool to the main agent loop.
 func AutoSearch(ctx context.Context, query string) string {
-	if globalRAGStore == nil || strings.TrimSpace(query) == "" {
+	if globalRAGStore == nil {
+		return ""
+	}
+	// Skip injection for very short queries (likely conversational, not
+	// knowledge-seeking). Avoids wasting context on "你好" / "谢谢" etc.
+	q := strings.TrimSpace(query)
+	if len([]rune(q)) < 2 {
 		return ""
 	}
 	collection := resolveRAGScope("")
 	hasEntities, _ := globalRAGStore.HasEntities(collection)
 	const topK = 5
+	const maxDescRunes = 60
 
 	var b strings.Builder
+	budget := autoSearchMaxChars
+
+	// tryWrite appends a line only if the remaining budget allows it; returns
+	// false if the line was skipped to stay within budget. This guarantees no
+	// entry is truncated mid-sentence — it's either fully included or omitted.
+	tryWrite := func(format string, args ...any) bool {
+		line := fmt.Sprintf(format, args...)
+		if len([]rune(line)) > budget {
+			return false
+		}
+		b.WriteString(line)
+		budget -= len([]rune(line))
+		return true
+	}
 
 	// Layer 1: structured entities (if deep-extracted).
+	entityShown := 0
 	if hasEntities {
 		entities, err := globalRAGStore.SearchEntities(query, collection, topK)
 		if err == nil && len(entities) > 0 {
-			fmt.Fprintf(&b, "知识库命中实体（%d 个）：\n", len(entities))
+			tryWrite("知识库命中实体：\n")
 			for _, e := range entities {
-				fmt.Fprintf(&b, "- %s [%s]", e.NameRaw, e.Type)
-				if e.Description != "" {
-					fmt.Fprintf(&b, " · %s", e.Description)
+				desc := e.Description
+				if dr := []rune(desc); len(dr) > maxDescRunes {
+					// Trim at nearest space boundary to avoid cutting mid-word.
+					desc = string(dr[:maxDescRunes])
+					if sp := strings.LastIndex(desc, " "); sp > maxDescRunes/2 {
+						desc = desc[:sp]
+					}
+					desc += "…"
 				}
-				b.WriteString("\n")
+				if !tryWrite("- %s [%s] %s\n", e.NameRaw, e.Type, desc) {
+					break
+				}
+				entityShown++
 			}
-			b.WriteString("\n")
+			omitted := len(entities) - entityShown
+			if omitted > 0 {
+				tryWrite("（另有 %d 条实体因篇幅省略）\n", omitted)
+			}
+			tryWrite("\n")
 		}
 	}
 
@@ -88,14 +129,22 @@ func AutoSearch(ctx context.Context, query string) string {
 				results = results[:topK]
 			}
 		}
-		b.WriteString("知识库文档片段：\n")
+		tryWrite("知识库文档片段：\n")
+		snippetShown := 0
 		for _, r := range results {
 			snippet := r.Snippet
 			if snippet == "" {
 				continue
 			}
 			label := filepath.Base(r.Path)
-			fmt.Fprintf(&b, "【%s】%s\n\n", label, snippet)
+			if !tryWrite("【%s】%s\n\n", label, snippet) {
+				break
+			}
+			snippetShown++
+		}
+		omitted := len(results) - snippetShown
+		if omitted > 0 {
+			tryWrite("（另有 %d 条片段因篇幅省略）\n", omitted)
 		}
 	}
 

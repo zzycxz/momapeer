@@ -139,6 +139,28 @@ func (r *Registry) Hide(name string) {
 	}
 }
 
+// IsHidden reports whether a tool has been hidden from the model's schema list.
+func (r *Registry) IsHidden(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.hidden[name]
+}
+
+// VisibleCount returns the number of tools that will be sent to the model
+// (total registered minus hidden). Used for startup logging so the operator
+// can verify the Hide list is taking effect.
+func (r *Registry) VisibleCount() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	count := 0
+	for _, name := range r.order {
+		if !r.hidden[name] {
+			count++
+		}
+	}
+	return count
+}
+
 // Add inserts (or replaces) a tool, preserving first-seen order. The schema is
 // canonicalized once here — it never changes after registration, so Schemas()
 // (called every turn) reuses the result instead of re-marshaling.
