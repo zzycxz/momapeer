@@ -14,9 +14,15 @@ const missingDescPlaceholder = `(no description — frontmatter is missing a "de
 
 // indexHeader introduces the skills block in the system prompt: the invocation
 // policy (mandatory for inline, judgment-based for subagent) and how to call one.
-const indexHeader = "# Skills — playbooks you can invoke\n\n" +
-	"One-liner index. Before non-trivial work, scan it: if an untagged (inline) skill is even plausibly relevant to the task, invoke it before continuing instead of pre-judging — loading one imperfect inline skill is cheap. Skills tagged `[🧬 subagent]` are the heavy path; reach for them only when the task genuinely needs context-heavy work, not on weak relevance. Each entry is a built-in or a user-authored playbook. Call `run_skill({ name: \"<skill-name>\", arguments: \"<task>\" })` — `name` is JUST the identifier (e.g. `\"explore\"`), NOT the `[🧬 subagent]` tag that follows it. Prefer the dedicated top-level tool when one exists for a built-in subagent skill. Entries tagged `[🧬 subagent]` spawn an isolated subagent — its tool calls and reasoning never enter your context, only its final answer does; use them for context-heavy work (deep exploration, multi-step research) where you only need the conclusion. Untagged skills are inlined: the body becomes a tool result you read and act on directly. The user can also invoke a skill via `/<name>`.\n\n" +
-	"Entries tagged `[关闭]` are turned off by the user: they are NOT callable via run_skill (a call is refused). They appear here only so you know the capability exists. If a task strongly fits a `[关闭]` skill, do NOT try to call it — tell the user the skill fits and ask them to enable it in Settings → Skills, then proceed once it is on."
+// Kept compact: every token here goes into the system prompt every turn, so
+// only the rules the model can't infer from the index entries themselves are
+// stated. The index lines (name + description + tag) carry the specifics.
+const indexHeader = "# Skills\n\n" +
+	"Call `run_skill({ name: \"<name>\", arguments: \"<task>\" })` — name is the identifier only (e.g. `\"explore\"`), not the tag. Users can also invoke via `/<name>`.\n" +
+	"- Untagged (inline): body loads as a tool result you act on directly. Invoke on plausible relevance before pre-judging — loading one is cheap.\n" +
+	"- `[🧬 subagent]`: spawns an isolated agent; its reasoning/tool calls stay out of your context, only the final answer comes back. Use for context-heavy work, not weak relevance.\n" +
+	"- `[关闭]`: disabled by user — not callable. If a task fits a disabled skill, tell the user to enable it in Settings → Skills.\n" +
+	"Prefer the dedicated top-level tool when one exists for a built-in subagent skill."
 
 // ApplyIndex appends the skills index to basePrompt, or returns it unchanged
 // when there are no skills. Only names + descriptions (+ a subagent tag) are
