@@ -1,0 +1,39 @@
+name: Sync to Gitee
+
+on:
+  push:
+    branches: [main, 'feat/**', 'fix/**']
+  delete:
+    branches: ['**']
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Sync to Gitee
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          # Configure Gitee remote with token auth
+          git remote add gitee https://zzycxz:${GITEE_TOKEN}@gitee.com/zzycxz/momapeer.git 2>/dev/null || \
+            git remote set-url gitee https://zzycxz:${GITEE_TOKEN}@gitee.com/zzycxz/momapeer.git
+
+          # Push all branches
+          git push gitee --all --force
+
+          # Push all tags
+          git push gitee --tags --force
+
+      - name: Delete remote branch on Gitee (if deleted on GitHub)
+        if: github.event_name == 'delete'
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          BRANCH="${{ github.event.ref }}"
+          curl -X DELETE \
+            "https://gitee.com/api/v5/repos/zzycxz/momapeer/branches/${BRANCH}" \
+            -d "access_token=${GITEE_TOKEN}" || true

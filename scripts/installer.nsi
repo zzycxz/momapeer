@@ -39,9 +39,18 @@ Section "Install"
     ; Main executable
     File "desktop\build\bin\${APP_EXE}"
 
-    ; .momapeer skills
+    ; .momapeer skills (ppt-auto: Python runtime + templates)
     SetOutPath "$INSTDIR\.momapeer\skills\ppt-auto"
     File /r ".momapeer\skills\ppt-auto\*"
+
+    ; codegraph (code intelligence engine: node.exe + lib)
+    ; bundled() expects: exe_dir/codegraph/bin/codegraph.cmd
+    ; So unpack directly into codegraph/ (NOT codegraph/v1.0.0/)
+    SetOutPath "$INSTDIR\codegraph\bin"
+    File "C:\Users\13852\AppData\Local\momapeer\codegraph\v1.0.0\bin\codegraph.cmd"
+    SetOutPath "$INSTDIR\codegraph\lib"
+    File /r "C:\Users\13852\AppData\Local\momapeer\codegraph\v1.0.0\lib\*"
+    File "C:\Users\13852\AppData\Local\momapeer\codegraph\v1.0.0\node.exe"
 
     ; Registry (uninstall info)
     WriteRegStr HKCU "Software\${APP_NAME}" "InstallDir" "$INSTDIR"
@@ -82,6 +91,7 @@ SectionEnd
 Section "Uninstall"
     ; Delete files
     RMDir /r "$INSTDIR\.momapeer"
+    RMDir /r "$INSTDIR\codegraph"
     Delete "$INSTDIR\${APP_EXE}"
     Delete "$INSTDIR\uninstall.exe"
     RMDir "$INSTDIR"
