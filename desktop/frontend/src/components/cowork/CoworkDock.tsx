@@ -499,10 +499,10 @@ function MailView() {
 }
 
 // ===========================================================================
-// RagDock (Gp) — 集合 / 实体 / 文件 / 提取
+// RagDock (Gp) — 分类 / 文件（精简为 2 tab）
 // ===========================================================================
 
-type RagTab = "collections" | "entities" | "files" | "extract";
+type RagTab = "collections" | "files";
 
 function RagDock({
   onEntityClick,
@@ -511,17 +511,20 @@ function RagDock({
   onEntityClick?: (name: string) => void;
   onFileClick?: (path: string) => void;
 }) {
-  const [tab, setTab] = useState<RagTab>("entities");
+  const [tab, setTab] = useState<RagTab>("collections");
   const [collections, setCollections] = useState<RagCollectionView[]>([]);
   const [activeCollection, setActiveCollection] = useState("");
-  // activeCollections mirrors the bundle's `d` state: null = "all selected",
-  // string[] = explicit subset. Backend is told via SetSessionCollections.
+  // activeCollections: null = "all selected", string[] = explicit subset.
   const [activeCollections, setActiveCollections] = useState<string[] | null>(null);
   const [tree, setTree] = useState<RagNodeView[]>([]);
   const [entityName, setEntityName] = useState<string | null>(null);
   const [entityCollection, setEntityCollection] = useState<string | null>(null);
   const [docPath, setDocPath] = useState<string | null>(null);
   const [docCollection, setDocCollection] = useState("");
+  const [showExtract, setShowExtract] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newCollectionName, setNewCollectionName] = useState("");
+  const [newCollectionParent, setNewCollectionParent] = useState("");
 
   // Initial load: collections + session-scoped collections.
   useEffect(() => {
@@ -620,7 +623,7 @@ function RagDock({
     );
   }
 
-  // --- main tabbed body ---------------------------------------------------
+  // --- main tabbed body (2 tabs: 分类 + 文件) -----------------------------
   return (
     <aside className="cowork-dock" aria-label="知识库导航">
       <div className="workbench-dock__tools">
@@ -629,25 +632,12 @@ function RagDock({
             type="button"
             role="tab"
             aria-selected={tab === "collections"}
-            className={
-              "workbench-dock__tab" + (tab === "collections" ? " workbench-dock__tab--active" : "")
-            }
+            className={"workbench-dock__tab" + (tab === "collections" ? " workbench-dock__tab--active" : "")}
             onClick={() => setTab("collections")}
-            title="集合"
+            title="分类"
           >
             <Folder size={13} />
-            <span className="workbench-dock__tab-label">集合</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "entities"}
-            className={"workbench-dock__tab" + (tab === "entities" ? " workbench-dock__tab--active" : "")}
-            onClick={() => setTab("entities")}
-            title="实体"
-          >
-            <Network size={13} />
-            <span className="workbench-dock__tab-label">实体</span>
+            <span className="workbench-dock__tab-label">分类</span>
           </button>
           <button
             type="button"
@@ -660,23 +650,11 @@ function RagDock({
             <FileText size={13} />
             <span className="workbench-dock__tab-label">文件</span>
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "extract"}
-            className={"workbench-dock__tab" + (tab === "extract" ? " workbench-dock__tab--active" : "")}
-            onClick={() => setTab("extract")}
-            title="深度提取"
-          >
-            <Zap size={13} />
-            <span className="workbench-dock__tab-label">提取</span>
-          </button>
         </div>
       </div>
 
       <div className="cowork-dock__body">
-        {tab === "extract" && <TemplateSelect collection={activeCollection} onBack={() => setTab("entities")} />}
-
+        {/* === 分类 tab === */}
         {tab === "collections" && (
           <div className="rag-dock__collections">
             <div className="rag-dock__collection-header">
@@ -686,6 +664,7 @@ function RagDock({
                   className="rag-dock__collection-action"
                   onClick={() => {
                     setActiveCollections(null);
+                    setActiveCollection("");
                     (app as unknown as { SetSessionCollections: (c: string[]) => Promise<void> })
                       .SetSessionCollections([])
                       .catch(() => {});
@@ -695,29 +674,45 @@ function RagDock({
                 </button>
                 <button
                   className="rag-dock__collection-action"
-                  onClick={() => {
-                    setActiveCollections([]);
-                    setActiveCollection("");
-                  }}
-                  title="清除集合选择，搜索将覆盖全部集合"
+                  title="新建分类"
+                  onClick={() => setShowCreateModal(true)}
                 >
-                  全不选
+                  +
                 </button>
               </div>
             </div>
 
+            {/* "全部" pseudo-collection */}
+            <label className="rag-dock__collection-item">
+              <input
+                type="checkbox"
+                checked={activeCollections === null}
+                onChange={() => {
+                  setActiveCollections(null);
+                  setActiveCollection("");
+                  (app as unknown as { SetSessionCollections: (c: string[]) => Promise<void> })
+                    .SetSessionCollections([])
+                    .catch(() => {});
+                }}
+              />
+              <span className="rag-dock__collection-name" style={{ fontWeight: 500 }}>全部</span>
+            </label>
+
             {collections.map((c) => {
               const checked = activeCollections === null || activeCollections.includes(c.name);
+              const isActive = activeCollection === c.name;
               return (
-                <label key={c.name} className="rag-dock__collection-item">
+                <label
+                  key={c.id || c.name}
+                  className={`rag-dock__collection-item ${isActive ? "rag-dock__collection-item--active" : ""}`}
+                  style={{ paddingLeft: (c as Record<string, unknown>).parent ? "24px" : undefined }}
+                >
                   <input
                     type="checkbox"
                     checked={checked}
                     onChange={(ev) => {
                       let next: string[] | null;
                       if (activeCollections === null) {
-                        // Currently "all selected" — toggling this one off
-                        // produces the complement list (everything except this).
                         next = ev.target.checked
                           ? null
                           : collections.map((x) => x.name).filter((n) => n !== c.name);
@@ -727,7 +722,7 @@ function RagDock({
                           : activeCollections.filter((n) => n !== c.name);
                       }
                       setActiveCollections(next);
-                      (app as unknown as { SetSessionCollections: (c: string[]) => Promise<void> })
+                      (app as unknown as { SetSessionCollections: (c2: string[]) => Promise<void> })
                         .SetSessionCollections(next ?? [])
                         .catch(() => {});
                     }}
@@ -736,14 +731,30 @@ function RagDock({
                     className="rag-dock__collection-name"
                     onClick={() => {
                       setActiveCollection(c.name);
-                      setTab("entities");
+                      setTab("files");
                     }}
                     style={{ cursor: "pointer" }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      if (window.confirm(`删除分类"${c.name}"及其所有文档？`)) {
+                        (app as unknown as { RagDeleteCollection: (n: string) => Promise<void> })
+                          .RagDeleteCollection(c.name)
+                          .then(() => {
+                            (app as unknown as { ListRagCollections: () => Promise<RagCollectionView[]> })
+                              .ListRagCollections()
+                              .then(setCollections)
+                              .catch(() => {});
+                          })
+                          .catch(() => {});
+                      }
+                    }}
+                    title={`右键删除 · ${c.documents} 文档 · ${c.entities} 实体`}
                   >
+                    {(c as Record<string, unknown>).parent ? "└ " : "📁 "}
                     {c.name}
                   </span>
                   <span className="rag-dock__collection-stats">
-                    {c.entities} 实体 · {c.documents} 文档
+                    {c.documents > 0 ? `${c.documents}` : ""}
                   </span>
                 </label>
               );
@@ -758,96 +769,185 @@ function RagDock({
           </div>
         )}
 
-        {tab === "entities" && (
-          <div className="rag-dock__entities">
-            {collections
-              .filter((c) => !activeCollection || c.name === activeCollection)
-              .map((c) =>
-                c.entities > 0 ? (
-                  <div key={c.name} className="rag-dock__entity-group">
-                    <div className="rag-dock__entity-group-header">
-                      {c.name} ({c.entities})
-                    </div>
-                  </div>
-                ) : null,
-              )}
-            <div className="rag-dock__entity-hint">点击图谱中的节点查看详情</div>
-          </div>
-        )}
-
+        {/* === 文件 tab（含提取功能）=== */}
         {tab === "files" && (
           <div className="rag-dock__files">
-            {tree.length === 0 ? (
-              <div className="cowork-dock__empty-state">
-                <FileText size={22} />
-                <p>暂无文件</p>
+            {/* 深度提取按钮 */}
+            <button
+              className="btn btn--primary btn--small rag-dock__extract-btn"
+              onClick={() => setShowExtract(true)}
+              style={{ margin: "0 8px 8px", width: "calc(100% - 16px)" }}
+            >
+              <Zap size={14} />
+              <span>深度提取</span>
+            </button>
+
+            {/* 提取面板（展开时覆盖文件列表） */}
+            {showExtract && (
+              <div className="rag-dock__extract-panel">
+                <TemplateSelect
+                  collection={activeCollection}
+                  onBack={() => setShowExtract(false)}
+                />
               </div>
-            ) : (
-              <div className="rag-dock__file-tree">
-                {tree.map((node) => (
-                  <RagNode
-                    key={node.key}
-                    node={node}
-                    depth={0}
-                    onStartExtract={(n) => {
-                      if (n.path) {
-                        (app as unknown as {
-                          RagStartExtract: (c: string, p: string) => Promise<void>;
-                        })
-                          .RagStartExtract(activeCollection, n.path)
-                          .then(() => {
-                            refreshTree();
-                          })
-                          .catch(() => {
-                            refreshTree();
-                          });
-                      }
-                    }}
-                    onCancel={(n) => {
-                      if (n.jobId) {
-                        (app as unknown as { RagCancelExtract: (j: string) => Promise<void> })
-                          .RagCancelExtract(n.jobId)
-                          .then(() => {
-                            refreshTree();
-                          })
-                          .catch(() => {
-                            refreshTree();
-                          });
-                      }
-                    }}
-                    onRemove={(n) => {
-                      if (
-                        n.path &&
-                        window.confirm(
-                          `确定删除该文件已提取的知识？\n${n.path}\n\n文档本身不会被删除，可重新提取。`,
-                        )
-                      ) {
-                        (app as unknown as {
-                          RagRemovePath: (c: string, p: string) => Promise<void>;
-                        })
-                          .RagRemovePath(activeCollection, n.path)
-                          .then(() => {
-                            refreshTree();
-                          })
-                          .catch(() => {
-                            refreshTree();
-                          });
-                      }
-                    }}
-                    onFileClick={(n) => {
-                      setDocCollection(n.collection);
-                      setDocPath(n.path);
-                      setEntityName(null);
-                      onFileClick?.(n.path);
-                    }}
-                    selectedPath={docPath ?? undefined}
-                  />
-                ))}
-              </div>
+            )}
+
+            {/* 文件列表 */}
+            {!showExtract && (
+              <>
+                {tree.length === 0 ? (
+                  <div className="cowork-dock__empty-state">
+                    <FileText size={22} />
+                    <p>暂无文件</p>
+                  </div>
+                ) : (
+                  <div className="rag-dock__file-tree">
+                    {tree.map((node) => (
+                      <RagNode
+                        key={node.key}
+                        node={node}
+                        depth={0}
+                        onStartExtract={(n) => {
+                          if (n.path) {
+                            (app as unknown as { RagStartExtract: (c: string, p: string) => Promise<void> })
+                              .RagStartExtract(activeCollection, n.path)
+                              .then(() => refreshTree())
+                              .catch(() => refreshTree());
+                          }
+                        }}
+                        onCancel={(n) => {
+                          if (n.jobId) {
+                            (app as unknown as { RagCancelExtract: (j: string) => Promise<void> })
+                              .RagCancelExtract(n.jobId)
+                              .then(() => refreshTree())
+                              .catch(() => refreshTree());
+                          }
+                        }}
+                        onRemove={(n) => {
+                          if (n.path && window.confirm(`确定删除该文件已提取的知识？\n${n.path}\n\n文档本身不会被删除，可重新提取。`)) {
+                            (app as unknown as { RagRemovePath: (c: string, p: string) => Promise<void> })
+                              .RagRemovePath(activeCollection, n.path)
+                              .then(() => refreshTree())
+                              .catch(() => refreshTree());
+                          }
+                        }}
+                        onFileClick={(n) => {
+                          setDocCollection(n.collection);
+                          setDocPath(n.path);
+                          setEntityName(null);
+                          onFileClick?.(n.path);
+                        }}
+                        selectedPath={docPath ?? undefined}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
       </div>
+
+      {/* 新建分类弹窗 */}
+      {showCreateModal && (
+        <div className="rag-create-overlay" onClick={() => setShowCreateModal(false)}>
+          <div className="rag-create-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="rag-create-modal__head">
+              <h3 className="rag-create-modal__title">新建分类</h3>
+              <button className="rag-create-modal__close" onClick={() => setShowCreateModal(false)}>✕</button>
+            </div>
+            <div className="rag-create-modal__body">
+              <div className="rag-create-modal__section">
+                <label className="rag-create-modal__label">选择模板或自定义</label>
+                <div className="rag-create-modal__templates">
+                  {["工作", "学习", "个人", "项目"].map((tpl) => (
+                    <button
+                      key={tpl}
+                      className={`rag-create-modal__template ${newCollectionParent === tpl ? "rag-create-modal__template--selected" : ""}`}
+                      onClick={() => setNewCollectionParent(tpl)}
+                    >
+                      📁 {tpl}
+                    </button>
+                  ))}
+                  <button
+                    className={`rag-create-modal__template ${newCollectionParent === "" ? "rag-create-modal__template--selected" : ""}`}
+                    onClick={() => setNewCollectionParent("")}
+                  >
+                    ✏️ 自定义
+                  </button>
+                </div>
+              </div>
+              {newCollectionParent && (
+                <div className="rag-create-modal__section">
+                  <label className="rag-create-modal__label">父分类</label>
+                  <div className="rag-create-modal__parent">{newCollectionParent}/</div>
+                </div>
+              )}
+              <div className="rag-create-modal__section">
+                <label className="rag-create-modal__label">分类名称</label>
+                <input
+                  className="rag-create-modal__input"
+                  placeholder={newCollectionParent ? "如：领导材料" : "如：工作 或 工作/领导材料"}
+                  value={newCollectionName}
+                  onChange={(e) => setNewCollectionName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      const name = newCollectionName.trim();
+                      if (name) {
+                        const full = newCollectionParent ? `${newCollectionParent}/${name}` : name;
+                        (app as unknown as { RagCreateCollection: (n: string) => Promise<void> })
+                          .RagCreateCollection(full)
+                          .then(() => {
+                            setShowCreateModal(false);
+                            setNewCollectionName("");
+                            setNewCollectionParent("");
+                            (app as unknown as { ListRagCollections: () => Promise<RagCollectionView[]> })
+                              .ListRagCollections()
+                              .then(setCollections)
+                              .catch(() => {});
+                          })
+                          .catch(() => {});
+                      }
+                    }
+                  }}
+                  autoFocus
+                />
+              </div>
+              <div className="rag-create-modal__preview">
+                {newCollectionParent && newCollectionName
+                  ? `${newCollectionParent}/${newCollectionName}`
+                  : newCollectionName || "（请输入名称）"}
+              </div>
+            </div>
+            <div className="rag-create-modal__foot">
+              <button className="btn btn--small" onClick={() => setShowCreateModal(false)}>取消</button>
+              <button
+                className="btn btn--primary btn--small"
+                disabled={!newCollectionName.trim()}
+                onClick={() => {
+                  const name = newCollectionName.trim();
+                  if (!name) return;
+                  const full = newCollectionParent ? `${newCollectionParent}/${name}` : name;
+                  (app as unknown as { RagCreateCollection: (n: string) => Promise<void> })
+                    .RagCreateCollection(full)
+                    .then(() => {
+                      setShowCreateModal(false);
+                      setNewCollectionName("");
+                      setNewCollectionParent("");
+                      (app as unknown as { ListRagCollections: () => Promise<RagCollectionView[]> })
+                        .ListRagCollections()
+                        .then(setCollections)
+                        .catch(() => {});
+                    })
+                    .catch(() => {});
+                }}
+              >
+                创建
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

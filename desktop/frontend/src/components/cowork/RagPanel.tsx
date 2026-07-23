@@ -44,9 +44,6 @@ export function RagPanel() {
   // always matches what rag actually accepts (previously hardcoded & stale).
   const [supportedFormats, setSupportedFormats] = useState<string[]>([]);
   const [hasCommunities, setHasCommunities] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newCollectionName, setNewCollectionName] = useState("");
-  const [newCollectionParent, setNewCollectionParent] = useState("");
 
   useEffect(() => {
     app.RagListTemplates().then(setSupportedFormats).catch(() => setSupportedFormats([]));
@@ -163,32 +160,6 @@ export function RagPanel() {
     }
   };
 
-  // Create collection.
-  const handleCreateCollection = async () => {
-    const parent = newCollectionParent.trim();
-    const name = newCollectionName.trim();
-    if (!name) return;
-    const full = parent ? `${parent}/${name}` : name;
-    try {
-      await app.RagCreateCollection(full);
-      showToast(`分类"${full}"已创建`, "info");
-      setShowCreateModal(false);
-      setNewCollectionName("");
-      setNewCollectionParent("");
-      void refresh();
-    } catch (e) {
-      showToast(String(e), "error");
-    }
-  };
-
-  // Template presets for new collections.
-  const collectionTemplates = [
-    { label: "工作", value: "工作" },
-    { label: "学习", value: "学习" },
-    { label: "个人", value: "个人" },
-    { label: "项目", value: "项目" },
-  ];
-
   const handleDetectCommunities = async () => {
     try {
       await app.RagDetectCommunities(activeCollection || "");
@@ -231,210 +202,88 @@ export function RagPanel() {
 
   return (
     <div
-      className="rag-panel rag-panel--split"
+      className="rag-panel"
       style={{ "--wails-drop-target": "drop" } as React.CSSProperties}
     >
-      {/* Left sidebar: collection tree (Obsidian-style) */}
-      <aside className="rag-tree">
-        <div className="rag-tree__header">
-          <span className="rag-tree__title">分类</span>
-          <button
-            className="rag-tree__new-btn"
-            title="新建分类"
-            onClick={() => setShowCreateModal(true)}
-          >
-            +
+      {/* Top toolbar */}
+      <GraphToolbar
+        collection={activeCollection}
+        collections={collections}
+        onCollectionChange={setActiveCollection}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchMode={searchMode}
+        onSearchModeChange={setSearchMode}
+        filterTypes={filterTypes}
+        onFilterChange={setFilterTypes}
+        selectionMode={selectionMode}
+        onToggleSelectionMode={() => setSelectionMode(!selectionMode)}
+        onImport={() => void handleImport()}
+        onExportObsidian={() => void handleExportObsidian()}
+        onDetectCommunities={() => void handleDetectCommunities()}
+      />
+
+      {/* Knowledge summary card */}
+      {summary && (
+        <div className="rag-summary">
+          <div className="rag-summary__text">{summary.summary}</div>
+          <div className="rag-summary__themes">
+            {asArray(summary.themes).map((t) => (
+              <span key={t} className="rag-summary__theme" onClick={() => setSearchQuery(t)}>{t}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      {!summary && !summaryLoading && activeCollection && hasData && (
+        <div className="rag-summary rag-summary--prompt">
+          <button className="btn btn--link" onClick={() => void fetchSummary()}>
+            生成知识摘要
           </button>
         </div>
-        <div className="rag-tree__list">
-          <div
-            className={`rag-tree__item ${activeCollection === "" ? "rag-tree__item--active" : ""}`}
-            onClick={() => setActiveCollection("")}
-          >
-            全部
-          </div>
-          {collections.map((c) => (
-            <div
-              key={c.id || c.name}
-              className={`rag-tree__item ${activeCollection === c.name ? "rag-tree__item--active" : ""}`}
-              onClick={() => setActiveCollection(c.name)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                const action = window.confirm(`删除分类"${c.name}"及其所有文档？\n（确认删除，取消不操作）`);
-                if (action) {
-                  app.RagDeleteCollection(c.name).then(() => void refresh()).catch((err) => showToast(String(err), "error"));
-                }
-              }}
-              title={`右键删除 · ${c.documents} 文档 · ${c.entities} 实体`}
-              style={{ paddingLeft: c.parent ? "24px" : "12px" }}
-            >
-              {c.parent ? "└ " : "📁 "}
-              {c.name}
-              <span className="rag-tree__count">{c.documents > 0 ? c.documents : ""}</span>
-            </div>
-          ))}
-        </div>
-      </aside>
+      )}
 
-      {/* Right: toolbar + graph + overlays */}
-      <div className="rag-panel__main">
-        {/* Top toolbar */}
-        <GraphToolbar
+      {/* Graph canvas */}
+      <div className="rag-panel__graph">
+        <GraphCanvas
           collection={activeCollection}
-          collections={collections}
-          onCollectionChange={setActiveCollection}
           searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
           searchMode={searchMode}
-          onSearchModeChange={setSearchMode}
           filterTypes={filterTypes}
-          onFilterChange={setFilterTypes}
           selectionMode={selectionMode}
-          onToggleSelectionMode={() => setSelectionMode(!selectionMode)}
-          onImport={() => void handleImport()}
-          onExportObsidian={() => void handleExportObsidian()}
-          onDetectCommunities={() => void handleDetectCommunities()}
+          selectedEntities={selectedEntities}
+          selectedRelations={selectedRelations}
+          onNodeClick={handleNodeClick}
+          onSelectionChange={(ents, rels) => {
+            setSelectedEntities(ents);
+            setSelectedRelations(rels);
+          }}
         />
-
-        {/* Knowledge summary card */}
-        {summary && (
-          <div className="rag-summary">
-            <div className="rag-summary__text">{summary.summary}</div>
-            <div className="rag-summary__themes">
-              {asArray(summary.themes).map((t) => (
-                <span key={t} className="rag-summary__theme" onClick={() => setSearchQuery(t)}>{t}</span>
-              ))}
-            </div>
-          </div>
-        )}
-        {!summary && !summaryLoading && activeCollection && hasData && (
-          <div className="rag-summary rag-summary--prompt">
-            <button className="btn btn--link" onClick={() => void fetchSummary()}>
-              生成知识摘要
-            </button>
-          </div>
-        )}
-
-        {/* Graph canvas */}
-        <div className="rag-panel__graph">
-          <GraphCanvas
-            collection={activeCollection}
-            searchQuery={searchQuery}
-            searchMode={searchMode}
-            filterTypes={filterTypes}
-            selectionMode={selectionMode}
-            selectedEntities={selectedEntities}
-            selectedRelations={selectedRelations}
-            onNodeClick={handleNodeClick}
-            onSelectionChange={(ents, rels) => {
-              setSelectedEntities(ents);
-              setSelectedRelations(rels);
-            }}
-          />
-        </div>
-
-        {/* Legend overlay */}
-        <GraphLegend hasCommunities={hasCommunities} />
-
-        {/* Knowledge reference bar (selection mode) */}
-        {selectionMode && (
-          <KnowledgeRefBar
-            selectedEntities={selectedEntities}
-            selectedRelations={selectedRelations}
-            onClear={() => {
-              setSelectedEntities([]);
-              setSelectedRelations([]);
-            }}
-            onUseFor={() => setShowSkillModal(true)}
-          />
-        )}
-
-        {/* Skill selection modal */}
-        {showSkillModal && (
-          <SkillSelectModal
-            selectedEntities={selectedEntities}
-            selectedRelations={selectedRelations}
-            onConfirm={(skill) => handleSkillConfirm(skill)}
-            onClose={() => setShowSkillModal(false)}
-          />
-        )}
       </div>
 
-      {/* Create collection modal */}
-      {showCreateModal && (
-        <div className="rag-create-overlay" onClick={() => setShowCreateModal(false)}>
-          <div className="rag-create-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="rag-create-modal__head">
-              <h3 className="rag-create-modal__title">新建分类</h3>
-              <button className="rag-create-modal__close" onClick={() => setShowCreateModal(false)}>✕</button>
-            </div>
-            <div className="rag-create-modal__body">
-              {/* Template quick picks */}
-              <div className="rag-create-modal__section">
-                <label className="rag-create-modal__label">选择模板或自定义</label>
-                <div className="rag-create-modal__templates">
-                  {collectionTemplates.map((tpl) => (
-                    <button
-                      key={tpl.value}
-                      className={`rag-create-modal__template ${
-                        newCollectionParent === tpl.value ? "rag-create-modal__template--selected" : ""
-                      }`}
-                      onClick={() => setNewCollectionParent(tpl.value)}
-                    >
-                      📁 {tpl.label}
-                    </button>
-                  ))}
-                  <button
-                    className={`rag-create-modal__template ${
-                      newCollectionParent === "" ? "rag-create-modal__template--selected" : ""
-                    }`}
-                    onClick={() => setNewCollectionParent("")}
-                  >
-                    ✏️ 自定义
-                  </button>
-                </div>
-              </div>
+      {/* Legend overlay */}
+      <GraphLegend hasCommunities={hasCommunities} />
 
-              {/* Parent display (read-only, from template pick) */}
-              {newCollectionParent && (
-                <div className="rag-create-modal__section">
-                  <label className="rag-create-modal__label">父分类</label>
-                  <div className="rag-create-modal__parent">{newCollectionParent}/</div>
-                </div>
-              )}
+      {/* Knowledge reference bar (selection mode) */}
+      {selectionMode && (
+        <KnowledgeRefBar
+          selectedEntities={selectedEntities}
+          selectedRelations={selectedRelations}
+          onClear={() => {
+            setSelectedEntities([]);
+            setSelectedRelations([]);
+          }}
+          onUseFor={() => setShowSkillModal(true)}
+        />
+      )}
 
-              {/* Name input */}
-              <div className="rag-create-modal__section">
-                <label className="rag-create-modal__label">分类名称</label>
-                <input
-                  className="rag-create-modal__input"
-                  placeholder={newCollectionParent ? "如：领导材料" : "如：工作 或 工作/领导材料"}
-                  value={newCollectionName}
-                  onChange={(e) => setNewCollectionName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") void handleCreateCollection(); }}
-                  autoFocus
-                />
-              </div>
-
-              {/* Preview full path */}
-              <div className="rag-create-modal__preview">
-                {newCollectionParent && newCollectionName
-                  ? `${newCollectionParent}/${newCollectionName}`
-                  : newCollectionName || "（请输入名称）"}
-              </div>
-            </div>
-            <div className="rag-create-modal__foot">
-              <button className="btn btn--small" onClick={() => setShowCreateModal(false)}>取消</button>
-              <button
-                className="btn btn--primary btn--small"
-                disabled={!newCollectionName.trim()}
-                onClick={() => void handleCreateCollection()}
-              >
-                创建
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Skill selection modal */}
+      {showSkillModal && (
+        <SkillSelectModal
+          selectedEntities={selectedEntities}
+          selectedRelations={selectedRelations}
+          onConfirm={(skill) => handleSkillConfirm(skill)}
+          onClose={() => setShowSkillModal(false)}
+        />
       )}
     </div>
   );
