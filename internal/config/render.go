@@ -184,7 +184,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	if c.Agent.FastTaskModel != "" {
 		fmt.Fprintf(&b, "fast_task_model = %q   # lightweight model for background tasks (dream/distill/rag-extract)\n", c.Agent.FastTaskModel)
 	} else {
-		b.WriteString("# fast_task_model = \"moma/deepseek/deepseek-v4-flash\"   # lightweight model for background tasks\n")
+		b.WriteString("# fast_task_model = \"deepseek/deepseek-v4-flash\"   # lightweight model for background tasks\n")
 	}
 	if c.Agent.PlannerModel != "" {
 		fmt.Fprintf(&b, "planner_model = %q   # low-frequency planner (two-model collaboration)\n", c.Agent.PlannerModel)

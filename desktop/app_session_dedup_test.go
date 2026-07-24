@@ -62,11 +62,11 @@ func TestEnsureBlankTabReusesExistingBlankTab(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	app := NewApp()
-	first, err := app.EnsureBlankTab("global", "")
+	first, err := app.EnsureBlankTab("global", "", "dev")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := app.EnsureBlankTab("global", "")
+	second, err := app.EnsureBlankTab("global", "", "dev")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,11 +85,11 @@ func TestEnsureBlankTabCreatesOneBlankPerProject(t *testing.T) {
 
 	projectRoot := t.TempDir()
 	app := NewApp()
-	first, err := app.EnsureBlankTab("project", projectRoot)
+	first, err := app.EnsureBlankTab("project", projectRoot, "dev")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := app.EnsureBlankTab("project", projectRoot)
+	second, err := app.EnsureBlankTab("project", projectRoot, "dev")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestEnsureBlankTabOpensExistingSidebarBlankTopic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	meta, err := app.EnsureBlankTab("global", "")
+	meta, err := app.EnsureBlankTab("global", "", "dev")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestEnsureBlankTabOpensExistingProjectSidebarBlankTopic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	meta, err := app.EnsureBlankTab("project", projectRoot)
+	meta, err := app.EnsureBlankTab("project", projectRoot, "dev")
 	if err != nil {
 		t.Fatal(err)
 	}

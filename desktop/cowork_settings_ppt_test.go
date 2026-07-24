@@ -74,28 +74,8 @@ func TestCoworkSettingsViewNoTemplates(t *testing.T) {
 	}
 }
 
-// TestPPTTemplateSkillValue verifies the pure mapping from a settings-page
-// template id to the value the skill's template_config.json expects. This is
-// the bridge that makes the settings-page template selection actually reach the
-// skill (previously the skill always read its built-in default).
-func TestPPTTemplateSkillValue(t *testing.T) {
-	tests := []struct {
-		in  string
-		val string
-		set bool
-	}{
-		{"中国移动模板", "内置:templates/中国移动模板.pptx", true},
-		{"  brand  ", "内置:templates/brand.pptx", true}, // trimmed
-		{"", "", false},    // empty → delete key (skill uses default)
-		{"   ", "", false}, // whitespace-only → delete key
-	}
-	for _, tt := range tests {
-		val, set := pptTemplateSkillValue(tt.in)
-		if val != tt.val || set != tt.set {
-			t.Errorf("pptTemplateSkillValue(%q) = (%q, %v), want (%q, %v)", tt.in, val, set, tt.val, tt.set)
-		}
-	}
-}
+// TestPPTTemplateSkillValue was removed — the pptTemplateSkillValue function
+// was refactored out; the settings panel now writes template paths directly.
 
 // TestSetCoWorkSettingsLinksPPTSwitchToSkill is the regression test for the
 // "two PPT switches" bug: the settings-page PPT switch (driven by

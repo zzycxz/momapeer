@@ -366,7 +366,7 @@ const DefaultIdleMinutes = 10
 // box (agent.fast_task_model). Must be in BuiltinMoMAModels. deepseek-v4-flash
 // is fast (~4s/chunk); qwen3.6-35b is a thinking model (too slow for background).
 // Users override via [agent].fast_task_model in config.
-const DefaultFastTaskModel = "moma/deepseek/deepseek-v4-flash"
+const DefaultFastTaskModel = "deepseek/deepseek-v4-flash"
 
 // IdleMinutesEffective returns the effective user-inactivity threshold in
 // minutes before an idle Dream run may fire, applying the default when the
