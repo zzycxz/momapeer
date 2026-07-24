@@ -2,6 +2,10 @@
 
 package main
 
+// hotkeyManager is a no-op stub on non-Windows platforms. The real
+// implementation lives in screenshot_hotkey_windows.go.
+type hotkeyManager struct{}
+
 // StartScreenshotHotkey is a no-op on non-Windows platforms (the global-hotkey
 // feature uses Win32 RegisterHotKey). This stub keeps app.go compilable on
 // macOS/Linux — the feature simply does nothing there.
