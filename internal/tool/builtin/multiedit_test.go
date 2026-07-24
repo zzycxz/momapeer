@@ -56,17 +56,14 @@ func TestMultiEditPartialFailureReportsApplied(t *testing.T) {
 		t.Fatal("expected the second edit to fail")
 	}
 	msg := err.Error()
-	// The error must surface that edits already applied are NOT rolled back.
-	if !strings.Contains(msg, "already applied") {
-		t.Errorf("error should report partial application, got: %s", msg)
+	// The error identifies which edit failed.
+	if !strings.Contains(msg, "edit 2") {
+		t.Errorf("error should identify the failing edit, got: %s", msg)
 	}
-	if !strings.Contains(msg, "partially edited") {
-		t.Errorf("error should state the file is partially edited, got: %s", msg)
-	}
-	// And edit 1 must actually be on disk (proving the file is half-edited).
+	// multi_edit is atomic: the file is untouched on failure.
 	got, _ := os.ReadFile(path)
-	if !strings.Contains(string(got), "ALPHA") {
-		t.Errorf("edit 1 should have landed before edit 2 failed; file = %q", got)
+	if !strings.Contains(string(got), "alpha") {
+		t.Errorf("atomic: file should be unchanged on failure; file = %q", got)
 	}
 }
 

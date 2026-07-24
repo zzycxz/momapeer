@@ -768,7 +768,16 @@ func stripLanguagePolicy(s string) string {
 }
 
 func stripThinkingAddon(s string) string {
-	return strings.TrimSpace(strings.TrimSuffix(s, instruction.ThinkingAddon))
+	// ForModel may return ThinkingAddon + FamilyAddon; strip both.
+	// Use Replace instead of TrimSuffix because addon order varies.
+	s = strings.TrimSpace(strings.Replace(s, instruction.ThinkingAddon, "", 1))
+	for _, family := range []string{"qwen", "glm", "deepseek", "kimi", "jiutian", "gpt"} {
+		if addon := instruction.FamilyAddon(family); addon != "" {
+			s = strings.TrimSpace(strings.Replace(s, "\n\n"+addon, "", 1))
+			s = strings.TrimSpace(strings.Replace(s, addon, "", 1))
+		}
+	}
+	return s
 }
 
 func writeFile(t *testing.T, dir, name, body string) {

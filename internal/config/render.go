@@ -181,6 +181,11 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	fmt.Fprintf(&b, "soft_compact_ratio  = %s   # notice only; keeps cache-first prefix intact\n", formatFloat(c.Agent.SoftCompactRatio))
 	fmt.Fprintf(&b, "compact_ratio       = %s   # try compacting when prompt reaches this fraction\n", formatFloat(c.Agent.CompactRatio))
 	fmt.Fprintf(&b, "compact_force_ratio = %s   # force compacting at this high-water mark\n", formatFloat(c.Agent.CompactForceRatio))
+	if c.Agent.FastTaskModel != "" {
+		fmt.Fprintf(&b, "fast_task_model = %q   # lightweight model for background tasks (dream/distill/rag-extract)\n", c.Agent.FastTaskModel)
+	} else {
+		b.WriteString("# fast_task_model = \"moma/deepseek/deepseek-v4-flash\"   # lightweight model for background tasks\n")
+	}
 	if c.Agent.PlannerModel != "" {
 		fmt.Fprintf(&b, "planner_model = %q   # low-frequency planner (two-model collaboration)\n", c.Agent.PlannerModel)
 	} else {

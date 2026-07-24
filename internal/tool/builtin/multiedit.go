@@ -118,6 +118,7 @@ func (m multiEdit) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if err := writeFileEncoded(p.Path, content, enc); err != nil {
 		return "", fmt.Errorf("write %s: %w", p.Path, err)
 	}
+	runPostEditHook(ctx, p.Path)
 	return fmt.Sprintf("multi_edit %s: %d edits applied (%d total replacements)", p.Path, len(p.Edits), applied), nil
 }
 

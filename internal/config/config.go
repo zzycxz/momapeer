@@ -362,12 +362,11 @@ const DefaultSkillColdDays = 90
 // contention and matches the "consolidate when idle" intent.
 const DefaultIdleMinutes = 10
 
-// DefaultFastTaskModel is the model dream/distill run on out of the box
-// (agent.fast_task_model). It must be a model the built-in moma provider carries
-// (see BuiltinMoMAModels) so every fresh install gets a working lightweight
-// background model without configuration. Users override via
-// [agent].fast_task_model in config; clearing it falls back to the main model.
-const DefaultFastTaskModel = "moma/qwen/qwen3.6-35b"
+// DefaultFastTaskModel is the model dream/distill/rag-extract run on out of the
+// box (agent.fast_task_model). Must be in BuiltinMoMAModels. deepseek-v4-flash
+// is fast (~4s/chunk); qwen3.6-35b is a thinking model (too slow for background).
+// Users override via [agent].fast_task_model in config.
+const DefaultFastTaskModel = "moma/deepseek/deepseek-v4-flash"
 
 // IdleMinutesEffective returns the effective user-inactivity threshold in
 // minutes before an idle Dream run may fire, applying the default when the
