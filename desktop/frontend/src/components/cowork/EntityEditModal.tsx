@@ -91,7 +91,7 @@ export function EntityEditModal({ collection, entity, onClose, onSave }: EntityE
     try {
       // Also save current edits.
       await app.UpdateEntity(collection, entity.name, { nameRaw, type: typ, description: desc });
-      await app.RagMergeEntities(collection, entity.name, mergeSelected);
+      await app.MergeEntities(collection, entity.name, mergeSelected);
       onSave();
       onClose();
     } catch (e) {

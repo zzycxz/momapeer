@@ -88,7 +88,7 @@ export function EntityDetail({ collection, entityName, onBack, onHighlightInGrap
         <div className="rag-detail__section">
           <div className="rag-detail__section-title">→ 关联 ({outRels.length})</div>
           {outRels.map((r, i) => (
-            <RelationItem key={`out-${i}`} rel={r} onClick={() => handleRelClick(r.peer ?? r.target)} />
+            <RelationItem key={`out-${i}`} rel={r} onClick={() => handleRelClick(r.peer)} />
           ))}
         </div>
       )}
@@ -96,7 +96,7 @@ export function EntityDetail({ collection, entityName, onBack, onHighlightInGrap
         <div className="rag-detail__section">
           <div className="rag-detail__section-title">← 被引用 ({inRels.length})</div>
           {inRels.map((r, i) => (
-            <RelationItem key={`in-${i}`} rel={r} onClick={() => handleRelClick(r.peer ?? r.source)} />
+            <RelationItem key={`in-${i}`} rel={r} onClick={() => handleRelClick(r.peer)} />
           ))}
         </div>
       )}

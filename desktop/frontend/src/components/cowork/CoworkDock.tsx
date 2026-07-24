@@ -23,7 +23,7 @@ import {
   FileText,
   Folder,
   Mail,
-  Network,
+
   RefreshCw,
   Zap,
 } from "lucide-react";
@@ -703,9 +703,9 @@ function RagDock({
               const isActive = activeCollection === c.name;
               return (
                 <label
-                  key={c.id || c.name}
+                  key={c.path || c.name}
                   className={`rag-dock__collection-item ${isActive ? "rag-dock__collection-item--active" : ""}`}
-                  style={{ paddingLeft: (c as Record<string, unknown>).parent ? "24px" : undefined }}
+                  style={{ paddingLeft: c.parent ? "24px" : undefined }}
                 >
                   <input
                     type="checkbox"
@@ -750,7 +750,7 @@ function RagDock({
                     }}
                     title={`右键删除 · ${c.documents} 文档 · ${c.entities} 实体`}
                   >
-                    {(c as Record<string, unknown>).parent ? "└ " : "📁 "}
+                    {c.parent ? "└ " : "📁 "}
                     {c.name}
                   </span>
                   <span className="rag-dock__collection-stats">

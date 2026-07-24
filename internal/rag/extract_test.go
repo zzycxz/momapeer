@@ -110,7 +110,7 @@ func TestPipelineEnqueueAndProcess(t *testing.T) {
 	p.Start()
 	defer p.Stop()
 
-	jobIDs, err := p.EnqueuePaths("docs", []string{fpath})
+	jobIDs, err := p.EnqueuePaths("docs", []string{fpath}, "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestPipelineRetryThenSucceed(t *testing.T) {
 	p.Start()
 	defer p.Stop()
 
-	jobIDs, _ := p.EnqueuePaths("docs", []string{fpath})
+	jobIDs, _ := p.EnqueuePaths("docs", []string{fpath}, "", "", false)
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		j, _, _ := s.JobByID(jobIDs[0])
@@ -200,7 +200,7 @@ func TestPipelineCancelDropsQueuedTasks(t *testing.T) {
 	p.Start()
 	defer p.Stop()
 
-	jobIDs, _ := p.EnqueuePaths("docs", []string{fpath})
+	jobIDs, _ := p.EnqueuePaths("docs", []string{fpath}, "", "", false)
 	if len(jobIDs) != 1 {
 		t.Fatalf("expected 1 job, got %d", len(jobIDs))
 	}

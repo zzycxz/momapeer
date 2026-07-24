@@ -70,7 +70,7 @@ export function DocPreview({ collection, docPath, onBack }: DocPreviewProps) {
           preview.chunks.map((chunk, i) => (
             <div key={i} className="rag-docpreview__chunk">
               <div className="rag-docpreview__chunk-label">Chunk #{i + 1}</div>
-              <div className="rag-docpreview__chunk-text">{chunk.text}</div>
+              <div className="rag-docpreview__chunk-text">{chunk.content}</div>
             </div>
           ))
         ) : (

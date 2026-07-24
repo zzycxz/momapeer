@@ -24,7 +24,7 @@ func TestEnqueueFileDedupSkipsReExtraction(t *testing.T) {
 	writeFile(t, fpath, "# Doc\n\nSome content for extraction here.\n\nMore content.")
 
 	// First import + extract.
-	jid1, err := p.EnqueuePaths("c1", []string{fpath}, "", "")
+	jid1, err := p.EnqueuePaths("c1", []string{fpath}, "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestEnqueueFileDedupSkipsReExtraction(t *testing.T) {
 	}
 
 	// Second import of the SAME file — should dedup-skip.
-	jid2, err := p.EnqueuePaths("c1", []string{fpath}, "", "")
+	jid2, err := p.EnqueuePaths("c1", []string{fpath}, "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestEnqueueFileDedupRetriggersWhenChanged(t *testing.T) {
 
 	fpath := filepath.Join(dir, "doc.md")
 	writeFile(t, fpath, "# Doc\n\nShort content.")
-	jid1, err := p.EnqueuePaths("c1", []string{fpath}, "", "")
+	jid1, err := p.EnqueuePaths("c1", []string{fpath}, "", "", false)
 	if err != nil || len(jid1) != 1 {
 		t.Fatalf("first import: err=%v jobs=%v", err, jid1)
 	}
@@ -81,7 +81,7 @@ func TestEnqueueFileDedupRetriggersWhenChanged(t *testing.T) {
 
 	// Rewrite with more content → more chunks → different chunk count.
 	writeFile(t, fpath, "# Doc\n\n"+strings.Repeat("Much longer content. ", 200))
-	jid2, err := p.EnqueuePaths("c1", []string{fpath}, "", "")
+	jid2, err := p.EnqueuePaths("c1", []string{fpath}, "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestResumeRehydratesInterruptedJobs(t *testing.T) {
 
 	p := NewPipeline(store, noopExtractor{}, DefaultPipelineConfig(), nil)
 	p.SetLogger(func(format string, args ...any) {})
-	jid, err := p.EnqueuePaths("c1", []string{fpath}, "", "")
+	jid, err := p.EnqueuePaths("c1", []string{fpath}, "", "", false)
 	if err != nil || len(jid) != 1 {
 		t.Fatalf("enqueue: err=%v jobs=%v", err, jid)
 	}
@@ -169,7 +169,7 @@ func TestResumeNoopOnCleanShutdown(t *testing.T) {
 	writeFile(t, fpath, "# Done doc\n\nContent.")
 	p := NewPipeline(store, noopExtractor{}, DefaultPipelineConfig(), nil)
 	p.SetLogger(func(format string, args ...any) {})
-	jid, _ := p.EnqueuePaths("c1", []string{fpath}, "", "")
+	jid, _ := p.EnqueuePaths("c1", []string{fpath}, "", "", false)
 	store.SetJobStatus(jid[0], JobDone)
 
 	p.mu.Lock()
@@ -200,7 +200,7 @@ func TestEnqueueFileDedupRetriggersOnContentEditSameChunkCount(t *testing.T) {
 	fpath := filepath.Join(dir, "doc.md")
 	// Original: short body → 1 chunk.
 	writeFile(t, fpath, "# Doc\n\nOriginal content here for testing dedup.")
-	jid1, err := p.EnqueuePaths("c1", []string{fpath}, "", "")
+	jid1, err := p.EnqueuePaths("c1", []string{fpath}, "", "", false)
 	if err != nil || len(jid1) != 1 {
 		t.Fatalf("first import: err=%v jobs=%v", err, jid1)
 	}
@@ -208,7 +208,7 @@ func TestEnqueueFileDedupRetriggersOnContentEditSameChunkCount(t *testing.T) {
 
 	// Rewrite: same structure (still 1 chunk) but DIFFERENT content.
 	writeFile(t, fpath, "# Doc\n\nEDITED content here for testing dedup.")
-	jid2, err := p.EnqueuePaths("c1", []string{fpath}, "", "")
+	jid2, err := p.EnqueuePaths("c1", []string{fpath}, "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestResumePreservesPrompts(t *testing.T) {
 	const edgeP = "custom edge prompt"
 	p := NewPipeline(store, noopExtractor{}, DefaultPipelineConfig(), nil)
 	p.SetLogger(func(format string, args ...any) {})
-	jid, err := p.EnqueuePaths("c1", []string{fpath}, nodeP, edgeP)
+	jid, err := p.EnqueuePaths("c1", []string{fpath}, nodeP, edgeP, false)
 	if err != nil || len(jid) != 1 {
 		t.Fatalf("enqueue: err=%v jobs=%v", err, jid)
 	}
@@ -286,7 +286,7 @@ func TestResumeFeedsOriginalTextNotBigram(t *testing.T) {
 	writeFile(t, fpath, "# 文档\n\n渲染管线处理图形输出")
 	p := NewPipeline(store, noopExtractor{}, DefaultPipelineConfig(), nil)
 	p.SetLogger(func(format string, args ...any) {})
-	jid, err := p.EnqueuePaths("c1", []string{fpath}, "", "")
+	jid, err := p.EnqueuePaths("c1", []string{fpath}, "", "", false)
 	if err != nil || len(jid) != 1 {
 		t.Fatalf("enqueue: err=%v jobs=%v", err, jid)
 	}

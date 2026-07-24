@@ -1560,6 +1560,8 @@ export const en = {
   "cowork.ragGraphLoading": "Loading graph...",
   "cowork.ragGraphEmpty": "No knowledge graph data yet",
   "cowork.ragGraphEmptyHint": "Import documents and wait for deep extraction — the graph appears automatically",
+  "cowork.ragGraphExtracting": "Rebuilding knowledge graph...",
+  "cowork.ragGraphExtractingHint": "LLM is deeply reading documents and extracting entities in the background, please wait",
   "cowork.ragDropToStart": "Drop files or folders to start",
   "cowork.ragDropRegion": "Knowledge base import area — drop files or click the button",
   "cowork.ragImportStarted": "Started {skill}, knowledge reference passed",

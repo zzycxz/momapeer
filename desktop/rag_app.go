@@ -191,7 +191,7 @@ func (a *App) ListRagTree(collection string) []RagNodeView {
 func fileStatus(j rag.JobRow) string {
 	switch j.Status {
 	case rag.JobPending:
-		return "indexed" // FTS5 ready, extraction queued (not yet started)
+		return "queued" // FTS5 ready, extraction queued (not yet started)
 	case rag.JobExtracting:
 		return "extracting"
 	case rag.JobDone:
@@ -270,7 +270,7 @@ func (a *App) RagImportPaths(collection string, paths []string) (RagImportResult
 	if len(paths) == 0 {
 		return RagImportResult{}, fmt.Errorf("no paths given")
 	}
-	jobIDs, err := a.ragPipeline.EnqueuePaths(collection, paths, "", "")
+	jobIDs, err := a.ragPipeline.EnqueuePaths(collection, paths, "", "", false)
 	if err != nil {
 		return RagImportResult{}, err
 	}
@@ -348,11 +348,11 @@ func (a *App) RagStartExtract(collection, template string) error {
 		if len(paths) == 0 {
 			return fmt.Errorf("no documents in collection to extract")
 		}
-		if _, err := a.ragPipeline.EnqueuePaths(collection, paths, nodePrompt, edgePrompt); err != nil {
+		if _, err := a.ragPipeline.EnqueuePaths(collection, paths, nodePrompt, edgePrompt, true); err != nil {
 			return err
 		}
 	} else {
-		if _, err := a.ragPipeline.EnqueuePaths(collection, []string{template}, "", ""); err != nil {
+		if _, err := a.ragPipeline.EnqueuePaths(collection, []string{template}, "", "", true); err != nil {
 			return err
 		}
 	}
@@ -1469,7 +1469,7 @@ func (a *App) RagBatchImport(collection string, paths []string) (RagImportResult
 	if len(paths) == 0 {
 		return RagImportResult{}, fmt.Errorf("no paths given")
 	}
-	jobIDs, err := a.ragPipeline.EnqueuePaths(collection, paths, "", "")
+	jobIDs, err := a.ragPipeline.EnqueuePaths(collection, paths, "", "", false)
 	if err != nil {
 		return RagImportResult{}, err
 	}
@@ -1511,7 +1511,7 @@ func (a *App) RagBatchExtract(collection string) error {
 	if len(paths) == 0 {
 		return fmt.Errorf("no pending files to extract")
 	}
-	_, err = a.ragPipeline.EnqueuePaths(collection, paths, "", "")
+	_, err = a.ragPipeline.EnqueuePaths(collection, paths, "", "", false)
 	if err != nil {
 		return err
 	}

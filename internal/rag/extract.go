@@ -81,7 +81,7 @@ func DefaultPipelineConfig() PipelineConfig {
 	return PipelineConfig{
 		Concurrency: 3,
 		Interval:    3 * time.Second,
-		MaxRetries:  3,
+		MaxRetries:  2,             // 2 attempts per chunk (1 retry); fail fast so progress moves
 		RetryBase:   2 * time.Second,
 		ChunkSize:   0, // use chunkDoc's default (3000 chars)
 	}
@@ -270,7 +270,7 @@ func (p *Pipeline) LatencyAvgMs() int64 {
 //
 // This is the "import" entrypoint from the UI: the user gets the file tree +
 // FTS5 search immediately, and extraction runs in the background with progress.
-func (p *Pipeline) EnqueuePaths(collection string, paths []string, nodePrompt, edgePrompt string) ([]string, error) {
+func (p *Pipeline) EnqueuePaths(collection string, paths []string, nodePrompt, edgePrompt string, force bool) ([]string, error) {
 	collection = normalizeCollection(collection)
 	if collection == "" {
 		collection = "default"
@@ -283,7 +283,7 @@ func (p *Pipeline) EnqueuePaths(collection string, paths []string, nodePrompt, e
 			continue
 		}
 		for _, fpath := range files {
-			jid, err := p.enqueueFile(collection, root, fpath, nodePrompt, edgePrompt)
+			jid, err := p.enqueueFile(collection, root, fpath, nodePrompt, edgePrompt, force)
 			if err != nil {
 				p.logf("rag: enqueue %s failed: %v", fpath, err)
 				continue
@@ -303,7 +303,7 @@ func (p *Pipeline) EnqueuePaths(collection string, paths []string, nodePrompt, e
 
 // enqueueFile imports one file into FTS5 + creates an extraction job + queues
 // chunk tasks. Returns "" if the file can't be read (skipped, not an error).
-func (p *Pipeline) enqueueFile(collection, root, fpath, nodePrompt, edgePrompt string) (string, error) {
+func (p *Pipeline) enqueueFile(collection, root, fpath, nodePrompt, edgePrompt string, force bool) (string, error) {
 	// 1. Read document once (markitdown for binary formats, direct read for text).
 	body, ext, err := readDoc(fpath)
 	if err != nil {
@@ -328,10 +328,12 @@ func (p *Pipeline) enqueueFile(collection, root, fpath, nodePrompt, edgePrompt s
 		h.Write([]byte(c))
 	}
 	contentHash := hex.EncodeToString(h.Sum(nil))
-	if jobID, status, _, _, qerr := p.store.JobStatusForPath(collection, fpath); qerr == nil && jobID != "" && status == JobDone {
-		if prevHash, herr := p.store.JobContentHashForPath(collection, fpath); herr == nil && prevHash == contentHash {
-			p.logf("rag: skip re-extract %s (job %s done, content hash unchanged)", fpath, jobID)
-			return jobID, nil
+	if !force {
+		if jobID, status, _, _, qerr := p.store.JobStatusForPath(collection, fpath); qerr == nil && jobID != "" && status == JobDone {
+			if prevHash, herr := p.store.JobContentHashForPath(collection, fpath); herr == nil && prevHash == contentHash {
+				p.logf("rag: skip re-extract %s (job %s done, content hash unchanged)", fpath, jobID)
+				return jobID, nil
+			}
 		}
 	}
 	rel := relPath(root, fpath)
@@ -438,7 +440,7 @@ func (p *Pipeline) processTask(workerID int, t chunkTask) {
 	// Mark job as extracting (idempotent; first chunk flips pending→extracting).
 	_ = p.store.SetJobStatus(t.JobID, JobExtracting)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	start := time.Now()

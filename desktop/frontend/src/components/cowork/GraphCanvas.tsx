@@ -19,7 +19,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import { app, onRagChanged } from "../../lib/bridge";
+import { app, onRagChanged, onRagProgress } from "../../lib/bridge";
 import { asArray } from "../../lib/array";
 import { useT } from "../../lib/i18n";
 import type { GraphDataView } from "../../lib/types";
@@ -180,6 +180,16 @@ function GraphCanvasInner({
   const t = useT();
   const [graphData, setGraphData] = useState<GraphDataView | null>(null);
   const [loading, setLoading] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [extractProgress, setExtractProgress] = useState<{ done: number; total: number } | null>(null);
+  // Smoothly-animated display percentage (with 2 decimal places) that interpolates
+  // toward the real percentage between polling updates, so the number looks alive.
+  const displayPctRef = useRef(0);
+  const [displayPct, setDisplayPct] = useState(0);
+  // How many seconds the real progress hasn't moved — used to show a "LLM slow" hint.
+  const lastRealPctRef = useRef(-1);
+  const stallSecsRef = useRef(0);
+  const [stalledSecs, setStalledSecs] = useState(0);
   const [nodes, setNodes, onNodesChange] = useNodesState([] as Node[]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
   const [semanticHits, setSemanticHits] = useState<Set<string>>(new Set());
@@ -189,6 +199,44 @@ function GraphCanvasInner({
   const layoutDone = useRef(false);
   const nodesRef = useRef<Node[]>([]);
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
+
+  // Smooth interpolation + stall detection.
+  useEffect(() => {
+    if (!extracting) {
+      setDisplayPct(0); displayPctRef.current = 0;
+      lastRealPctRef.current = -1; stallSecsRef.current = 0; setStalledSecs(0);
+      return;
+    }
+    const realPct = extractProgress && extractProgress.total > 0
+      ? (extractProgress.done / extractProgress.total) * 100
+      : 0;
+    // Stall detection: did the real pct change since last update?
+    if (Math.abs(realPct - lastRealPctRef.current) < 0.001) {
+      stallSecsRef.current += 1; // incremented every second by the interval below
+    } else {
+      lastRealPctRef.current = realPct;
+      stallSecsRef.current = 0;
+      setStalledSecs(0);
+    }
+    // Cap: never animate past the integer ceiling of realPct (so we don't lie).
+    const ceiling = Math.floor(realPct) + 0.99;
+    const timer = setInterval(() => {
+      // Tick stall counter every second (interval runs every 200ms; tick every 5th = 1s).
+      stallSecsRef.current += 0.2;
+      setStalledSecs(Math.floor(stallSecsRef.current));
+      const current = displayPctRef.current;
+      const step = 0.05;
+      const next = Math.min(current + step, Math.max(current, ceiling));
+      if (Math.abs(next - current) < 0.001) return;
+      displayPctRef.current = next;
+      setDisplayPct(next);
+    }, 200);
+    // Jump display to real value when new real data arrives.
+    const jumpTo = Math.min(realPct, displayPctRef.current > realPct ? realPct : displayPctRef.current + (realPct - displayPctRef.current) * 0.5);
+    displayPctRef.current = Math.max(displayPctRef.current, jumpTo);
+    setDisplayPct(displayPctRef.current);
+    return () => clearInterval(timer);
+  }, [extracting, extractProgress]);
 
   // Fetch top hub entities when collection changes.
   const [refreshKey, setRefreshKey] = useState(0);
@@ -215,6 +263,60 @@ function GraphCanvasInner({
     });
     return () => { off(); if (timer) clearTimeout(timer); };
   }, []);
+
+  // Check extraction status to show intermediate state instead of empty state.
+  useEffect(() => {
+    let heBusy = false;
+
+    // Listen to real-time progress. HE extraction doesn't immediately update the job tree,
+    // so we catch the events here to show progress immediately.
+    const offProgress = onRagProgress((e) => {
+      if (e.collection !== collection && collection !== "") return;
+      if (e.status === "extracting" || e.status === "queued") {
+        heBusy = true;
+        setExtracting(true);
+        if (e.totalChunks > 0) setExtractProgress({ done: e.doneChunks, total: e.totalChunks });
+      } else if (e.status === "enriched" || e.status === "error") {
+        if (e.doneChunks >= e.totalChunks) heBusy = false;
+        if (heBusy && e.totalChunks > 0) setExtractProgress({ done: e.doneChunks, total: e.totalChunks });
+      }
+    });
+
+    const checkExtraction = () => {
+      app.ListRagTree(collection).then((tree) => {
+        // Flatten nested tree — ListRagTree returns a hierarchy; we need all file nodes.
+        const flatAll = (nodes: typeof tree): typeof tree => {
+          const out: typeof tree = [];
+          for (const n of nodes) { out.push(n); if (n.children) out.push(...flatAll(n.children)); }
+          return out;
+        };
+        const flat = flatAll(tree);
+        let isBusy = false;
+        let total = 0;
+        let done = 0;
+        flat.forEach((n) => {
+          if (n.status === "extracting" || n.status === "queued") isBusy = true;
+          if (n.status === "extracting" || n.status === "queued" || n.status === "enriched" || n.status === "error") {
+            total += n.totalChunks || 0;
+            done += n.doneChunks || 0;
+          }
+        });
+        
+        // Only update from tree if HE isn't currently broadcasting its own progress
+        if (!heBusy) {
+          setExtracting(isBusy);
+          setExtractProgress(isBusy && total > 0 ? { done, total } : null);
+        }
+      }).catch(() => {});
+    };
+    checkExtraction();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const offChanged = onRagChanged(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(checkExtraction, 800);
+    });
+    return () => { offProgress(); offChanged(); if (timer) clearTimeout(timer); };
+  }, [collection]);
 
   // Semantic search embedding trigger.
   useEffect(() => {
@@ -411,6 +513,73 @@ function GraphCanvasInner({
   }
 
   if (!graphData || !graphData.nodes || graphData.nodes.length === 0) {
+    if (extracting) {
+      // displayPct is the smoothly-animated value (2 decimal places); it interpolates
+      // between backend polling updates so the counter always looks alive.
+      const pctStr = displayPct > 0 ? `${displayPct.toFixed(2)}%` : "";
+      return (
+        <div className="rag-graph__empty">
+          {/* Animated spinner */}
+          <div style={{
+            width: "36px", height: "36px", borderRadius: "50%",
+            border: "3px solid var(--border)",
+            borderTopColor: "var(--accent)",
+            animation: "rag-spin 1s linear infinite",
+            marginBottom: "16px",
+          }} />
+          <span style={{ fontWeight: 600, fontSize: "14px", color: "var(--fg)", fontVariantNumeric: "tabular-nums" }}>
+            {t("cowork.ragGraphExtracting")} {pctStr}
+          </span>
+          {/* Progress bar with shimmer animation */}
+          <div style={{
+            width: "240px", height: "6px",
+            background: "var(--border)",
+            marginTop: "14px", borderRadius: "3px", overflow: "hidden",
+            position: "relative",
+          }}>
+            <div style={{
+              width: `${Math.max(displayPct, 3)}%`, height: "100%",
+              background: "linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #fff))",
+              borderRadius: "3px",
+              transition: "width 0.8s ease",
+              position: "relative",
+              overflow: "hidden",
+            }}>
+              {/* Shimmer sweep — shows the bar is alive even when pct is stable */}
+              <div style={{
+                position: "absolute", top: 0, left: 0,
+                width: "60px", height: "100%",
+                background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.45), transparent)",
+                animation: "rag-shimmer 1.6s ease-in-out infinite",
+              }} />
+            </div>
+          </div>
+          {/* Dynamic hint: normal / stalled 15s / stalled 45s */}
+          {stalledSecs < 15 ? (
+            <span className="rag-graph__empty-hint" style={{ marginTop: "12px" }}>{t("cowork.ragGraphExtractingHint")}</span>
+          ) : stalledSecs < 45 ? (
+            <span className="rag-graph__empty-hint" style={{ marginTop: "12px", color: "var(--fg-dim)" }}>
+              ⏳ LLM 响应较慢，正在等待当前块完成（约 {30 - (stalledSecs % 30)}s 后超时重试）
+            </span>
+          ) : (
+            <span className="rag-graph__empty-hint" style={{ marginTop: "12px", color: "color-mix(in srgb, orange 70%, var(--fg-dim))" }}>
+              ⚠️ 当前块响应超时中，完成后将自动继续下一块
+            </span>
+          )}
+          <style>{`
+            @keyframes rag-spin {
+              to { transform: rotate(360deg); }
+            }
+            @keyframes rag-shimmer {
+              0%   { transform: translateX(-60px); }
+              100% { transform: translateX(240px); }
+            }
+          `}</style>
+        </div>
+      );
+    }
+
+
     return (
       <div className="rag-graph__empty">
         <span>{t("cowork.ragGraphEmpty")}</span>

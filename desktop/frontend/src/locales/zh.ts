@@ -1561,6 +1561,8 @@ export const zh: Record<DictKey, string> = {
   "cowork.ragGraphLoading": "加载图谱...",
   "cowork.ragGraphEmpty": "暂无知识图谱数据",
   "cowork.ragGraphEmptyHint": "导入文档并等待深度提取完成后，图谱将自动显示",
+  "cowork.ragGraphExtracting": "正在重新构建图谱...",
+  "cowork.ragGraphExtractingHint": "后台大模型正在深度阅读并提取实体，请稍候",
   "cowork.ragDropToStart": "拖入文件或文件夹开始",
   "cowork.ragDropRegion": "知识库导入区，可拖入文件或点击按钮导入",
   "cowork.ragImportStarted": "已开始 {skill}，知识引用已传递",

@@ -3,12 +3,12 @@
 // CoworkDock when the user clicks "深度提取".
 
 import { useEffect, useRef, useState } from "react";
-import { Zap, Clock, RefreshCw, ArrowRight, Eye, Trash2, FolderOpen } from "lucide-react";
+import { Zap, Clock, RefreshCw, ArrowRight, Eye, Trash2 } from "lucide-react";
 
 import { app } from "../../lib/bridge";
 import { asArray } from "../../lib/array";
 import { useToast } from "../../lib/toast";
-import type { RagExtractResultView, RagEntityBrief } from "../../lib/types";
+import type { RagExtractResultView, RagEntityBrief, RagNodeView } from "../../lib/types";
 import { ENTITY_TYPE_LABELS, ENTITY_TYPE_COLORS } from "./entityTypes";
 
 interface TemplateField {
@@ -56,7 +56,7 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<RagExtractResultView | null>(null);
   const [showResult, setShowResult] = useState(false);
-  const [docCount, setDocCount] = useState<number>(-1); // -1 = loading
+  const [, setDocCount] = useState<number>(-1); // -1 = loading; setter used in effect
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load templates, HE health, and document count on mount.
@@ -68,9 +68,14 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
     app.RagExtractResult(collection).then((r) => {
       if (r.hasData) setResult(r);
     }).catch(() => {});
-    // Check if the collection has any documents.
+    // Check if the collection has any documents (flatten tree to find all file nodes).
     app.ListRagTree(collection).then((tree) => {
-      const count = tree.filter((n) => n.kind === "file").length;
+      const flatAll = (nodes: RagNodeView[]): RagNodeView[] => {
+        const out: RagNodeView[] = [];
+        for (const n of nodes) { out.push(n); if (n.children) out.push(...flatAll(n.children)); }
+        return out;
+      };
+      const count = flatAll(tree).filter((n) => n.kind === "file").length;
       setDocCount(count);
     }).catch(() => setDocCount(0));
   }, [collection]);
@@ -92,6 +97,15 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
     }
   };
 
+  // Cancel the current extraction: stop polling and re-enable the UI.
+  // Note: this only resets the front-end state — the backend worker continues
+  // processing remaining chunks in the background (by design, no orphaned jobs).
+  const handleCancel = () => {
+    stopPolling();
+    setLoading(false);
+    showToast("已停止监听进度，提取仍在后台继续", "info");
+  };
+
   const handleSilentExtract = async () => {
     setLoading(true);
     try {
@@ -109,11 +123,24 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
     }
   };
 
+  // Helper: recursively flatten the nested tree into a flat list of all nodes.
+  const flatNodes = (nodes: RagNodeView[]): RagNodeView[] => {
+    const result: RagNodeView[] = [];
+    for (const n of nodes) {
+      result.push(n);
+      if (n.children && n.children.length > 0) {
+        result.push(...flatNodes(n.children));
+      }
+    }
+    return result;
+  };
+
   const handleImmediateExtract = async () => {
     setLoading(true);
     setJobs([]);
     setShowResult(false);
     setResult(null);
+
     try {
       await app.RagStartExtract(collection, selectedTemplate);
       // Poll for progress with timeout guard.
@@ -126,9 +153,11 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
           app.ListRagTree(collection),
           app.RagExtractResult(collection),
         ]).then(([tree, extractResult]) => {
+          // Flatten nested tree so we can find file-level status regardless of folder depth.
+          const flat = flatNodes(tree);
           // Map tree nodes to job-like progress objects.
-          const mapped: ExtractJob[] = tree
-            .filter((n) => n.status === "extracting" || n.status === "error" || n.status === "enriched")
+          const mapped: ExtractJob[] = flat
+            .filter((n) => n.status === "extracting" || n.status === "queued" || n.status === "error" || n.status === "enriched")
             .map((n) => ({
               id: n.jobId || n.key,
               collection,
@@ -143,10 +172,20 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
           setJobs(mapped);
           setResult(extractResult);
 
-          const allDone = tree.every((n) => n.status !== "extracting");
+          const fileNodes = flat.filter((n) => n.kind === "file");
+          // A file is "settled" when it's done, enriched, or errored (not still
+          // extracting or queued). allDone = every file has settled.
+          const allDone = fileNodes.length === 0 || fileNodes.every(
+            (n) => n.status !== "extracting" && n.status !== "queued" && n.status !== "pending"
+          );
           if (allDone || ticks >= MAX_POLL_TICKS) {
             stopPolling();
             setLoading(false);
+            // Show error summary if some chunks failed.
+            const errorCount = mapped.filter((j) => j.status === "failed").length;
+            if (errorCount > 0) {
+              showToast(`提取完成，但有 ${errorCount} 个文件失败（可能是 API 限流或内容不合规）`, "warn");
+            }
             if (extractResult.hasData) {
               setShowResult(true);
             }
@@ -168,6 +207,7 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
       }
     }
   };
+
 
   // Result panel: show after extraction completes.
   if (showResult && result) {
@@ -248,22 +288,36 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
 
       {/* Action buttons */}
       <div className="rag-template__actions">
-        <button
-          className="btn rag-template__btn"
-          onClick={() => void handleSilentExtract()}
-          disabled={loading}
-        >
-          <Clock size={14} />
-          <span>静默理解</span>
-        </button>
-        <button
-          className="btn btn--primary rag-template__btn"
-          onClick={() => void handleImmediateExtract()}
-          disabled={loading}
-        >
-          <Zap size={14} />
-          <span>立即理解</span>
-        </button>
+        {loading ? (
+          // While extracting: show a cancel/unlock button so the user isn't stuck
+          <button
+            className="btn rag-template__btn"
+            onClick={handleCancel}
+            style={{ color: "var(--fg-dim)", borderColor: "var(--border)" }}
+          >
+            <RefreshCw size={14} />
+            <span>停止监听</span>
+          </button>
+        ) : (
+          <>
+            <button
+              className="btn rag-template__btn"
+              onClick={() => void handleSilentExtract()}
+              disabled={loading}
+            >
+              <Clock size={14} />
+              <span>静默理解</span>
+            </button>
+            <button
+              className="btn btn--primary rag-template__btn"
+              onClick={() => void handleImmediateExtract()}
+              disabled={loading}
+            >
+              <Zap size={14} />
+              <span>立即理解</span>
+            </button>
+          </>
+        )}
       </div>
 
       {/* Live stats during extraction */}

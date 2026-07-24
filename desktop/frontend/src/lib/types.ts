@@ -673,7 +673,10 @@ export interface RagNodeView {
 
 // One collection summary (for the dropdown).
 export interface RagCollectionView {
-  name: string;
+  id: string;       // = path (full path, e.g. "工作/领导材料")
+  name: string;     // display name (last path segment)
+  path: string;     // full path
+  parent: string;   // parent path (empty for root)
   documents: number;
   chunks: number;
   entities: number;
