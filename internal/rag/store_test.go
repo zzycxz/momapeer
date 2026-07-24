@@ -200,9 +200,10 @@ func TestChunkTabularHeaderRetention(t *testing.T) {
 			if strings.TrimSpace(ln) == "" {
 				continue
 			}
-			if n == 0 {
+			switch n {
+			case 0:
 				first = ln
-			} else if n == 1 {
+			case 1:
 				second = ln
 			}
 			n++

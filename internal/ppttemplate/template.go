@@ -76,7 +76,7 @@ type Theme struct {
 // 0-100 on a 960x540 canvas (same space screen_perceive / ppt text use), so the
 // agent reasons "title near the top" not "at 36 points".
 type Layout struct {
-	TitleX, TitleY, TitleW, TitleH float64 `json:"title_x,omitempty"` // tag-grouped via custom marshal; see below
+	TitleX, TitleY, TitleW, TitleH float64 // custom marshal; see below
 	BodyX, BodyY, BodyW, BodyH     float64
 }
 

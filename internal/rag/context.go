@@ -26,9 +26,9 @@ func FormatKnowledgeRef(store *Store, collection string, entityNames []string, r
 			if e.Type != "" {
 				typeStr = fmt.Sprintf(" (%s)", e.Type)
 			}
-			b.WriteString(fmt.Sprintf("- **%s**%s", e.NameRaw, typeStr))
+			fmt.Fprintf(&b, "- **%s**%s", e.NameRaw, typeStr)
 			if e.Description != "" {
-				b.WriteString(fmt.Sprintf(": %s", e.Description))
+				fmt.Fprintf(&b, ": %s", e.Description)
 			}
 			b.WriteString("\n")
 		}
@@ -56,9 +56,9 @@ func FormatKnowledgeRef(store *Store, collection string, entityNames []string, r
 					break
 				}
 			}
-			b.WriteString(fmt.Sprintf("- %s → %s → %s", src, typ, tgt))
+			fmt.Fprintf(&b, "- %s → %s → %s", src, typ, tgt)
 			if desc != "" {
-				b.WriteString(fmt.Sprintf(" (%s)", desc))
+				fmt.Fprintf(&b, " (%s)", desc)
 			}
 			b.WriteString("\n")
 		}

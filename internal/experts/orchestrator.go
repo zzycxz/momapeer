@@ -227,7 +227,7 @@ func (o *Orchestrator) Run(ctx context.Context, teamID, task string, mode string
 
 	emit(CollabEvent{RunID: runID, TeamID: team.ID, TeamName: team.Name, Mode: mode, Phase: PhaseExpertStart, Message: fmt.Sprintf("协作开始 · %s 模式", modeLabel(mode))})
 
-	result := &CollabResult{}
+	var result *CollabResult
 	var err error
 	switch mode {
 	case "parallel":
@@ -426,7 +426,7 @@ func buildExpertPrompt(ex Expert, allowSearch bool, mode string) string {
 
 // formatPriorRounds renders all prior rounds' answers EXCEPT the current expert's
 // own prior answers (so they focus on others' views, not their own echo).
-func formatPriorRounds(rounds [][]ExpertAnswer, currentExpert string) string {
+func formatPriorRounds(rounds [][]ExpertAnswer, currentExpert string) string { //nolint:unused
 	var b strings.Builder
 	for r, round := range rounds {
 		for _, a := range round {

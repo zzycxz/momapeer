@@ -8,7 +8,7 @@ import (
 // language preference through a context (sub-agents inherit it without depending
 // on config). Not yet wired through every call site; included so the option
 // exists without a later API break.
-type reasoningLanguageContextKey struct{}
+type reasoningLanguageContextKey struct{} //nolint:unused
 
 // NormalizeReasoningLanguage returns one of auto|zh|en for runtime-only visible
 // reasoning preferences. Keep this local to the agent package so sub-agents can

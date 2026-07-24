@@ -255,8 +255,8 @@ func renderList(items []string, ordered bool) string {
 	}
 	var b strings.Builder
 	for _, it := range items {
-		b.WriteString(fmt.Sprintf(`<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="%d"/></w:numPr></w:pPr>%s</w:p>`,
-			numID, runXML(it, DocStyle{})))
+		fmt.Fprintf(&b, `<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="%d"/></w:numPr></w:pPr>%s</w:p>`,
+			numID, runXML(it, DocStyle{}))
 	}
 	return b.String()
 }
@@ -271,7 +271,7 @@ func renderTable(headers []string, rows [][]string, st DocStyle) string {
 	b.WriteString(`<w:tblPr><w:tblW w:w="5000" w:type="pct"/>`)
 	b.WriteString(`<w:tblBorders>`)
 	for _, edge := range []string{"top", "left", "bottom", "right", "insideH", "insideV"} {
-		b.WriteString(fmt.Sprintf(`<w:%s w:val="single" w:sz="4" w:space="0" w:color="auto"/>`, edge))
+		fmt.Fprintf(&b, `<w:%s w:val="single" w:sz="4" w:space="0" w:color="auto"/>`, edge)
 	}
 	b.WriteString(`</w:tblBorders></w:tblPr>`)
 	// Header row.

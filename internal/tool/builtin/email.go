@@ -364,7 +364,7 @@ func sendSMTP(cfg config.SMTPConfig, to, cc, bcc []string, msg []byte) error {
 		if err != nil {
 			return err
 		}
-		defer c.Quit()
+		defer func() { _ = c.Quit() }()
 		if err := authAndSend(c, cfg, cfg.From, recipients, msg); err != nil {
 			return err
 		}

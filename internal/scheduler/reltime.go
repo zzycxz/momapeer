@@ -201,7 +201,7 @@ func weekdayTarget(now time.Time, prefix string, dayNum int) time.Time {
 }
 
 // extraWeekShift is reserved for future "下周末" / "下周日" tuning.
-func extraWeekShift(now time.Time, dayNum int) int { return 0 }
+func extraWeekShift(now time.Time, dayNum int) int { return 0 } //nolint:unused
 
 // parseWeekdayCN converts 一/二/.../日 or 1..7 to 1..7 (7=Sunday). -1 = unknown.
 func parseWeekdayCN(s string) int {

@@ -2,7 +2,6 @@ package calendar
 
 import (
 	"log/slog"
-	"sync"
 	"time"
 )
 
@@ -13,7 +12,6 @@ type ReminderEngine struct {
 	store    *Store
 	notifier ReminderNotifier
 	logger   func(string, ...any)
-	mu       sync.Mutex
 	stop     chan struct{}
 	done     chan struct{}
 	// now returns the current time. Defaults to time.Now; overridable in tests

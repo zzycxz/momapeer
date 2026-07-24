@@ -328,8 +328,8 @@ func scanEvent(row *sql.Row) (*Event, error) {
 	if updatedAt.Valid {
 		e.UpdatedAt = updatedAt.Time
 	}
-	json.Unmarshal([]byte(remindersJSON), &e.Reminders)
-	json.Unmarshal([]byte(tagsJSON), &e.Tags)
+	_ = json.Unmarshal([]byte(remindersJSON), &e.Reminders)
+	_ = json.Unmarshal([]byte(tagsJSON), &e.Tags)
 	return &e, nil
 }
 
@@ -359,8 +359,8 @@ func scanEvents(rows *sql.Rows) ([]Event, error) {
 		if updatedAt.Valid {
 			e.UpdatedAt = updatedAt.Time
 		}
-		json.Unmarshal([]byte(remindersJSON), &e.Reminders)
-		json.Unmarshal([]byte(tagsJSON), &e.Tags)
+		_ = json.Unmarshal([]byte(remindersJSON), &e.Reminders)
+		_ = json.Unmarshal([]byte(tagsJSON), &e.Tags)
 		out = append(out, e)
 	}
 	return out, rows.Err()

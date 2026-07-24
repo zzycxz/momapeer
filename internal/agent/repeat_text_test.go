@@ -62,10 +62,9 @@ func TestRepeatTextCJKPassage(t *testing.T) {
 	// A CJK sentence repeated; each sentence is one whitespace-delimited token
 	// run, so with enough repeated tokens the n-gram window still catches it.
 	passage := "模型卡住了 正在重复 同一段话 模型卡住了 正在重复 同一段话 模型卡住了 正在重复 同一段话 "
-	if m.append(passage) {
-		// First append may or may not fire depending on internal repetition;
-		// the second append of the same passage must fire.
-	}
+	// First append may or may not fire depending on internal repetition;
+	// the second append of the same passage must fire.
+	_ = m.append(passage)
 	if !m.append(passage) {
 		t.Fatalf("a repeated CJK passage should be detected on the second append")
 	}

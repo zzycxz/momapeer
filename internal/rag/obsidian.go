@@ -73,17 +73,17 @@ func generateEntityMarkdown(store *Store, collection string, e Entity, nameToRaw
 
 	// YAML front matter.
 	b.WriteString("---\n")
-	b.WriteString(fmt.Sprintf("type: %s\n", e.Type))
+	fmt.Fprintf(&b, "type: %s\n", e.Type)
 	if len(e.Sources) > 0 {
 		b.WriteString("sources:\n")
 		for _, s := range e.Sources {
-			b.WriteString(fmt.Sprintf("  - %s#%d\n", s.Path, s.Chunk))
+			fmt.Fprintf(&b, "  - %s#%d\n", s.Path, s.Chunk)
 		}
 	}
 	b.WriteString("---\n\n")
 
 	// Title.
-	b.WriteString(fmt.Sprintf("# %s\n\n", e.NameRaw))
+	fmt.Fprintf(&b, "# %s\n\n", e.NameRaw)
 
 	// Description.
 	if e.Description != "" {
@@ -104,7 +104,7 @@ func generateEntityMarkdown(store *Store, collection string, e Entity, nameToRaw
 			if peerRaw == "" {
 				peerRaw = peerName
 			}
-			b.WriteString(fmt.Sprintf("- %s → [[%s]]\n", r.Type, peerRaw))
+			fmt.Fprintf(&b, "- %s → [[%s]]\n", r.Type, peerRaw)
 		}
 		b.WriteString("\n")
 	}
@@ -113,7 +113,7 @@ func generateEntityMarkdown(store *Store, collection string, e Entity, nameToRaw
 	if bl := backlinks[e.Name]; len(bl) > 0 {
 		b.WriteString("## 被引用\n\n")
 		for _, src := range bl {
-			b.WriteString(fmt.Sprintf("- [[%s]]\n", src))
+			fmt.Fprintf(&b, "- [[%s]]\n", src)
 		}
 		b.WriteString("\n")
 	}
@@ -122,7 +122,7 @@ func generateEntityMarkdown(store *Store, collection string, e Entity, nameToRaw
 	if len(e.Sources) > 0 {
 		b.WriteString("## 来源\n\n")
 		for _, s := range e.Sources {
-			b.WriteString(fmt.Sprintf("> %s (chunk %d)\n", s.Path, s.Chunk))
+			fmt.Fprintf(&b, "> %s (chunk %d)\n", s.Path, s.Chunk)
 		}
 	}
 
@@ -143,15 +143,15 @@ func generateMOC(entities []Entity) []byte {
 	var b strings.Builder
 	b.WriteString("# 知识目录\n\n")
 	for typ, ents := range byType {
-		b.WriteString(fmt.Sprintf("## %s\n\n", typ))
+		fmt.Fprintf(&b, "## %s\n\n", typ)
 		for _, e := range ents {
-			b.WriteString(fmt.Sprintf("- [[%s]]", e.NameRaw))
+			fmt.Fprintf(&b, "- [[%s]]", e.NameRaw)
 			if e.Description != "" {
 				desc := e.Description
 				if len(desc) > 60 {
 					desc = desc[:60] + "…"
 				}
-				b.WriteString(fmt.Sprintf(" — %s", desc))
+				fmt.Fprintf(&b, " — %s", desc)
 			}
 			b.WriteString("\n")
 		}
@@ -184,7 +184,7 @@ func SplitForPreview(body string, path string) []string {
 }
 
 // chunkForPreview is a simple paragraph-based splitter for preview.
-func chunkForPreview(body string, maxRunes int) []string {
+func chunkForPreview(body string, maxRunes int) []string { //nolint:unused
 	if maxRunes <= 0 {
 		maxRunes = 1200
 	}

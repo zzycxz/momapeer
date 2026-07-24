@@ -197,7 +197,7 @@ func readPPTX(path string) (string, error) {
 			}
 			data, _ := io.ReadAll(rc)
 			rc.Close()
-			b.WriteString(fmt.Sprintf("[slide %s]\n", filepath.Base(name)))
+			fmt.Fprintf(&b, "[slide %s]\n", filepath.Base(name))
 			b.WriteString(parseSlideText(data))
 			b.WriteString("\n\n")
 		}

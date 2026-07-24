@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -30,16 +31,13 @@ func TestRAGSearchSurfacesProvenance(t *testing.T) {
 		"collection": "docs",
 		"top_k":      5,
 	}))
-	out, err := ragSearch{}.Execute(nil, args)
+	out, err := ragSearch{}.Execute(context.TODO(), args)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	// The unwrapped content should cite the source. wrapUntrusted adds a fence;
 	// check the inner string.
 	body := out
-	if i := strings.Index(body, "rag"); i >= 0 {
-		// leave as-is; we just need substring checks
-	}
 	if !strings.Contains(body, "spec.md#3") {
 		t.Errorf("entity output missing provenance citation 'spec.md#3'; got:\n%s", body)
 	}
@@ -74,7 +72,7 @@ func TestRAGSearchExpandsTopicMembers(t *testing.T) {
 		"collection": "docs",
 		"top_k":      5,
 	}))
-	out, err := ragSearch{}.Execute(nil, args)
+	out, err := ragSearch{}.Execute(context.TODO(), args)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}

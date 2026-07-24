@@ -275,7 +275,7 @@ func (w docWrite) Execute(ctx context.Context, args json.RawMessage) (string, er
 		}
 		var b strings.Builder
 		w := csv.NewWriter(&b)
-		w.WriteAll(rows)
+		_ = w.WriteAll(rows)
 		if err := w.Error(); err != nil {
 			return "", err
 		}

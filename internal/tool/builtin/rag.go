@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/zzycxz/momapeer/internal/rag"
 	"github.com/zzycxz/momapeer/internal/tool"
@@ -24,7 +23,6 @@ import (
 
 var (
 	globalRAGStore *rag.Store
-	ragOnce        sync.Once
 )
 
 // SetRAGStore injects the knowledge-base store. Called once at cowork boot.

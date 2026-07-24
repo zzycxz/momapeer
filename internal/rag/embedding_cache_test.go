@@ -62,7 +62,9 @@ func TestChunkHashChangesWithBody(t *testing.T) {
 		t.Error("chunk hash must change when body changes (stale-cache risk)")
 	}
 	// Same content → same hash (idempotent, reuseable).
-	if chunkHash("c", "/p.md", 0, "same") != chunkHash("c", "/p.md", 0, "same") {
+	h1 := chunkHash("c", "/p.md", 0, "same")
+	h2 := chunkHash("c", "/p.md", 0, "same")
+	if h1 != h2 {
 		t.Error("chunk hash must be stable for identical content")
 	}
 }

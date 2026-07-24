@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -46,7 +47,7 @@ func TestRAGMindMapBuildsTree(t *testing.T) {
 		"path":       out,
 		"depth":      3,
 	})
-	msg, err := ragMindMap{}.Execute(nil, args)
+	msg, err := ragMindMap{}.Execute(context.TODO(), args)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -85,7 +86,7 @@ func TestRAGMindMapCycleGuard(t *testing.T) {
 
 	dir := t.TempDir()
 	out := filepath.Join(dir, "cycle.md")
-	_, err := ragMindMap{}.Execute(nil, mustMarshalJSON(t, map[string]any{
+	_, err := ragMindMap{}.Execute(context.TODO(), mustMarshalJSON(t, map[string]any{
 		"root": "A", "collection": "docs", "path": out, "depth": 5,
 	}))
 	if err != nil {
@@ -104,7 +105,7 @@ func TestRAGMindMapNoEntities(t *testing.T) {
 	prev := globalRAGStore
 	SetRAGStore(s)
 	defer SetRAGStore(prev)
-	out, err := ragMindMap{}.Execute(nil, mustMarshalJSON(t, map[string]any{
+	out, err := ragMindMap{}.Execute(context.TODO(), mustMarshalJSON(t, map[string]any{
 		"root": "x", "collection": "docs", "path": "/tmp/m.md",
 	}))
 	if err != nil {

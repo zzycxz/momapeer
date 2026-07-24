@@ -46,7 +46,6 @@ type axNodeInfo struct {
 	name      string // accessible name ("登录", "用户名")
 	value     string // current value (for inputs)
 	backendID cdp.BackendNodeID
-	childRefs []string
 }
 
 // snapshotRefs holds the ref→node map from the most recent snapshot. Stored on
@@ -142,11 +141,6 @@ func buildSnapshotRefs(nodes []*accessibility.Node) (snapshotRefs, string) {
 
 	// First pass: assign refs to nodes worth surfacing (interactive roles or
 	// named nodes). Track depth for rendering.
-	type renderEntry struct {
-		node  *accessibility.Node
-		depth int
-		ref   string
-	}
 	// rolesWorthRef: elements the LLM can act on. We assign refs to these; purely
 	// structural nodes (none of these roles AND no name) are rendered without a
 	// ref or skipped entirely to reduce noise.

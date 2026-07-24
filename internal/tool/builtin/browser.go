@@ -171,7 +171,7 @@ type downloadRecord struct {
 
 // browserStepTracker tracks action repetition and page stagnation to detect
 // behavioral loops. Modeled after browser-use's ActionLoopDetector.
-type browserStepTracker struct {
+type browserStepTracker struct { //nolint:unused
 	mu                     sync.Mutex
 	recentActionHashes     []string          // rolling window (max 20)
 	recentPageFingerprints []pageFingerprint // last 5 page states
@@ -179,7 +179,7 @@ type browserStepTracker struct {
 	consecutiveFailures    int               // consecutive action failures
 }
 
-type pageFingerprint struct {
+type pageFingerprint struct { //nolint:unused
 	url          string
 	elementCount int
 	textHash     string // SHA-256[:16] of DOM text
@@ -267,7 +267,7 @@ func (t *browserStepTracker) recordAction(name, params string) {
 }
 
 // recordPageState records a page fingerprint and updates stagnation count.
-func (t *browserStepTracker) recordPageState(url, domText string, elemCount int) {
+func (t *browserStepTracker) recordPageState(url, domText string, elemCount int) { //nolint:unused
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	hash := sha256.Sum256([]byte(domText))
@@ -1300,7 +1300,7 @@ func (browserType) Execute(ctx context.Context, args json.RawMessage) (string, e
 	return wrapResult(s, "type", sel, msg), nil
 }
 
-func fieldSuffix(sel string, cleared bool) string {
+func fieldSuffix(sel string, cleared bool) string { //nolint:unused
 	var parts []string
 	if sel != "" {
 		parts = append(parts, fmt.Sprintf(" into %q", sel))
@@ -1999,7 +1999,7 @@ func (browserUploadFile) Execute(ctx context.Context, args json.RawMessage) (str
 				return fmt.Errorf("no element matches selector %q", sel)
 			}
 			objID := res.ObjectID
-			defer runtime.ReleaseObject(objID).Do(ctx)
+			defer func() { _ = runtime.ReleaseObject(objID).Do(ctx) }()
 			node, err := dom.DescribeNode().WithObjectID(objID).Do(ctx)
 			if err != nil {
 				return err

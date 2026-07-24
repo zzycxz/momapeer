@@ -84,9 +84,9 @@ func Open(dbPath string) (*Store, error) {
 	// Clean up orphaned chunks (FK violations from historical writes where
 	// ON DELETE CASCADE didn't fire because PRAGMA foreign_keys was off).
 	// Safe no-op if none exist.
-	db.Exec(`DELETE FROM rag_chunks WHERE job_id NOT IN (SELECT id FROM rag_jobs)`)
+	_, _ = db.Exec(`DELETE FROM rag_chunks WHERE job_id NOT IN (SELECT id FROM rag_jobs)`)
 	// Clean up dangling relations (source/target entity no longer exists).
-	db.Exec(`DELETE FROM rag_relations WHERE source NOT IN (SELECT name FROM rag_entities) OR target NOT IN (SELECT name FROM rag_entities)`)
+	_, _ = db.Exec(`DELETE FROM rag_relations WHERE source NOT IN (SELECT name FROM rag_entities) OR target NOT IN (SELECT name FROM rag_entities)`)
 	return &Store{db: db}, nil
 }
 
@@ -506,7 +506,7 @@ func (s *Store) Import(collection, path string, tags []string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec("DELETE FROM rag_fts WHERE collection = ? AND path = ?", collection, path); err != nil {
 		return 0, err
 	}
@@ -540,7 +540,7 @@ func (s *Store) ImportContent(collection, path, body, ext string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec("DELETE FROM rag_fts WHERE collection = ? AND path = ?", collection, path); err != nil {
 		return 0, err
 	}
@@ -573,7 +573,7 @@ func (s *Store) ImportText(collection, virtualPath, text string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec("DELETE FROM rag_fts WHERE collection = ? AND path = ?", collection, virtualPath); err != nil {
 		return 0, err
 	}
@@ -673,7 +673,7 @@ func (s *Store) Delete(collection, path string) error {
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
+		defer func() { _ = tx.Rollback() }()
 		for _, stmt := range []string{
 			`DELETE FROM rag_chunks WHERE job_id IN (SELECT id FROM rag_jobs WHERE collection = ?)`,
 			`DELETE FROM rag_jobs WHERE collection = ?`,
@@ -705,7 +705,7 @@ func (s *Store) Delete(collection, path string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	for _, stmt := range []string{
 		`DELETE FROM rag_fts WHERE collection = ? AND path = ?`,
 		`DELETE FROM rag_chunks WHERE job_id IN (SELECT id FROM rag_jobs WHERE collection = ? AND path = ?)`,
@@ -867,7 +867,7 @@ func (s *Store) RenameCollection(oldName, newName string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	// Rename exact match and path-prefix children ("工作" → "工作资料",
 	// "工作/领导材料" → "工作资料/领导材料").
 	tables := []string{"rag_fts", "rag_jobs", "rag_entities", "rag_relations", "rag_chunks"}
@@ -1339,9 +1339,7 @@ func tokenize(input string) []string {
 		// If the buffered run is CJK, expand to bigrams; otherwise emit whole.
 		if isCJK(buf[0]) {
 			run := string(buf)
-			for _, bg := range cjkBigrams(run) {
-				tokens = append(tokens, bg)
-			}
+			tokens = append(tokens, cjkBigrams(run)...)
 			// Also keep the whole run so an exact multi-char CJK phrase still
 			// matches (it was indexed as bigrams, but the full run may also
 			// appear when the doc had a single-char context).

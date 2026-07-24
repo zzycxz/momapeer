@@ -87,7 +87,7 @@ func readPDF(path string) (string, error) {
 }
 
 // ocrScriptCandidates lists possible locations of ocr_pdf.py.
-func ocrScriptCandidates() []string {
+func ocrScriptCandidates() []string { //nolint:unused
 	return docconv.ScriptCandidates("ocr_pdf.py")
 }
 
@@ -97,7 +97,7 @@ func findOCRScript() string {
 }
 
 // docConverterScriptCandidates lists possible locations of doc_converter.py.
-func docConverterScriptCandidates() []string {
+func docConverterScriptCandidates() []string { //nolint:unused
 	return docconv.ScriptCandidates("doc_converter.py")
 }
 
@@ -262,7 +262,7 @@ func readXLSXAsText(path string) (string, error) {
 			data, _ := io.ReadAll(rc)
 			rc.Close()
 			if si > 0 {
-				b.WriteString(fmt.Sprintf("\n--- sheet %d ---\n", si+1))
+				fmt.Fprintf(&b, "\n--- sheet %d ---\n", si+1)
 			}
 			rows := parseSheetRows(data, sharedStrings)
 			for _, row := range rows {
@@ -384,7 +384,7 @@ func readPPTX(path string) (string, error) {
 			}
 			data, _ := io.ReadAll(rc)
 			rc.Close()
-			b.WriteString(fmt.Sprintf("[slide %s]\n", filepath.Base(name)))
+			fmt.Fprintf(&b, "[slide %s]\n", filepath.Base(name))
 			b.WriteString(parseSlideText(data))
 			b.WriteString("\n\n")
 		}

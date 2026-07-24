@@ -17,7 +17,7 @@ import (
 // Each pattern has 2 capture groups: x and y (both 0-1000 normalized). Patterns
 // are tried in order; the first match wins. Order matters — more specific
 // patterns first, generic fallbacks last.
-var coordPatterns = []*regexp.Regexp{
+var coordPatterns = []*regexp.Regexp{ //nolint:unused
 	// 1. [TARGET_ACTION]...payload...x:..,y:.. (Rooster protocol, most specific)
 	regexp.MustCompile(`(?is)\[TARGET_ACTION\].*?['"]?x['"]?\s*[:=]\s*(\d+\.?\d*)\s*[,;]\s*['"]?y['"]?\s*[:=]\s*(\d+\.?\d*)`),
 	// 2. JSON: {"x": 123, "y": 456}
@@ -43,7 +43,7 @@ var coordPatterns = []*regexp.Regexp{
 // parseVLMCoords extracts normalized (0-1000) coordinates from VLM output text.
 // Returns (x, y, true) if found; (0, 0, false) otherwise. Values are clamped to
 // [0, 1000] — values outside this range indicate a parse error.
-func parseVLMCoords(text string) (x, y float64, ok bool) {
+func parseVLMCoords(text string) (x, y float64, ok bool) { //nolint:unused
 	for _, p := range coordPatterns {
 		m := p.FindStringSubmatch(text)
 		if m != nil {
@@ -63,7 +63,7 @@ func parseVLMCoords(text string) (x, y float64, ok bool) {
 
 // labelPatterns extracts an element ID (like "A", "B3", "AA") that the VLM
 // selected. Matches formats like: [A], (A), 选A, label: A, target: A, 编号A.
-var labelPatterns = []*regexp.Regexp{
+var labelPatterns = []*regexp.Regexp{ //nolint:unused
 	// [TARGET] A or [TARGET_ACTION] A (Rooster protocol)
 	regexp.MustCompile(`(?i)\[TARGET(?:_ACTION)?\][^A-Z0-9]*([A-Z]{1,2}\d*)`),
 	// label: A, target: A, 选择A, 选中A, 编号A
@@ -74,7 +74,7 @@ var labelPatterns = []*regexp.Regexp{
 
 // parseVLMLabel extracts the element ID the VLM chose. Returns (id, true) if
 // found; ("", false) otherwise.
-func parseVLMLabel(text string) (id string, ok bool) {
+func parseVLMLabel(text string) (id string, ok bool) { //nolint:unused
 	for _, p := range labelPatterns {
 		m := p.FindStringSubmatch(text)
 		if m != nil {
@@ -88,9 +88,9 @@ func parseVLMLabel(text string) (id string, ok bool) {
 }
 
 // parseConfidence extracts a [CONFIDENCE: 0-100] value from VLM output.
-var confidencePattern = regexp.MustCompile(`(?i)\[CONFIDENCE[:\s]+(\d{1,3})\]`)
+var confidencePattern = regexp.MustCompile(`(?i)\[CONFIDENCE[:\s]+(\d{1,3})\]`) //nolint:unused
 
-func parseConfidence(text string) int {
+func parseConfidence(text string) int { //nolint:unused
 	m := confidencePattern.FindStringSubmatch(text)
 	if m == nil {
 		return 50 // default mid-confidence when not specified
@@ -109,6 +109,6 @@ func parseConfidence(text string) int {
 }
 
 // denormalize converts a 0-1000 normalized coordinate to physical screen pixels.
-func denormalize(norm float64, screenDimension int) int {
+func denormalize(norm float64, screenDimension int) int { //nolint:unused
 	return int(norm / 1000.0 * float64(screenDimension))
 }

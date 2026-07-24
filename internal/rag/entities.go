@@ -175,8 +175,8 @@ func (s *Store) UpsertRelation(collection string, r Relation, src Source) error 
 			return err
 		}
 		// Maintain the relation_cnt denormalized column: increment both endpoints.
-		s.db.Exec(`UPDATE rag_entities SET relation_cnt = relation_cnt + 1 WHERE collection = ? AND name = ?`, collection, srcName)
-		s.db.Exec(`UPDATE rag_entities SET relation_cnt = relation_cnt + 1 WHERE collection = ? AND name = ?`, collection, tgtName)
+		_, _ = s.db.Exec(`UPDATE rag_entities SET relation_cnt = relation_cnt + 1 WHERE collection = ? AND name = ?`, collection, srcName)
+		_, _ = s.db.Exec(`UPDATE rag_entities SET relation_cnt = relation_cnt + 1 WHERE collection = ? AND name = ?`, collection, tgtName)
 		return nil
 	case err != nil:
 		return fmt.Errorf("query relation: %w", err)
@@ -229,7 +229,7 @@ func (s *Store) DeleteCollectionEntities(collection string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec(`DELETE FROM rag_entities WHERE collection = ?`, collection); err != nil {
 		return err
 	}
@@ -599,7 +599,7 @@ func (s *Store) CreateJob(j JobRow, chunkTexts []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	nowTS := time.Now().UTC()
 	now := nowTS.Format(time.RFC3339)
 	if j.ID == "" {
@@ -645,7 +645,7 @@ func (s *Store) MarkChunkDone(chunkID string, jobID string, latencyMs int64, err
 	if err2 != nil {
 		return err2
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	status := ChunkDone
 	errMsg := ""
 	if err != nil {
@@ -923,7 +923,7 @@ func (s *Store) MergeEntities(collection, keepName string, mergeNames []string) 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Collect all sources from merged entities to append to keep entity.
 	var keepSources []Source

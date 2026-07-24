@@ -180,9 +180,8 @@ func weekdayShortCN(s string) string {
 
 // parseAt parses "at 2026-06-24 15:00" (local time). Accepts a few common layouts.
 func parseAt(expr string) (time.Time, error) {
-	rest := strings.TrimSpace(strings.TrimPrefix(strings.ToLower(expr), "at"))
 	// Strip the leading "at" from the ORIGINAL to preserve case of the timestamp.
-	rest = strings.TrimSpace(expr[2:])
+	rest := strings.TrimSpace(expr[2:])
 	layouts := []string{
 		"2006-01-02 15:04",
 		"2006-01-02 15:04:05",
@@ -206,8 +205,7 @@ func parseAt(expr string) (time.Time, error) {
 // parseIn parses "in 2h30m" / "in 3d" against `now` and returns the absolute time.
 // Supports Go duration syntax (h/m/s) plus "Nd" / "Nw" day/week units.
 func parseIn(expr string, now time.Time) (time.Time, error) {
-	rest := strings.TrimSpace(strings.TrimPrefix(strings.ToLower(expr), "in"))
-	rest = strings.TrimSpace(expr[2:])
+	rest := strings.TrimSpace(expr[2:])
 	t, err := parseRelativeOffset(rest, now)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("\"in\" needs a duration like \"in 2h30m\" or \"in 3d\": %w", err)

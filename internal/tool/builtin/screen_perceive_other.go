@@ -11,7 +11,7 @@ import (
 // screen_perceive is Windows-only (requires UIA COM + Win32 screen capture).
 // On other platforms it returns a clear error — the rest of coWork (browser,
 // RAG, docs) still works, just not desktop perception.
-type screenPerceive struct{}
+type screenPerceive struct{} //nolint:unused
 
 func (screenPerceive) Name() string { return "screen_perceive" }
 func (screenPerceive) Description() string {

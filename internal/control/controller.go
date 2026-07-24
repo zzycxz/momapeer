@@ -1626,9 +1626,7 @@ func (c *Controller) SetPlanMode(v bool) {
 		// that would block read-only commands like "git log" that plan mode
 		// intentionally allows.
 		rules := make([]string, 0, len(writerTools))
-		for _, t := range writerTools {
-			rules = append(rules, t)
-		}
+		rules = append(rules, writerTools...)
 		c.policy = c.policy.SetHardDeny(rules)
 	} else {
 		c.policy = c.policy.SetHardDeny(nil)

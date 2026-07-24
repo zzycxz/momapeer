@@ -532,9 +532,10 @@ func (p *Pipeline) emitProgress(t chunkTask) {
 	eta := avg * time.Duration(remaining)
 	msg := fmt.Sprintf("抽取中… %d/%d · 平均 %s/块 · 预计还需 %s",
 		job.DoneChunks, job.TotalChunks, durStr(avg), durStr(eta))
-	if job.Status == JobDone {
+	switch job.Status {
+	case JobDone:
 		msg = fmt.Sprintf("完成：%d/%d 块已抽取", job.DoneChunks, job.TotalChunks)
-	} else if job.Status == JobError {
+	case JobError:
 		msg = fmt.Sprintf("出错：%s", job.ErrorMsg)
 	}
 	p.emit(ProgressEvent{

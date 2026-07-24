@@ -9,7 +9,7 @@ import (
 // that embeds this exact string can prematurely close the fence and inject
 // instructions after it — the classic prompt-injection escape. We neutralize
 // any literal occurrence inside content before wrapping.
-const untrustedCloseTag = "</untrusted_content>"
+const untrustedCloseTag = "</untrusted_content>" //nolint:unused
 
 // WrapUntrusted wraps externally-sourced content (web pages, browser DOM, RAG
 // snippets) in an <untrusted_content> tag. The cowork system prompt instructs

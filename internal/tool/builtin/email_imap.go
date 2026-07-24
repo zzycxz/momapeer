@@ -92,7 +92,7 @@ func imapConnect(ctx context.Context, cfg config.IMAPConfig) (*client.Client, er
 	c.Timeout = 30 * time.Second
 	pass := imapPassword(cfg)
 	if err := c.Login(cfg.Username, pass); err != nil {
-		c.Logout()
+		_ = c.Logout()
 		return nil, classifyAuthErr(fmt.Errorf("imap login (check credentials): %w", err))
 	}
 	return c, nil
@@ -143,7 +143,7 @@ func ProbeIMAPConfig(cfg config.IMAPConfig) error {
 		return friendlyEmailErr("", err)
 	}
 	if _, err := c.Select("INBOX", true); err != nil {
-		c.Logout()
+		_ = c.Logout()
 		return fmt.Errorf("select inbox: %w", err)
 	}
 	return c.Logout()
@@ -187,7 +187,7 @@ func imapRead(ctx context.Context, cfg config.IMAPConfig, limit int, unreadOnly 
 	if err != nil {
 		return nil, err
 	}
-	defer c.Logout()
+	defer func() { _ = c.Logout() }()
 
 	if _, err := c.Select("INBOX", true); err != nil { // read-only
 		return nil, fmt.Errorf("select inbox: %w", err)
@@ -229,7 +229,7 @@ func imapSearch(ctx context.Context, cfg config.IMAPConfig, from, subject string
 	if err != nil {
 		return nil, err
 	}
-	defer c.Logout()
+	defer func() { _ = c.Logout() }()
 
 	if _, err := c.Select("INBOX", true); err != nil {
 		return nil, err
@@ -400,7 +400,7 @@ func downloadAttachments(ctx context.Context, cfg config.IMAPConfig, limit int, 
 	if err != nil {
 		return 0, err
 	}
-	defer c.Logout()
+	defer func() { _ = c.Logout() }()
 
 	if _, err := c.Select("INBOX", true); err != nil {
 		return 0, fmt.Errorf("select inbox: %w", err)
@@ -725,9 +725,6 @@ func truncatePreview(s string, n int) string {
 
 // osGetenv wraps os.Getenv (kept so this file's env access is localized).
 func osGetenv(key string) string { return os.Getenv(key) }
-
-// getenv is a thin wrapper over os.Getenv, localized to email's env access.
-func getenv(key string) string { return os.Getenv(key) }
 
 // mailHeaderFromFields is unused (we use the Header map directly); kept as a
 // compile guard against an accidental unused import.

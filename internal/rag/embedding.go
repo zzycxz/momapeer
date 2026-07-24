@@ -210,6 +210,6 @@ func cosine(a, b []float32) float64 {
 // chunkForEmbed returns the text to embed for a chunk — currently the body, but
 // kept as a helper so future metadata-augmented embeddings (title + body) stay
 // localized. Unused for now; reserved for when rag_import stores embeddings.
-func chunkForEmbed(body string) string {
+func chunkForEmbed(body string) string { //nolint:unused
 	return strings.TrimSpace(body)
 }

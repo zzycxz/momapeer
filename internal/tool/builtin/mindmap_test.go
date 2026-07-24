@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -138,7 +139,7 @@ func TestMindMapCreateToolExecute(t *testing.T) {
 		},
 	}
 	args, _ := json.Marshal(payload)
-	out, err := mindmapCreate{}.Execute(nil, args)
+	out, err := mindmapCreate{}.Execute(context.TODO(), args)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}

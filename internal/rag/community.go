@@ -252,7 +252,7 @@ func (s *Store) SetCommunity(collection string, nameMap map[string]int) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	// Reset all to -1 first, then set assigned communities.
 	if _, err := tx.Exec(`UPDATE rag_entities SET community = -1 WHERE collection = ?`, collection); err != nil {
 		return err
