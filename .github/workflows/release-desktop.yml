@@ -152,6 +152,30 @@ jobs:
         working-directory: ./desktop/build/bin
         run: Rename-Item -Path "${{ matrix.binary_name }}" -NewName "${{ matrix.artifact }}"
 
+      - name: Build NSIS Installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Install NSIS
+          choco install nsis -y --no-progress
+          # Copy skills to build directory
+          $buildBin = "desktop\build\bin"
+          $skillsSrc = ".momapeer\skills"
+          $skillsDst = "$buildBin\.momapeer\skills"
+          if (Test-Path $skillsSrc) {
+            New-Item -ItemType Directory -Path $skillsDst -Force | Out-Null
+            Copy-Item "$skillsSrc\*" $skillsDst -Recurse -Force
+          }
+          # Update version in installer script
+          $ver = "${{ steps.version.outputs.semver }}"
+          (Get-Content scripts\installer.nsi) -replace '!define APP_VERSION ".*"', "!define APP_VERSION `"$ver`"" | Set-Content scripts\installer.nsi
+          # Build installer
+          & "C:\Program Files (x86)\NSIS\makensis.exe" scripts\installer.nsi
+          # Rename with version
+          $setupName = "momapeer-setup-$ver.exe"
+          Rename-Item "dist\momapeer-setup.exe" $setupName
+          Move-Item $setupName "desktop\build\bin\"
+
       - name: Upload Artifact
         uses: softprops/action-gh-release@v2
         with:
@@ -161,7 +185,9 @@ jobs:
             ## MoMAPeer Desktop ${{ github.ref_name }}
 
             See [CHANGELOG.md](https://github.com/zzycxz/momapeer/blob/main/CHANGELOG.md) for details.
-          files: ./desktop/build/bin/${{ matrix.artifact }}
+          files: |
+            ./desktop/build/bin/${{ matrix.artifact }}
+            ./desktop/build/bin/momapeer-setup-*.exe
 
   manifest:
     name: Generate Auto-Updater Manifest
