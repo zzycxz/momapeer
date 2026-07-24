@@ -244,10 +244,10 @@ func TestBuiltinInitIsInlineSkill(t *testing.T) {
 func TestBuiltinSubagentSkillsDeclareAllowedTools(t *testing.T) {
 	st := New(Options{HomeDir: t.TempDir()})
 	cases := map[string][]string{
-		"explore":         {"read_file", "ls", "glob", "grep"},
-		"research":        {"read_file", "ls", "glob", "grep", "web_fetch"},
-		"review":          {"read_file", "ls", "glob", "grep", "bash"},
-		"security-review": {"read_file", "ls", "glob", "grep", "bash"},
+		"explore":         {"read_file", "grep", "bash"},
+		"research":        {"read_file", "grep", "bash", "web_fetch"},
+		"review":          {"read_file", "grep", "bash"},
+		"security-review": {"read_file", "grep", "bash"},
 	}
 	for name, want := range cases {
 		sk, ok := st.Read(name)
@@ -423,11 +423,10 @@ func TestApplyIndex(t *testing.T) {
 func TestApplyIndexMandatesInlineButRestrainsSubagent(t *testing.T) {
 	out := ApplyIndex("BASE", []Skill{{Name: "alpha", Description: "the alpha", RunAs: RunInline}})
 
-	if !strings.Contains(out, "inline) skill is even plausibly relevant") ||
-		!strings.Contains(out, "invoke it before continuing") {
+	if !strings.Contains(out, "Invoke on plausible relevance before pre-judging") {
 		t.Errorf("inline skills should be mandatory on plausible relevance:\n%s", out)
 	}
-	if !strings.Contains(out, "not on weak relevance") {
+	if !strings.Contains(out, "not weak relevance") {
 		t.Errorf("subagent skills should stay judgment-based, not mandatory:\n%s", out)
 	}
 }

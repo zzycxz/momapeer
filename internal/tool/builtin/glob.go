@@ -156,6 +156,44 @@ func globRecursive(ctx context.Context, pattern string) (string, error) {
 	return result, nil
 }
 
+// doubleStarMatch handles patterns containing ** (double-star) which match
+// zero or more directory levels. Examples:
+//   - **/foo/** matches any path containing "foo" as a directory component
+//   - **/test/*.go matches any .go file under a "test" directory
+func doubleStarMatch(pattern, name string) bool {
+	// Normalize separators.
+	pattern = filepath.ToSlash(pattern)
+	name = filepath.ToSlash(name)
+
+	// Split on ** to get prefix and suffix parts.
+	parts := strings.SplitN(pattern, "**", 2)
+	if len(parts) != 2 {
+		// No ** — fall back to simple match.
+		matched, _ := filepath.Match(pattern, name)
+		return matched
+	}
+	prefix := strings.TrimSuffix(parts[0], "/")
+	suffix := strings.TrimPrefix(parts[1], "/")
+
+	// If there's a prefix, name must start with it.
+	if prefix != "" && !strings.HasPrefix(name, prefix+"/") {
+		return false
+	}
+	// If there's a suffix, name must end with it (matching at some directory level).
+	if suffix == "" {
+		return true
+	}
+	// Try matching suffix at each directory level.
+	nameParts := strings.Split(name, "/")
+	for i := range nameParts {
+		sub := strings.Join(nameParts[i:], "/")
+		if matched, _ := filepath.Match(suffix, sub); matched {
+			return true
+		}
+	}
+	return false
+}
+
 // matchGlobSuffix checks if path matches the suffix pattern after **.
 // It tries matching at each directory level: if the pattern is "*.go",
 // it matches "foo.go" and "dir/foo.go". If the pattern is "test/*.go",

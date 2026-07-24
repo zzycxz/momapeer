@@ -758,7 +758,9 @@ func (screenKey) ReadOnly() bool { return false }
 // 0-9, enter/return, esc/escape, tab, space, delete/del, backspace, home, end,
 // pageup, pagedown, arrowup/down/left/right, f1-f12.
 func parseKeyCombo(s string) (mod, key uint16, err error) {
-	parts := strings.Split(strings.ToLower(strings.TrimSpace(s)), "+")
+	// Normalize: replace dashes with plus signs so both ctrl+s and ctrl-s work.
+	normalized := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(s)), "-", "+")
+	parts := strings.Split(normalized, "+")
 	if len(parts) == 0 || parts[len(parts)-1] == "" {
 		return 0, 0, fmt.Errorf("empty key combo")
 	}

@@ -315,6 +315,20 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	fmt.Fprintf(&b, "distill_interval = %d   # Distill 运行周期（天）；0 = 默认 %d\n", c.Dream.DistillIntervalDays(), DefaultDistillInterval)
 	b.WriteString("\n")
 
+	// [cowork] section: PPT template and mode settings.
+	b.WriteString("[cowork]\n")
+	if c.Cowork.PPTActiveTemplate != "" {
+		fmt.Fprintf(&b, "ppt_active_template = %q   # id of the PPT template to build decks from\n", c.Cowork.PPTActiveTemplate)
+	} else {
+		b.WriteString("# ppt_active_template = \"\"   # id of a template in ppt-templates/; empty = build from a blank deck\n")
+	}
+	if c.Cowork.PPTMode != "" {
+		fmt.Fprintf(&b, "ppt_mode = %q   # fast (one-shot) or validate (generate + check + rework)\n", c.Cowork.PPTMode)
+	} else {
+		b.WriteString("# ppt_mode = \"fast\"   # fast (one-shot) or validate (generate + check + rework)\n")
+	}
+	b.WriteString("\n")
+
 	renderLSPConfig(&b, c.LSP)
 
 	b.WriteString("[skills]\n")

@@ -875,7 +875,7 @@ func (s *Store) RenameCollection(oldName, newName string) error {
 		// Path-prefix children: "工作/xxx" → "工作资料/xxx"
 		oldPrefix := oldName + "/"
 		newPrefix := newName + "/"
-		if _, err := tx.Exec(fmt.Sprintf(`UPDATE %s SET collection = ? || substr(collection, ?) WHERE collection LIKE ?`, table, newPrefix, len(oldPrefix)+1, oldPrefix+"%"), newPrefix, oldPrefix+"%"); err != nil {
+		if _, err := tx.Exec(fmt.Sprintf(`UPDATE %s SET collection = ? || substr(collection, ?) WHERE collection LIKE ?`, table), newPrefix, len(oldPrefix)+1, oldPrefix+"%"); err != nil {
 			// rag_chunks may not have collection column — skip gracefully.
 			continue
 		}

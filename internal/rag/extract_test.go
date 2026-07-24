@@ -56,7 +56,7 @@ type fakeExtractor struct {
 	delay    time.Duration
 }
 
-func (f *fakeExtractor) Extract(ctx context.Context, chunk string) (ExtractResult, error) {
+func (f *fakeExtractor) Extract(ctx context.Context, chunk string, _, _ string) (ExtractResult, error) {
 	n := atomic.AddInt32(&f.calls, 1)
 	if f.delay > 0 {
 		select {
@@ -222,7 +222,7 @@ type blockingExtractor struct {
 	once    sync.Once
 }
 
-func (b *blockingExtractor) Extract(ctx context.Context, chunk string) (ExtractResult, error) {
+func (b *blockingExtractor) Extract(ctx context.Context, chunk string, _, _ string) (ExtractResult, error) {
 	b.once.Do(func() { close(b.started) })
 	<-ctx.Done() // block until the test's ctx times out
 	return ExtractResult{}, ctx.Err()

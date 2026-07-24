@@ -517,6 +517,11 @@ func loadMemory(path string) (Memory, bool) {
 // (In practice slug() neutralizes separators before safeJoin is reached, but
 // defense in depth — don't rely on a single layer.)
 func safeJoin(base, name string) (string, error) {
+	// Reject any path with ".." components before filepath.Clean normalizes
+	// separators — defense in depth against both forward and backslash escapes.
+	if strings.Contains(name, "..") {
+		return "", fmt.Errorf("path escapes memory dir: %q", name)
+	}
 	cleanBase := filepath.Clean(base)
 	p := filepath.Join(cleanBase, name)
 	rel, err := filepath.Rel(cleanBase, p)

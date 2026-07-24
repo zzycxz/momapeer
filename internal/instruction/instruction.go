@@ -23,17 +23,19 @@ type VerifyCheck struct {
 func ForModel(modelID string) string {
 	id := strings.ToLower(strings.TrimSpace(modelID))
 
+	var parts []string
+
 	// Thinking-capable models: encourage deep reasoning before tool calls.
 	if openai.MoMAThinkingModels[id] {
-		return ThinkingAddon
+		parts = append(parts, ThinkingAddon)
 	}
 
-	// Serial-constraint models: one tool per message.
-	// (Currently no known MoMA models need this; add specific model IDs here
-	// when testing reveals a model that fails with parallel tool calls.)
-	// if serialModels[id] { return SerialAddon }
+	// Family-specific addon (tool-call format, serial constraints, etc.).
+	if addon := FamilyAddon(ModelFamily(id)); addon != "" {
+		parts = append(parts, addon)
+	}
 
-	return ""
+	return strings.Join(parts, "\n\n")
 }
 
 const ThinkingAddon = `You have extended thinking capability. When facing complex problems, think step by step before calling tools. Use your reasoning to plan the approach first, then execute with tools.`

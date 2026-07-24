@@ -6,8 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-
-	"github.com/zzycxz/momapeer/internal/tool"
 )
 
 // screen_perceive is Windows-only (requires UIA COM + Win32 screen capture).

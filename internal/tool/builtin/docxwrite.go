@@ -16,6 +16,7 @@ import (
 	"archive/zip"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,13 +37,15 @@ type DocSection struct {
 
 // DocStyle is the shared run/paragraph style vocabulary. Color is "#RRGGBB".
 type DocStyle struct {
-	Bold      bool   `json:"bold"`
-	Italic    bool   `json:"italic"`
-	Color     string `json:"color"`      // "#RRGGBB"
-	Size      int    `json:"size"`       // half-points (24 = 12pt); 0 = default
-	Font      string `json:"font"`       // font family; "" = default
-	Align     string `json:"align"`      // "left"|"center"|"right" (paragraph-level)
-	Bg        string `json:"bg"`         // table cell shading "#RRGGBB"
+	Bold        bool    `json:"bold"`
+	Italic      bool    `json:"italic"`
+	Color       string  `json:"color"`        // "#RRGGBB"
+	Size        int     `json:"size"`         // half-points (24 = 12pt); 0 = default
+	Font        string  `json:"font"`         // font family; "" = default
+	Align       string  `json:"align"`        // "left"|"center"|"right" (paragraph-level)
+	Bg          string  `json:"bg"`           // table cell shading "#RRGGBB"
+	LineSpacing float64 `json:"lineSpacing"`  // line spacing multiplier (1.5 = 1.5×); 0 = default
+	Indent      int     `json:"indent"`       // first-line indent in characters; 0 = none
 	HeaderBg  string `json:"header_bg"`  // table header row shading "#RRGGBB"
 }
 
@@ -51,18 +54,40 @@ type DocInput struct {
 	Path     string       `json:"path"`
 	Title    string       `json:"title"`    // optional document title (rendered as H1 if non-empty)
 	Sections []DocSection `json:"sections"`
+	Append   bool         `json:"append,omitempty"` // when true, insert sections into existing docx
 }
 
 // writeDOCX compiles a DocInput into a valid .docx at the given path. The zip
 // contains the minimum OOXML parts Word/WPS/LibreOffice require:
 // [Content_Types].xml, _rels/.rels, word/document.xml, word/_rels/document.xml.rels,
 // word/styles.xml. Produces a file openable in any conformant reader.
+//
+// When in.Append is true and the file already exists, new sections are inserted
+// before </w:body> in the existing document.xml, preserving all prior content.
 func writeDOCX(in DocInput) error {
 	if err := os.MkdirAll(filepath.Dir(in.Path), 0o755); err != nil {
 		return err
 	}
-	xmlBody := buildDocumentXML(in)
-	styles := defaultStylesXML()
+
+	var xmlBody string
+	var styles string
+
+	if in.Append {
+		// Read existing document.xml and insert new sections before </w:body>.
+		existing, err := readDocxPart(in.Path, "word/document.xml")
+		if err != nil {
+			return fmt.Errorf("append: read existing docx: %w", err)
+		}
+		newFragments := buildSectionsXML(in)
+		xmlBody = strings.Replace(existing, "</w:body>", newFragments+"</w:body>", 1)
+		styles, _ = readDocxPart(in.Path, "word/styles.xml")
+		if styles == "" {
+			styles = defaultStylesXML()
+		}
+	} else {
+		xmlBody = buildDocumentXML(in)
+		styles = defaultStylesXML()
+	}
 
 	f, err := os.Create(in.Path)
 	if err != nil {
@@ -70,8 +95,6 @@ func writeDOCX(in DocInput) error {
 	}
 	defer f.Close()
 	zw := zip.NewWriter(f)
-	// OOXML requires these parts in any order, but [Content_Types].xml first is
-	// conventional and required by strict readers.
 	parts := []struct{ name, body string }{
 		{"[Content_Types].xml", contentTypesXML},
 		{"_rels/.rels", rootRelsXML},
@@ -90,6 +113,52 @@ func writeDOCX(in DocInput) error {
 		}
 	}
 	return zw.Close()
+}
+
+// readDocxPart extracts a single part from an existing .docx zip archive.
+func readDocxPart(docxPath, partName string) (string, error) {
+	r, err := zip.OpenReader(docxPath)
+	if err != nil {
+		return "", err
+	}
+	defer r.Close()
+	for _, f := range r.File {
+		if f.Name == partName {
+			rc, err := f.Open()
+			if err != nil {
+				return "", err
+			}
+			defer rc.Close()
+			data, err := io.ReadAll(rc)
+			if err != nil {
+				return "", err
+			}
+			return string(data), nil
+		}
+	}
+	return "", fmt.Errorf("part %q not found in %s", partName, docxPath)
+}
+
+// buildSectionsXML renders only the section fragments (no XML header or
+// <w:body> wrapper) for use in append mode.
+func buildSectionsXML(in DocInput) string {
+	var b strings.Builder
+	for _, sec := range in.Sections {
+		switch sec.Type {
+		case "heading":
+			b.WriteString(renderHeading(sec.Text, sec.Level, sec.Style))
+		case "paragraph":
+			b.WriteString(renderParagraph(sec.Text, sec.Style))
+		case "table":
+			b.WriteString(renderTable(sec.Headers, sec.Rows, sec.Style))
+		case "list":
+			// Render list items as bullet paragraphs.
+			for _, item := range sec.Items {
+				b.WriteString(renderParagraph("• "+item, sec.Style))
+			}
+		}
+	}
+	return b.String()
 }
 
 // buildDocumentXML renders the <w:document><w:body>…</w:body></w:document>
@@ -148,13 +217,32 @@ func renderSection(s DocSection) string {
 // styles.xml. The style carries the size/bold; per-run style overrides color/font.
 func renderHeading(text string, level int, st DocStyle) string {
 	pStyle := fmt.Sprintf("Heading%d", level)
-	return fmt.Sprintf(`<w:p><w:pPr><w:pStyle w:val="%s"/>%s</w:pPr>%s</w:p>`,
-		pStyle, pAlignXML(st.Align), runXML(text, st))
+	return fmt.Sprintf(`<w:p><w:pPr><w:pStyle w:val="%s"/>%s%s</w:pPr>%s</w:p>`,
+		pStyle, pPropsXML(st), pAlignXML(st.Align), runXML(text, st))
 }
 
 // renderParagraph emits a body paragraph with run styling + alignment.
 func renderParagraph(text string, st DocStyle) string {
-	return fmt.Sprintf(`<w:p>%s%s</w:p>`, pAlignXML(st.Align), runXML(text, st))
+	return fmt.Sprintf(`<w:p>%s%s%s</w:p>`, pPropsXML(st), pAlignXML(st.Align), runXML(text, st))
+}
+
+// pPropsXML builds paragraph-level properties (line spacing, first-line indent).
+func pPropsXML(st DocStyle) string {
+	var parts []string
+	if st.LineSpacing > 0 {
+		// OOXML line spacing: 240 = single, 360 = 1.5×, 480 = double.
+		val := int(st.LineSpacing * 240)
+		parts = append(parts, fmt.Sprintf(`<w:spacing w:line="%d" w:lineRule="auto"/>`, val))
+	}
+	if st.Indent > 0 {
+		// First-line indent in twips (1 char ≈ 240 twips at default font).
+		val := st.Indent * 240
+		parts = append(parts, fmt.Sprintf(`<w:ind w:firstLine="%d"/>`, val))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return `<w:pPr>` + strings.Join(parts, "") + `</w:pPr>`
 }
 
 // renderList emits a sequence of paragraphs each carrying a numbering property.

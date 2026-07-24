@@ -113,28 +113,28 @@ func TestCallVLMProviderPath(t *testing.T) {
 // → copy instead of save), so it's worth locking down.
 func TestParseKeyCombo(t *testing.T) {
 	cases := []struct {
-		in      string
-		modsLen int
-		mainVK  uint16
+		in     string
+		hasMod bool
+		mainVK uint16
 	}{
-		{"ctrl+s", 1, 'S'},
-		{"Control+S", 1, 'S'},
-		{"ctrl+shift+t", 2, 'T'},
-		{"ctrl-shift-tab", 2, 0x09}, // tab
-		{"enter", 0, 0x0D},
-		{"escape", 0, 0x1B},
-		{"esc", 0, 0x1B},
-		{"ctrl+a", 1, 'A'},
-		{"f5", 0, 0x74},
-		{"alt+tab", 1, 0x09},
-		{"backspace", 0, 0x08},
-		{"", 0, 0}, // error path
+		{"ctrl+s", true, 'S'},
+		{"Control+S", true, 'S'},
+		{"ctrl+shift+t", true, 'T'},
+		{"ctrl-shift-tab", true, 0x09}, // tab
+		{"enter", false, 0x0D},
+		{"escape", false, 0x1B},
+		{"esc", false, 0x1B},
+		{"ctrl+a", true, 'A'},
+		{"f5", false, 0x74},
+		{"alt+tab", true, 0x09},
+		{"backspace", false, 0x08},
+		{"", false, 0}, // error path
 	}
 	for _, c := range cases {
-		mods, main, err := parseKeyCombo(c.in)
+		mod, main, err := parseKeyCombo(c.in)
 		if c.in == "" {
 			if err == nil {
-				t.Errorf("parseKeyCombo(%q) want error, got mods=%v main=%d", c.in, mods, main)
+				t.Errorf("parseKeyCombo(%q) want error, got mod=%v main=%d", c.in, mod, main)
 			}
 			continue
 		}
@@ -142,8 +142,11 @@ func TestParseKeyCombo(t *testing.T) {
 			t.Errorf("parseKeyCombo(%q) unexpected error: %v", c.in, err)
 			continue
 		}
-		if len(mods) != c.modsLen {
-			t.Errorf("parseKeyCombo(%q) mods len = %d, want %d", c.in, len(mods), c.modsLen)
+		if c.hasMod && mod == 0 {
+			t.Errorf("parseKeyCombo(%q) expected modifier, got mod=0", c.in)
+		}
+		if !c.hasMod && mod != 0 {
+			t.Errorf("parseKeyCombo(%q) unexpected modifier 0x%X", c.in, mod)
 		}
 		if main != c.mainVK {
 			t.Errorf("parseKeyCombo(%q) main VK = 0x%X, want 0x%X", c.in, main, c.mainVK)

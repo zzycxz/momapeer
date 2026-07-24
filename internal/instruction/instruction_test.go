@@ -9,8 +9,12 @@ import (
 
 func TestForModel_ThinkingModel(t *testing.T) {
 	addon := ForModel("qwen/qwen3.6-35b")
-	if addon != ThinkingAddon {
+	if !strings.Contains(addon, ThinkingAddon) {
 		t.Fatalf("expected ThinkingAddon for qwen3.6-35b, got %q", addon)
+	}
+	// qwen models should also get the family addon.
+	if !strings.Contains(addon, "tool call") {
+		t.Fatalf("expected QwenAddon (tool call) for qwen3.6-35b, got %q", addon)
 	}
 }
 
