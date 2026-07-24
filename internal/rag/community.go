@@ -101,13 +101,13 @@ func louvainLevel(g *louvainGraph) ([]int, bool) {
 			bestGain := 0.0
 
 			// Evaluate moving to each neighboring community.
-			for c, k_i_in := range commLinks {
+			for c, kIIn := range commLinks {
 				if c == curComm {
 					continue
 				}
-				// ΔQ ≈ [k_i_in / m] - [sigmaTot[c] * k_i / (2*m²)]
+				// ΔQ ≈ [kIIn / m] - [sigmaTot[c] * k_i / (2*m²)]
 				// Simplified gain (standard Louvain, ×m for normalization):
-				gain := k_i_in - sigmaTot[c]*g.weights[node]/(2.0*g.m)
+				gain := kIIn - sigmaTot[c]*g.weights[node]/(2.0*g.m)
 				if gain > bestGain {
 					bestGain = gain
 					bestComm = c

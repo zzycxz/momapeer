@@ -340,7 +340,7 @@ func (csvWrite) Schema() json.RawMessage {
 }
 func (csvWrite) ReadOnly() bool { return false }
 func (w csvWrite) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	return docWrite{roots: w.roots}.Execute(ctx, args)
+	return docWrite(w).Execute(ctx, args)
 }
 
 // --- xlsx_read / xlsx_write aliases for discoverability ---------------------
@@ -372,7 +372,7 @@ func (xlsxWrite) Schema() json.RawMessage {
 }
 func (xlsxWrite) ReadOnly() bool { return false }
 func (w xlsxWrite) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	return docWrite{roots: w.roots}.Execute(ctx, args)
+	return docWrite(w).Execute(ctx, args)
 }
 
 // --- doc_convert (md↔html, json pretty) -------------------------------------

@@ -99,7 +99,7 @@ type layoutJSON struct {
 
 // MarshalJSON flattens Layout into the on-disk shape.
 func (l Layout) MarshalJSON() ([]byte, error) {
-	return json.Marshal(layoutJSON{l.TitleX, l.TitleY, l.TitleW, l.TitleH, l.BodyX, l.BodyY, l.BodyW, l.BodyH})
+	return json.Marshal(layoutJSON(l))
 }
 
 // UnmarshalJSON accepts the flat on-disk shape.

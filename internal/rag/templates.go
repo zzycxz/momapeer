@@ -252,10 +252,10 @@ func ListTemplates(heClient *HEClient) []TemplateInfo {
 					RelationFields: make([]FieldMeta, 0, len(t.RelationFields)),
 				}
 				for _, f := range t.EntityFields {
-					ti.EntityFields = append(ti.EntityFields, FieldMeta{Name: f.Name, Description: f.Description})
+					ti.EntityFields = append(ti.EntityFields, FieldMeta(f))
 				}
 				for _, f := range t.RelationFields {
-					ti.RelationFields = append(ti.RelationFields, FieldMeta{Name: f.Name, Description: f.Description})
+					ti.RelationFields = append(ti.RelationFields, FieldMeta(f))
 				}
 				out = append(out, ti)
 			}

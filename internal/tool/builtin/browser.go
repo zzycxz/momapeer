@@ -174,7 +174,7 @@ type downloadRecord struct {
 type browserStepTracker struct { //nolint:unused
 	mu                     sync.Mutex
 	recentActionHashes     []string          // rolling window (max 20)
-	recentPageFingerprints []pageFingerprint // last 5 page states
+	recentPageFingerprints []pageFingerprint // last 5 page states //nolint:unused
 	consecutiveStagnant    int               // steps with identical page fingerprint
 	consecutiveFailures    int               // consecutive action failures
 }
