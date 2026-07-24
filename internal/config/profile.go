@@ -31,18 +31,18 @@ import (
 // runtime concept. Everything here is resolved once in config and consumed in
 // boot.Build / desktop.app.
 type Profile struct {
-	Name              string            `toml:"name"`
-	DisplayName       string            `toml:"display_name"`
-	Model             string            `toml:"model"`               // overrides DefaultModel; "" = config default
-	SubagentModel     string            `toml:"subagent_model"`      // overrides agent.subagent_model; "" = unchanged
-	Effort            string            `toml:"effort"`              // overrides effort; "" = provider default
-	SystemPromptAddon string            `toml:"system_prompt_addon"` // appended to resolved prompt; "" = unchanged
-	SystemPromptFile  string            `toml:"system_prompt_file"`  // when set, replaces the resolved prompt entirely
-	EnabledSkills     []string          `toml:"enabled_skills"`      // whitelist; empty = all skills
-	DisabledSkills    []string          `toml:"disabled_skills"`     // extra-disabled on top of config
-	Plugins           []string          `toml:"plugins"`             // plugin name whitelist; empty = all plugins
-	HiddenTools       []string          `toml:"hidden_tools"`        // tools to Hide from main loop schemas; empty = all visible. Subagents still see them via FilterRegistry.
-	WorkspaceType     string            `toml:"workspace_type"`      // "code" | "document"; frontend hint only
+	Name              string   `toml:"name"`
+	DisplayName       string   `toml:"display_name"`
+	Model             string   `toml:"model"`               // overrides DefaultModel; "" = config default
+	SubagentModel     string   `toml:"subagent_model"`      // overrides agent.subagent_model; "" = unchanged
+	Effort            string   `toml:"effort"`              // overrides effort; "" = provider default
+	SystemPromptAddon string   `toml:"system_prompt_addon"` // appended to resolved prompt; "" = unchanged
+	SystemPromptFile  string   `toml:"system_prompt_file"`  // when set, replaces the resolved prompt entirely
+	EnabledSkills     []string `toml:"enabled_skills"`      // whitelist; empty = all skills
+	DisabledSkills    []string `toml:"disabled_skills"`     // extra-disabled on top of config
+	Plugins           []string `toml:"plugins"`             // plugin name whitelist; empty = all plugins
+	HiddenTools       []string `toml:"hidden_tools"`        // tools to Hide from main loop schemas; empty = all visible. Subagents still see them via FilterRegistry.
+	WorkspaceType     string   `toml:"workspace_type"`      // "code" | "document"; frontend hint only
 }
 
 const (

@@ -15,11 +15,11 @@ package main
 // Windows message loop to detect WM_HOTKEY and dispatch the capture.
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
 	"image/png"
-	"bytes"
 	"strings"
 	"sync"
 	"syscall"
@@ -35,28 +35,28 @@ import (
 )
 
 const (
-	hotkeyID      = 0x7A21 // arbitrary unique id for RegisterHotKey
-	wmHotkey      = 0x0312
-	modAlt        = 0x0001
-	modControl    = 0x0002
-	modShift      = 0x0004
-	modWin        = 0x0008
-	vkS           = 0x53 // 'S'
-	pmNoRemove    = 0x0000 // PeekMessage: leave message in queue
-	pmRemove      = 0x0001 // PeekMessage: remove after peek
+	hotkeyID   = 0x7A21 // arbitrary unique id for RegisterHotKey
+	wmHotkey   = 0x0312
+	modAlt     = 0x0001
+	modControl = 0x0002
+	modShift   = 0x0004
+	modWin     = 0x0008
+	vkS        = 0x53   // 'S'
+	pmNoRemove = 0x0000 // PeekMessage: leave message in queue
+	pmRemove   = 0x0001 // PeekMessage: remove after peek
 )
 
 var (
-	user32DLL                 = syscall.NewLazyDLL("user32.dll")
-	procRegisterHotKey        = user32DLL.NewProc("RegisterHotKey")
-	procUnregisterHotKey      = user32DLL.NewProc("UnregisterHotKey")
-	procCreateWindowEx        = user32DLL.NewProc("CreateWindowExW")
-	procDefWindowProc         = user32DLL.NewProc("DefWindowProcW")
-	procGetMessage            = user32DLL.NewProc("GetMessageW")
-	procPeekMessage           = user32DLL.NewProc("PeekMessageW")
-	procTranslateMessage      = user32DLL.NewProc("TranslateMessage")
-	procDispatchMessage       = user32DLL.NewProc("DispatchMessageW")
-	procRegisterClassEx       = user32DLL.NewProc("RegisterClassExW")
+	user32DLL            = syscall.NewLazyDLL("user32.dll")
+	procRegisterHotKey   = user32DLL.NewProc("RegisterHotKey")
+	procUnregisterHotKey = user32DLL.NewProc("UnregisterHotKey")
+	procCreateWindowEx   = user32DLL.NewProc("CreateWindowExW")
+	procDefWindowProc    = user32DLL.NewProc("DefWindowProcW")
+	procGetMessage       = user32DLL.NewProc("GetMessageW")
+	procPeekMessage      = user32DLL.NewProc("PeekMessageW")
+	procTranslateMessage = user32DLL.NewProc("TranslateMessage")
+	procDispatchMessage  = user32DLL.NewProc("DispatchMessageW")
+	procRegisterClassEx  = user32DLL.NewProc("RegisterClassExW")
 )
 
 // hotkeyManager owns the global hotkey registration + message loop.
@@ -273,21 +273,36 @@ func keyToVK(key string) int {
 		}
 	}
 	switch strings.ToUpper(key) {
-	case "F1": return 0x70
-	case "F2": return 0x71
-	case "F3": return 0x72
-	case "F4": return 0x73
-	case "F5": return 0x74
-	case "F6": return 0x75
-	case "F7": return 0x76
-	case "F8": return 0x77
-	case "F9": return 0x78
-	case "F10": return 0x79
-	case "F11": return 0x7A
-	case "F12": return 0x7B
-	case "SPACE": return 0x20
-	case "ENTER": return 0x0D
-	case "TAB": return 0x09
+	case "F1":
+		return 0x70
+	case "F2":
+		return 0x71
+	case "F3":
+		return 0x72
+	case "F4":
+		return 0x73
+	case "F5":
+		return 0x74
+	case "F6":
+		return 0x75
+	case "F7":
+		return 0x76
+	case "F8":
+		return 0x77
+	case "F9":
+		return 0x78
+	case "F10":
+		return 0x79
+	case "F11":
+		return 0x7A
+	case "F12":
+		return 0x7B
+	case "SPACE":
+		return 0x20
+	case "ENTER":
+		return 0x0D
+	case "TAB":
+		return 0x09
 	}
 	return 0
 }

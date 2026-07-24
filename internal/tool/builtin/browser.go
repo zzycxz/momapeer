@@ -1,16 +1,16 @@
 package builtin
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
-	"bytes"
 	"encoding/base64"
 	"encoding/hex"
-	"image"
-	"image/jpeg"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,11 +19,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	cdprotopage "github.com/chromedp/cdproto/page"
-	"github.com/chromedp/cdproto/runtime"
 	cdpbrowser "github.com/chromedp/cdproto/browser"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/dom"
+	cdprotopage "github.com/chromedp/cdproto/page"
+	"github.com/chromedp/cdproto/runtime"
 	cdptarget "github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 
@@ -186,13 +186,13 @@ type pageFingerprint struct {
 }
 
 const (
-	loopWindowSize       = 20
-	fingerprintWindow    = 5
-	stagnantThreshold    = 5
-	repeatThreshold5     = 5
-	repeatThreshold8     = 8
-	repeatThreshold12    = 12
-	maxConsecutiveFails  = 5
+	loopWindowSize      = 20
+	fingerprintWindow   = 5
+	stagnantThreshold   = 5
+	repeatThreshold5    = 5
+	repeatThreshold8    = 8
+	repeatThreshold12   = 12
+	maxConsecutiveFails = 5
 )
 
 // typeRefJSBody is the element-typing logic shared by the ref and selector
@@ -343,9 +343,9 @@ func (t *browserStepTracker) getNudgeMessage() string {
 // --- session pool -----------------------------------------------------------
 
 var (
-	browserMu        sync.Mutex
-	browserSessions  = map[string]*browserSession{}
-	browserSeq       atomic.Int64
+	browserMu         sync.Mutex
+	browserSessions   = map[string]*browserSession{}
+	browserSeq        atomic.Int64
 	browserReaperOnce sync.Once
 )
 
@@ -361,9 +361,9 @@ var browserPoolCtx context.Context
 // Injected via SetBrowserLaunchOptions at boot so this file stays free of a
 // config import cycle.
 type browserLaunchOptions struct {
-	headless      bool   // false = visible browser (more human-like)
-	userDataDir   string // persistent profile dir; "" = temp profile
-	proxyServer   string // e.g. "http://127.0.0.1:7890"; "" = no --proxy-server
+	headless    bool   // false = visible browser (more human-like)
+	userDataDir string // persistent profile dir; "" = temp profile
+	proxyServer string // e.g. "http://127.0.0.1:7890"; "" = no --proxy-server
 }
 
 // globalBrowserLaunch is the resolved launch config. Set once at boot.
@@ -1336,7 +1336,7 @@ func formatTypeResult(rawResult, typedText, ref string) string {
 	// quoted JSON string; unwrap one layer of quotes first.
 	inner := unwrapJSONString(rawResult)
 	var parsed struct {
-		Value             string `json:"value"`
+		Value              string `json:"value"`
 		ExpectFormatChange bool   `json:"expectFormatChange"`
 	}
 	if err := json.Unmarshal([]byte(inner), &parsed); err != nil {
@@ -1703,7 +1703,7 @@ func (browserEvaluate) ReadOnly() bool { return false } // JS can mutate the pag
 
 func (browserEvaluate) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct {
-		SessionID string `json:"session_id"`
+		SessionID  string `json:"session_id"`
 		Expression string `json:"expression"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
@@ -2381,9 +2381,9 @@ func startDialogHandler(s *browserSession) {
 				}))
 			}
 		})
-			// Block until session context is cancelled.
-			<-s.ctx.Done()
-		}()
+		// Block until session context is cancelled.
+		<-s.ctx.Done()
+	}()
 }
 
 // --- Downloads capture ------------------------------------------------------

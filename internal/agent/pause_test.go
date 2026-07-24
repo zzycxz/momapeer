@@ -152,10 +152,10 @@ func TestCancelWhilePausedUnblocks(t *testing.T) {
 // race-free test: Execute is synchronous inside step 1, so the pause is recorded
 // before the loop can reach awaitPause at the top of step 2.
 type autoPausingBash struct {
-	mu     sync.Mutex
-	n      int
-	cond   *sync.Cond
-	agent  pauser // set by the test before Run starts
+	mu    sync.Mutex
+	n     int
+	cond  *sync.Cond
+	agent pauser // set by the test before Run starts
 }
 
 // pauser is the minimal interface autoPausingBash needs from the Agent, kept

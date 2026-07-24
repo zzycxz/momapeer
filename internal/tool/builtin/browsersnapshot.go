@@ -41,12 +41,12 @@ var refSeq atomic.Int64
 
 // axNodeInfo is the flattened, ref-tagged view of one accessibility node.
 type axNodeInfo struct {
-	ref          string // "e12"
-	role         string // "button", "textbox", "link"
-	name         string // accessible name ("登录", "用户名")
-	value        string // current value (for inputs)
-	backendID    cdp.BackendNodeID
-	childRefs    []string
+	ref       string // "e12"
+	role      string // "button", "textbox", "link"
+	name      string // accessible name ("登录", "用户名")
+	value     string // current value (for inputs)
+	backendID cdp.BackendNodeID
+	childRefs []string
 }
 
 // snapshotRefs holds the ref→node map from the most recent snapshot. Stored on

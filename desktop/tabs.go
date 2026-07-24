@@ -66,9 +66,9 @@ type WorkspaceTab struct {
 	// (office). Empty is treated as "dev" everywhere it is read. Persisted so a
 	// restarted tab lands back in the same mode. A profile switch rebuilds the
 	// controller via the SetModelForTab flow (see app.SwitchProfileForTab).
-	profile         string
-	disabledMCP      map[string]ServerView
-	mcpOrder         []string
+	profile     string
+	disabledMCP map[string]ServerView
+	mcpOrder    []string
 	// Expert session tracking.
 	IsExpertSession bool
 	ExpertTeamID    string
@@ -93,14 +93,14 @@ type readFileRecord struct {
 }
 
 type sessionUsageStats struct {
-	PromptTokens     int     `json:"promptTokens"`
-	CompletionTokens int     `json:"completionTokens"`
-	TotalTokens      int     `json:"totalTokens"`
-	ReasoningTokens  int     `json:"reasoningTokens"`
-	CacheHitTokens   int     `json:"cacheHitTokens"`
-	CacheMissTokens  int     `json:"cacheMissTokens"`
-	RequestCount     int     `json:"requestCount"`
-	ElapsedMs        int64   `json:"elapsedMs"`
+	PromptTokens     int   `json:"promptTokens"`
+	CompletionTokens int   `json:"completionTokens"`
+	TotalTokens      int   `json:"totalTokens"`
+	ReasoningTokens  int   `json:"reasoningTokens"`
+	CacheHitTokens   int   `json:"cacheHitTokens"`
+	CacheMissTokens  int   `json:"cacheMissTokens"`
+	RequestCount     int   `json:"requestCount"`
+	ElapsedMs        int64 `json:"elapsedMs"`
 
 	activeTurnStartedAt int64
 }

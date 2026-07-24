@@ -81,7 +81,7 @@ func DefaultPipelineConfig() PipelineConfig {
 	return PipelineConfig{
 		Concurrency: 3,
 		Interval:    3 * time.Second,
-		MaxRetries:  2,             // 2 attempts per chunk (1 retry); fail fast so progress moves
+		MaxRetries:  2, // 2 attempts per chunk (1 retry); fail fast so progress moves
 		RetryBase:   2 * time.Second,
 		ChunkSize:   0, // use chunkDoc's default (3000 chars)
 	}
@@ -98,7 +98,7 @@ type ProgressEvent struct {
 	DoneChunks   int    `json:"doneChunks"`
 	TotalChunks  int    `json:"totalChunks"`
 	AvgLatencyMs int64  `json:"avgLatencyMs"` // sliding-average ms/chunk
-	Message      string `json:"message"`     // human-readable summary
+	Message      string `json:"message"`      // human-readable summary
 }
 
 // ProgressEmitter pushes a ProgressEvent to the frontend. The desktop app
@@ -123,16 +123,16 @@ type Pipeline struct {
 
 // chunkTask is one unit of work: extract this chunk, upsert results, mark done.
 type chunkTask struct {
-	JobID       string
-	Collection  string
-	Path        string
-	ChunkIdx    int
-	ChunkID     string
-	Text        string
-	RootPath    string
-	RelPath     string
-	NodePrompt  string // override entity extraction prompt ("" = default)
-	EdgePrompt  string // override relation extraction prompt ("" = default)
+	JobID      string
+	Collection string
+	Path       string
+	ChunkIdx   int
+	ChunkID    string
+	Text       string
+	RootPath   string
+	RelPath    string
+	NodePrompt string // override entity extraction prompt ("" = default)
+	EdgePrompt string // override relation extraction prompt ("" = default)
 }
 
 // NewPipeline constructs a pipeline. store + extractor are required; emit/logf
@@ -219,16 +219,16 @@ func (p *Pipeline) Resume() int {
 				continue // chunk count changed since the job was created; skip
 			}
 			p.queue = append(p.queue, chunkTask{
-				JobID:       j.ID,
-				Collection:  j.Collection,
-				Path:        j.Path,
-				ChunkIdx:    pc.Idx,
-				ChunkID:     pc.ChunkID,
-				Text:        chunks[pc.Idx],
-				RootPath:    j.RootPath,
-				RelPath:     j.RelPath,
-				NodePrompt:  j.NodePrompt, // persisted on the job row (v2 schema)
-				EdgePrompt:  j.EdgePrompt,
+				JobID:      j.ID,
+				Collection: j.Collection,
+				Path:       j.Path,
+				ChunkIdx:   pc.Idx,
+				ChunkID:    pc.ChunkID,
+				Text:       chunks[pc.Idx],
+				RootPath:   j.RootPath,
+				RelPath:    j.RelPath,
+				NodePrompt: j.NodePrompt, // persisted on the job row (v2 schema)
+				EdgePrompt: j.EdgePrompt,
 			})
 			enqueued++
 		}
@@ -339,12 +339,12 @@ func (p *Pipeline) enqueueFile(collection, root, fpath, nodePrompt, edgePrompt s
 	rel := relPath(root, fpath)
 	isDir := isDirPath(root)
 	jobID, err := p.store.CreateJob(JobRow{
-		Collection: collection,
-		Path:       fpath,
-		RelPath:    rel,
-		RootPath:   root,
-		IsDir:      isDir,
-		Status:     JobPending,
+		Collection:  collection,
+		Path:        fpath,
+		RelPath:     rel,
+		RootPath:    root,
+		IsDir:       isDir,
+		Status:      JobPending,
 		ContentHash: contentHash,
 		NodePrompt:  nodePrompt,
 		EdgePrompt:  edgePrompt,

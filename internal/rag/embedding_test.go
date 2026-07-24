@@ -34,9 +34,9 @@ func TestRerankReordersBySemanticSimilarity(t *testing.T) {
 		{Snippet: "rendering engine docs", Score: 0.5},
 	}
 	emb := fakeEmbedder{vecs: map[string][]float32{
-		query:                  {1, 0, 0},
+		query:                   {1, 0, 0},
 		"rendering engine docs": {0.95, 0.1, 0},
-		"unrelated doc":        {0, 1, 0}, // orthogonal to query
+		"unrelated doc":         {0, 1, 0}, // orthogonal to query
 	}}
 	reranked := store.Rerank(context.Background(), query, results, emb, 0.5)
 	if reranked[0].Snippet != "rendering engine docs" {

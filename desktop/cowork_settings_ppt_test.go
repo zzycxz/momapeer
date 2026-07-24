@@ -80,13 +80,13 @@ func TestCoworkSettingsViewNoTemplates(t *testing.T) {
 // skill (previously the skill always read its built-in default).
 func TestPPTTemplateSkillValue(t *testing.T) {
 	tests := []struct {
-		in   string
-		val  string
-		set  bool
+		in  string
+		val string
+		set bool
 	}{
 		{"中国移动模板", "内置:templates/中国移动模板.pptx", true},
 		{"  brand  ", "内置:templates/brand.pptx", true}, // trimmed
-		{"", "", false},   // empty → delete key (skill uses default)
+		{"", "", false},    // empty → delete key (skill uses default)
 		{"   ", "", false}, // whitespace-only → delete key
 	}
 	for _, tt := range tests {

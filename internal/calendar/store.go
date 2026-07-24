@@ -44,7 +44,7 @@ type Exception struct {
 	ID           string    `json:"id"`
 	EventID      string    `json:"event_id"`
 	OriginalDate time.Time `json:"original_date"` // the date that was overridden
-	NewStart     time.Time `json:"new_start"`      // zero = cancelled occurrence
+	NewStart     time.Time `json:"new_start"`     // zero = cancelled occurrence
 	NewEnd       time.Time `json:"new_end"`
 }
 

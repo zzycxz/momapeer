@@ -108,11 +108,11 @@ func TestUnknownSessionErrors(t *testing.T) {
 // "browser ready (driving Chrome)" message against path-shape drift.
 func TestBrowserDisplayName(t *testing.T) {
 	cases := map[string]string{
-		`C:\Program Files\Google\Chrome\Application\chrome.exe`: "Chrome",
+		`C:\Program Files\Google\Chrome\Application\chrome.exe`:        "Chrome",
 		`C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`: "Edge",
 		`/Applications/Brave Browser.app/Contents/MacOS/Brave Browser`: "Brave",
-		`/usr/bin/chromium`:                                       "Chromium",
-		`/usr/bin/firefox`:                                        "firefox", // unknown → basename
+		`/usr/bin/chromium`: "Chromium",
+		`/usr/bin/firefox`:  "firefox", // unknown → basename
 	}
 	for path, want := range cases {
 		if got := browserDisplayName(path); got != want {

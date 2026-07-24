@@ -1407,7 +1407,7 @@ func TestFoldedPasteExpandsForRunner(t *testing.T) {
 	ctrl := control.New(control.Options{
 		AutoPlan: "off",
 		Runner:   runner,
-		Sink: event.FuncSink(func(e event.Event) { events <- e }),
+		Sink:     event.FuncSink(func(e event.Event) { events <- e }),
 	})
 	m := newTestChatTUI()
 	m.ctrl = ctrl

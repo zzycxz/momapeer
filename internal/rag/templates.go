@@ -11,14 +11,14 @@ import (
 
 // TemplateInfo describes an extraction template.
 type TemplateInfo struct {
-	Name           string        `json:"name"`
-	Category       string        `json:"category"`
-	DisplayName    string        `json:"displayName"`
-	Description    string        `json:"description"`
-	Available      bool          `json:"available"`
-	TemplateType   string        `json:"templateType"`
-	EntityFields   []FieldMeta   `json:"entityFields"`
-	RelationFields []FieldMeta   `json:"relationFields"`
+	Name           string      `json:"name"`
+	Category       string      `json:"category"`
+	DisplayName    string      `json:"displayName"`
+	Description    string      `json:"description"`
+	Available      bool        `json:"available"`
+	TemplateType   string      `json:"templateType"`
+	EntityFields   []FieldMeta `json:"entityFields"`
+	RelationFields []FieldMeta `json:"relationFields"`
 	// NodePrompt is the stage-1 entity extraction prompt for this template.
 	// Empty = use the default NodeExtractionPrompt from extract.go.
 	NodePrompt string `json:"-"`
@@ -358,17 +358,17 @@ func templateDisplayName(name string) string {
 		"tcm":      "中医",
 	}
 	typeNames := map[string]string{
-		"graph":             "图谱",
-		"hypergraph":        "超图",
-		"list":              "列表",
-		"model":             "模型",
-		"set":               "集合",
-		"spatial_graph":     "空间图",
-		"temporal_graph":    "时序图",
-		"biography_graph":   "人物图",
-		"concept_graph":     "概念图",
-		"doc_structure":     "文档结构",
-		"workflow_graph":    "工作流图",
+		"graph":           "图谱",
+		"hypergraph":      "超图",
+		"list":            "列表",
+		"model":           "模型",
+		"set":             "集合",
+		"spatial_graph":   "空间图",
+		"temporal_graph":  "时序图",
+		"biography_graph": "人物图",
+		"concept_graph":   "概念图",
+		"doc_structure":   "文档结构",
+		"workflow_graph":  "工作流图",
 	}
 	catName := categoryNames[category]
 	if catName == "" {

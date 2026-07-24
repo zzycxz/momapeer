@@ -8,10 +8,10 @@ import (
 func TestExpandRecurring_Daily(t *testing.T) {
 	events := []Event{
 		{
-			ID:        "evt1",
-			Title:     "Daily Standup",
-			StartTime: time.Date(2026, 7, 7, 9, 0, 0, 0, time.Local),
-			EndTime:   time.Date(2026, 7, 7, 9, 30, 0, 0, time.Local),
+			ID:         "evt1",
+			Title:      "Daily Standup",
+			StartTime:  time.Date(2026, 7, 7, 9, 0, 0, 0, time.Local),
+			EndTime:    time.Date(2026, 7, 7, 9, 30, 0, 0, time.Local),
 			Recurrence: "FREQ=DAILY",
 		},
 	}
@@ -31,10 +31,10 @@ func TestExpandRecurring_Daily(t *testing.T) {
 func TestExpandRecurring_Weekly(t *testing.T) {
 	events := []Event{
 		{
-			ID:        "evt2",
-			Title:     "Weekly Meeting",
-			StartTime: time.Date(2026, 7, 6, 10, 0, 0, 0, time.Local), // Monday
-			EndTime:   time.Date(2026, 7, 6, 11, 0, 0, 0, time.Local),
+			ID:         "evt2",
+			Title:      "Weekly Meeting",
+			StartTime:  time.Date(2026, 7, 6, 10, 0, 0, 0, time.Local), // Monday
+			EndTime:    time.Date(2026, 7, 6, 11, 0, 0, 0, time.Local),
 			Recurrence: "FREQ=WEEKLY;BYDAY=MO",
 		},
 	}
@@ -88,11 +88,11 @@ func TestExpandRecurring_OutOfRange(t *testing.T) {
 
 func TestParseRRULE(t *testing.T) {
 	tests := []struct {
-		input  string
-		freq   string
+		input    string
+		freq     string
 		interval int
-		byday  int
-		count  int
+		byday    int
+		count    int
 	}{
 		{"FREQ=DAILY", "DAILY", 1, 0, 0},
 		{"FREQ=WEEKLY;BYDAY=MO", "WEEKLY", 1, 1, 0},

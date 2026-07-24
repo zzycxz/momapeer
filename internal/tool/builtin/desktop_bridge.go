@@ -25,10 +25,10 @@ import (
 // Response: {"ok": true, ...} or {"ok": false, "error": "..."}
 
 var (
-	bridgePython  string
-	bridgeScript  string
-	bridgeOnce    sync.Once
-	bridgeReady   bool
+	bridgePython string
+	bridgeScript string
+	bridgeOnce   sync.Once
+	bridgeReady  bool
 )
 
 // initBridge finds Python and the bridge script once. Called by both

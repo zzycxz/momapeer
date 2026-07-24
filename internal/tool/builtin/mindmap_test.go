@@ -68,8 +68,8 @@ func TestMindMapHTMLSelfContained(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "map.html")
 	format, err := writeMindMap(MMInput{
-		Path:  path,
-		Title: "产品规划",
+		Path:     path,
+		Title:    "产品规划",
 		Branches: []MMNode{{Text: "A", Children: []MMNode{{Text: "A1"}}}},
 	})
 	if err != nil {

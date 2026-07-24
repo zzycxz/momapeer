@@ -73,7 +73,7 @@ func ParseICS(content string) ([]Event, error) {
 	var events []Event
 	for _, component := range cal.Events() {
 		e := Event{
-			ID:    component.Id(),
+			ID:     component.Id(),
 			Source: "ics",
 		}
 

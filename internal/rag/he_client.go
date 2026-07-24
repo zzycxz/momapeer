@@ -15,14 +15,14 @@ import (
 
 // HETemplate represents a Hyper-Extract template.
 type HETemplate struct {
-	Name           string           `json:"name"`
-	Category       string           `json:"category"`
-	File           string           `json:"file"`
-	Available      bool             `json:"available"`
-	Description    string           `json:"description"`
-	TemplateType   string           `json:"templateType"`
-	EntityFields   []HEFieldMeta    `json:"entityFields"`
-	RelationFields []HEFieldMeta    `json:"relationFields"`
+	Name           string        `json:"name"`
+	Category       string        `json:"category"`
+	File           string        `json:"file"`
+	Available      bool          `json:"available"`
+	Description    string        `json:"description"`
+	TemplateType   string        `json:"templateType"`
+	EntityFields   []HEFieldMeta `json:"entityFields"`
+	RelationFields []HEFieldMeta `json:"relationFields"`
 }
 
 // HEFieldMeta is a field description from a template YAML.
@@ -33,7 +33,7 @@ type HEFieldMeta struct {
 
 // HEResult is the extraction result from Hyper-Extract.
 type HEResult struct {
-	Entities []HEEntity   `json:"entities"`
+	Entities  []HEEntity   `json:"entities"`
 	Relations []HERelation `json:"relations"`
 }
 

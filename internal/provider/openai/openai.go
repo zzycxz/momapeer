@@ -164,13 +164,13 @@ type client struct {
 	model           string
 	http            *http.Client
 	moma            bool
-	minimax         bool          // true for api.minimaxi.com — emits MiniMax-M3's thinking knob instead of reasoning_effort
-	effort          string        // reasoning_effort for OpenAI; thinking.type for MiniMax; "" = auto/provider default
-	vision          bool          // true when the provider supports image_url content parts
-	visionDetail    string        // "auto", "low", "high" — forwarded as image detail level
-	imageUnderstand bool          // true when Jiutian image_understand tool is enabled (auto-degradation)
-	idleTimeout     time.Duration // SSE stall watchdog window; defaultStreamIdleTimeout unless a test overrides
-	authed          atomic.Bool   // true after first successful auth; enables transient 401 retry
+	minimax         bool                            // true for api.minimaxi.com — emits MiniMax-M3's thinking knob instead of reasoning_effort
+	effort          string                          // reasoning_effort for OpenAI; thinking.type for MiniMax; "" = auto/provider default
+	vision          bool                            // true when the provider supports image_url content parts
+	visionDetail    string                          // "auto", "low", "high" — forwarded as image detail level
+	imageUnderstand bool                            // true when Jiutian image_understand tool is enabled (auto-degradation)
+	idleTimeout     time.Duration                   // SSE stall watchdog window; defaultStreamIdleTimeout unless a test overrides
+	authed          atomic.Bool                     // true after first successful auth; enables transient 401 retry
 	onReplay        func(ctx context.Context) error // optional: charged by the RPM limiter on each mid-stream replay
 }
 
@@ -200,12 +200,12 @@ func normalizeReasoningProtocol(raw string) string {
 // reasoning_content/reasoning fields (which are driven by whatever the model returns).
 // Models verified to return reasoning_content via MoMA platform test (2026-06-13)
 var MoMAThinkingModels = map[string]bool{
-	"jiutian/jiutian-lan-thinking":  true,
-	"jiutian/jiutian-da-35b":        true,
-	"qwen/qwen3.6-35b":              true,
-	"qwen/qwen3.6-27b":              true,
-	"qwen/qwen3.5-397b-a17b":        true,
-	"z.ai/glm-5.1":                  true,
+	"jiutian/jiutian-lan-thinking": true,
+	"jiutian/jiutian-da-35b":       true,
+	"qwen/qwen3.6-35b":             true,
+	"qwen/qwen3.6-27b":             true,
+	"qwen/qwen3.5-397b-a17b":       true,
+	"z.ai/glm-5.1":                 true,
 	// "z.ai/glm-5.2": removed — MoMA platform hangs (no response) when
 	// thinking parameters are sent to glm-5.2; glm-5.1 works fine.
 	"minimax/minimax-m2.7":          true,
@@ -336,13 +336,13 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 			m.Content = replaced
 		}
 		if analyzed {
-				req.Messages = append(req.Messages[:len(req.Messages)-1],
-					provider.Message{Role: provider.RoleAssistant, Content: fmt.Sprintf(
-						"[Image analysis complete. Your model %q does not support native image input, so images were pre-analyzed by a vision model. The descriptions above are the vision model's output — use them to answer the user's question.]",
-						c.model,
-					)},
-					req.Messages[len(req.Messages)-1],
-				)
+			req.Messages = append(req.Messages[:len(req.Messages)-1],
+				provider.Message{Role: provider.RoleAssistant, Content: fmt.Sprintf(
+					"[Image analysis complete. Your model %q does not support native image input, so images were pre-analyzed by a vision model. The descriptions above are the vision model's output — use them to answer the user's question.]",
+					c.model,
+				)},
+				req.Messages[len(req.Messages)-1],
+			)
 		}
 	}
 

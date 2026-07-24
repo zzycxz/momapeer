@@ -32,8 +32,8 @@ var (
 
 // ControlInfo is one child control of a window: class name, text, and rect.
 type ControlInfo struct {
-	Class string `json:"class"`
-	Text  string `json:"text,omitempty"`
+	Class string         `json:"class"`
+	Text  string         `json:"text,omitempty"`
 	Rect  map[string]int `json:"rect"`
 }
 

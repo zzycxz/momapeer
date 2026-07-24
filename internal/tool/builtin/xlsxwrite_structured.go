@@ -22,25 +22,25 @@ import (
 // XLSXCell is one cell: a value XOR a formula, plus an optional style and
 // number format. Ref is the A1 reference (e.g. "B3"); required.
 type XLSXCell struct {
-	Ref    string    `json:"ref"`     // A1 reference, e.g. "B3" (required)
-	Value  *string   `json:"value"`   // literal value (string form; numbers/bools coerced)
-	Formula *string  `json:"formula"` // e.g. "=SUM(B2:B5)" (overrides value when set)
-	Format string    `json:"format"`  // number format code, e.g. "#,##0", "0.00%", "yyyy-mm-dd"
-	Style  XLSXStyle `json:"style"`
+	Ref     string    `json:"ref"`     // A1 reference, e.g. "B3" (required)
+	Value   *string   `json:"value"`   // literal value (string form; numbers/bools coerced)
+	Formula *string   `json:"formula"` // e.g. "=SUM(B2:B5)" (overrides value when set)
+	Format  string    `json:"format"`  // number format code, e.g. "#,##0", "0.00%", "yyyy-mm-dd"
+	Style   XLSXStyle `json:"style"`
 }
 
 // XLSXStyle mirrors the run/cell style vocabulary shared with docx, plus a few
 // xlsx-specifics (vertical align, border). Colors are "#RRGGBB" (we strip #).
 type XLSXStyle struct {
-	Bold      bool   `json:"bold"`
-	Italic    bool   `json:"italic"`
-	Color     string `json:"color"`      // font color "#RRGGBB"
-	Bg        string `json:"bg"`         // cell fill "#RRGGBB"
-	Size      int    `json:"size"`       // font size in points (not half-points; xlsx uses real pts)
-	Font      string `json:"font"`       // font family
-	Align     string `json:"align"`      // "left"|"center"|"right"
-	Wrap      bool   `json:"wrap"`       // wrap text in cell
-	Border    bool   `json:"border"`     // thin border all sides
+	Bold   bool   `json:"bold"`
+	Italic bool   `json:"italic"`
+	Color  string `json:"color"`  // font color "#RRGGBB"
+	Bg     string `json:"bg"`     // cell fill "#RRGGBB"
+	Size   int    `json:"size"`   // font size in points (not half-points; xlsx uses real pts)
+	Font   string `json:"font"`   // font family
+	Align  string `json:"align"`  // "left"|"center"|"right"
+	Wrap   bool   `json:"wrap"`   // wrap text in cell
+	Border bool   `json:"border"` // thin border all sides
 }
 
 // XLSXMerge is a merged range, A1 notation (e.g. "A1:C1").
@@ -56,8 +56,8 @@ type XLSXColWidth struct {
 
 // XLSXSheet is one worksheet.
 type XLSXSheet struct {
-	Name      string         `json:"name"`      // sheet tab name (default "Sheet1")
-	Cells     []XLSXCell     `json:"cells"`     // sparse cells by ref
+	Name      string         `json:"name"`  // sheet tab name (default "Sheet1")
+	Cells     []XLSXCell     `json:"cells"` // sparse cells by ref
 	Merges    []XLSXMerge    `json:"merges"`
 	ColWidths []XLSXColWidth `json:"col_widths"`
 }

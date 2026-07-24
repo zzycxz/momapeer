@@ -22,21 +22,21 @@ import (
 // env var names; this view resolves them to/from the .env so the user never
 // touches environment variables manually.
 type CoWorkSettingsView struct {
-	BrowserPath     string `json:"browserPath"` // Chromium browser exe; "" = auto-detect
-	EmbeddingModel  string `json:"embeddingModel"`
+	BrowserPath    string `json:"browserPath"` // Chromium browser exe; "" = auto-detect
+	EmbeddingModel string `json:"embeddingModel"`
 	// PPTActiveTemplate is the id of the active PPT template (or "" for none).
 	// PPTTemplates is the read-only list of available templates for the dropdown.
 	// PPTTemplateDir is the absolute path to the templates dir, shown so the user
 	// knows where to drop JSON files.
-	PPTActiveTemplate string               `json:"pptActiveTemplate"`
-	PPTTemplates      []ppttemplate.View   `json:"pptTemplates"`
-	PPTTemplateDir    string               `json:"pptTemplateDir"`
+	PPTActiveTemplate string             `json:"pptActiveTemplate"`
+	PPTTemplates      []ppttemplate.View `json:"pptTemplates"`
+	PPTTemplateDir    string             `json:"pptTemplateDir"`
 	// PPTMode controls the PPT generation quality mode:
 	// "fast" = one-shot generation, no rework (default, reliable)
 	// "validate" = generate + check + rework up to 3 rounds (higher quality)
-	PPTMode string `json:"pptMode"`
-	SMTP              SMTPSettings         `json:"smtp"`
-	IMAP              IMAPSettings         `json:"imap"`
+	PPTMode string       `json:"pptMode"`
+	SMTP    SMTPSettings `json:"smtp"`
+	IMAP    IMAPSettings `json:"imap"`
 	// SMTPPassword/IMAPPassword are WRITE-ONLY: the user types a new password
 	// here when changing it. On load they are ALWAYS empty — the panel never
 	// receives the stored secret. On save, a non-empty value updates the

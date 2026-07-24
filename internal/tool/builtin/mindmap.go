@@ -29,10 +29,10 @@ type MMNode struct {
 
 // MMInput is the mindmap_create payload.
 type MMInput struct {
-	Path     string   `json:"path"`           // output path; .md or .html decides format
-	Title    string   `json:"title"`          // root node label
-	Branches []MMNode `json:"branches"`       // top-level branches off the root
-	Format   string   `json:"format"`         // "md" | "html" (default: infer from path ext)
+	Path     string   `json:"path"`     // output path; .md or .html decides format
+	Title    string   `json:"title"`    // root node label
+	Branches []MMNode `json:"branches"` // top-level branches off the root
+	Format   string   `json:"format"`   // "md" | "html" (default: infer from path ext)
 }
 
 // writeMindMap compiles MMInput to a .md or .html file. Format is taken from

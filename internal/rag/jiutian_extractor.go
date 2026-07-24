@@ -310,10 +310,10 @@ type responseFormat struct {
 }
 
 type chatCompletionsRequest struct {
-	Model          string           `json:"model"`
-	Messages       []chatMessage    `json:"messages"`
-	Temperature    float64          `json:"temperature"`
-	ResponseFormat *responseFormat  `json:"response_format,omitempty"`
+	Model          string          `json:"model"`
+	Messages       []chatMessage   `json:"messages"`
+	Temperature    float64         `json:"temperature"`
+	ResponseFormat *responseFormat `json:"response_format,omitempty"`
 }
 
 type chatCompletionsResponse struct {

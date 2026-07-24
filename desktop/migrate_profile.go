@@ -17,10 +17,10 @@ import (
 const profilePartitionMarker = ".profile-partitioned"
 
 const (
-	topicTitlesBaseName        = "topic_titles.json"
-	topicTitleSourcesBasename  = "topic_title_sources.json"
-	topicCreatedAtsBaseName    = "topic_created_at.json"
-	desktopProjectsFileLegacy  = "projects.json"
+	topicTitlesBaseName       = "topic_titles.json"
+	topicTitleSourcesBasename = "topic_title_sources.json"
+	topicCreatedAtsBaseName   = "topic_created_at.json"
+	desktopProjectsFileLegacy = "projects.json"
 )
 
 func projectsFilePath(profile string) string {

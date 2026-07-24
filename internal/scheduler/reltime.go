@@ -301,7 +301,7 @@ var (
 	// char separately so a bare "周三" (no 下/本) is distinguishable.
 	reWeekdayNext = regexp.MustCompile(`(下|本)(周|星期|礼拜)([一二三四五六七天末]|1|2|3|4|5|6|7)`)
 	reWeekdayBare = regexp.MustCompile(`(周|星期|礼拜)([一二三四五六七天末]|1|2|3|4|5|6|7)`)
-	reClock      = regexp.MustCompile(`(\d{1,2})\s*[:：]\s*(\d{1,2})`)
+	reClock       = regexp.MustCompile(`(\d{1,2})\s*[:：]\s*(\d{1,2})`)
 	// Period + 点[M分][半]. m[3]=M分, m[4]=半 (only one populated).
 	rePeriodHour = regexp.MustCompile(`(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上|夜里|夜间|午夜)\s*(\d{1,2})\s*点(?:(\d{1,2})\s*分|(\s*半))?`)
 	reBareHour   = regexp.MustCompile(`(\d{1,2})\s*点(?:(\d{1,2})\s*分|(\s*半))?`)

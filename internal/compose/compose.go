@@ -81,11 +81,11 @@ func parseSeededTodos(seededTodosJSON string) ([]seedTodo, error) {
 // Sink (to surface progress), and holds cross-turn state that the agent's
 // per-turn evidence ledger cannot (the ledger resets every Run).
 type Runner struct {
-	runner         agent.Runner
-	sink           event.Sink
-	synthesize     func(text string) string // Controller.ComposeSynthetic, to wrap nudges
-	history        func() string            // reads last assistant reply for verdict parsing
-	implementNudge string                   // base nudge for the implement phase (plan-approved message)
+	runner          agent.Runner
+	sink            event.Sink
+	synthesize      func(text string) string                               // Controller.ComposeSynthetic, to wrap nudges
+	history         func() string                                          // reads last assistant reply for verdict parsing
+	implementNudge  string                                                 // base nudge for the implement phase (plan-approved message)
 	requestApproval func(ctx context.Context, reason string) (bool, error) // asks the user to approve a plan change
 
 	// gaveUp is set true when Run exits after exhausting MaxImplementAttempts (or

@@ -25,34 +25,34 @@ import (
 // DocSection is one block of the document. Type selects the renderer; the
 // shared Style applies to text runs within the section where relevant.
 type DocSection struct {
-	Type    string    `json:"type"`    // "heading"|"paragraph"|"list"|"table"
-	Level   int       `json:"level"`   // heading level (1-3, default 1)
-	Text    string    `json:"text"`    // heading/paragraph text; list single item (when Items empty)
-	Items   []string  `json:"items"`   // list items (type=list)
-	Ordered bool      `json:"ordered"` // list ordered? (type=list)
-	Headers []string  `json:"headers"` // table header cells (type=table)
-	Rows    [][]string `json:"rows"`   // table body rows (type=table)
-	Style   DocStyle  `json:"style"`   // run styling (bold/italic/color/size/font/align)
+	Type    string     `json:"type"`    // "heading"|"paragraph"|"list"|"table"
+	Level   int        `json:"level"`   // heading level (1-3, default 1)
+	Text    string     `json:"text"`    // heading/paragraph text; list single item (when Items empty)
+	Items   []string   `json:"items"`   // list items (type=list)
+	Ordered bool       `json:"ordered"` // list ordered? (type=list)
+	Headers []string   `json:"headers"` // table header cells (type=table)
+	Rows    [][]string `json:"rows"`    // table body rows (type=table)
+	Style   DocStyle   `json:"style"`   // run styling (bold/italic/color/size/font/align)
 }
 
 // DocStyle is the shared run/paragraph style vocabulary. Color is "#RRGGBB".
 type DocStyle struct {
 	Bold        bool    `json:"bold"`
 	Italic      bool    `json:"italic"`
-	Color       string  `json:"color"`        // "#RRGGBB"
-	Size        int     `json:"size"`         // half-points (24 = 12pt); 0 = default
-	Font        string  `json:"font"`         // font family; "" = default
-	Align       string  `json:"align"`        // "left"|"center"|"right" (paragraph-level)
-	Bg          string  `json:"bg"`           // table cell shading "#RRGGBB"
-	LineSpacing float64 `json:"lineSpacing"`  // line spacing multiplier (1.5 = 1.5×); 0 = default
-	Indent      int     `json:"indent"`       // first-line indent in characters; 0 = none
-	HeaderBg  string `json:"header_bg"`  // table header row shading "#RRGGBB"
+	Color       string  `json:"color"`       // "#RRGGBB"
+	Size        int     `json:"size"`        // half-points (24 = 12pt); 0 = default
+	Font        string  `json:"font"`        // font family; "" = default
+	Align       string  `json:"align"`       // "left"|"center"|"right" (paragraph-level)
+	Bg          string  `json:"bg"`          // table cell shading "#RRGGBB"
+	LineSpacing float64 `json:"lineSpacing"` // line spacing multiplier (1.5 = 1.5×); 0 = default
+	Indent      int     `json:"indent"`      // first-line indent in characters; 0 = none
+	HeaderBg    string  `json:"header_bg"`   // table header row shading "#RRGGBB"
 }
 
 // DocInput is the top-level payload for writeDOCX.
 type DocInput struct {
 	Path     string       `json:"path"`
-	Title    string       `json:"title"`    // optional document title (rendered as H1 if non-empty)
+	Title    string       `json:"title"` // optional document title (rendered as H1 if non-empty)
 	Sections []DocSection `json:"sections"`
 	Append   bool         `json:"append,omitempty"` // when true, insert sections into existing docx
 }

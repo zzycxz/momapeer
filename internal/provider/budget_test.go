@@ -135,8 +135,8 @@ func TestRateLimitedProviderAcquires(t *testing.T) {
 
 // fakeProvider is a no-op Provider for decorator tests.
 type fakeProvider struct {
-	name         string
-	streamCalls  int
+	name        string
+	streamCalls int
 }
 
 func (f *fakeProvider) Name() string { return f.name }

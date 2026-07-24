@@ -25,10 +25,10 @@ func edgeKey(a, b int) [2]int {
 type louvainGraph struct {
 	// adj[node] = map[neighbor]weight
 	adj      []map[int]float64
-	weights  []float64   // weighted degree per node (sum of edge weights, including self-loops counted twice)
-	selfLoop []float64   // self-loop weight per node (intra-community edges after aggregation)
-	m        float64     // total edge weight (2 × sum of unique edges, including self-loops)
-	n        int         // node count
+	weights  []float64 // weighted degree per node (sum of edge weights, including self-loops counted twice)
+	selfLoop []float64 // self-loop weight per node (intra-community edges after aggregation)
+	m        float64   // total edge weight (2 × sum of unique edges, including self-loops)
+	n        int       // node count
 }
 
 func newLouvainGraph(n int) *louvainGraph {
@@ -85,15 +85,15 @@ func louvainLevel(g *louvainGraph) ([]int, bool) {
 			}
 			curComm := comm[node]
 
-				// Sum of weights from `node` to each community. Include self-loop
-				// weight in the node's own community contribution.
-				commLinks := make(map[int]float64)
-				if g.selfLoop[node] > 0 {
-					commLinks[curComm] += g.selfLoop[node]
-				}
-				for nb, w := range g.adj[node] {
-					commLinks[comm[nb]] += w
-				}
+			// Sum of weights from `node` to each community. Include self-loop
+			// weight in the node's own community contribution.
+			commLinks := make(map[int]float64)
+			if g.selfLoop[node] > 0 {
+				commLinks[curComm] += g.selfLoop[node]
+			}
+			for nb, w := range g.adj[node] {
+				commLinks[comm[nb]] += w
+			}
 
 			// Remove node from its current community.
 			sigmaTot[curComm] -= g.weights[node]

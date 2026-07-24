@@ -16,7 +16,7 @@ const (
 // keep lowercase aliases for internal use
 const (
 	autoPlanOff = AutoPlanOff
-	autoPlanOn = AutoPlanOn
+	autoPlanOn  = AutoPlanOn
 )
 
 // planApprovalTool aliases the plan-approval Tool name so test fixtures in this

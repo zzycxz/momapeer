@@ -71,9 +71,9 @@ type LabeledElement struct {
 func prepareLabels(els []UIAElement) []LabeledElement {
 	// Classify + mark containers.
 	type tmp struct {
-		el        UIAElement
-		cat       string
-		container bool
+		el         UIAElement
+		cat        string
+		container  bool
 		suppressed bool
 	}
 	tmps := make([]tmp, len(els))

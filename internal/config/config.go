@@ -39,39 +39,39 @@ func SkillNameKey(name string) string {
 
 // Config is momapeer's runtime configuration.
 type Config struct {
-	ConfigVersion int                 `toml:"config_version"`
-	DefaultModel  string              `toml:"default_model"`
-	Language      string              `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $MOMAPEER_LANG
+	ConfigVersion int    `toml:"config_version"`
+	DefaultModel  string `toml:"default_model"`
+	Language      string `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $MOMAPEER_LANG
 	// ReasoningLanguage steers ONLY the visible thinking/reasoning text language
 	// (auto|zh|en), independent of the final-answer language. Default "auto" leaves
 	// it to the provider. It is injected as a transient per-turn block, never into
 	// the cache-stable system prompt prefix.
-	ReasoningLanguage string `json:"-" toml:"reasoning_language"` // auto|zh|en; empty = auto
-	UI            UIConfig            `toml:"ui"`
-	Desktop       DesktopConfig       `toml:"desktop"`
-	Notifications NotificationsConfig `toml:"notifications"`
-	Agent         AgentConfig         `toml:"agent"`
-	Providers     []ProviderEntry     `toml:"providers"`
-	Tools         ToolsConfig         `toml:"tools"`
-	Permissions   PermissionsConfig   `toml:"permissions"`
-	Sandbox       SandboxConfig       `toml:"sandbox"`
-	Network       NetworkConfig       `toml:"network"`
-	Plugins       []PluginEntry       `toml:"plugins"`
-	Skills        SkillsConfig        `toml:"skills"`
-	Codegraph     CodegraphConfig     `toml:"codegraph"`
-	BuiltInMCP    BuiltInMCPConfig    `toml:"builtin_mcp"`
-	Jiutian       JiutianConfig       `toml:"jiutian"`
-	Dream         DreamConfig         `toml:"dream"`
-	Statusline    StatuslineConfig    `toml:"statusline"`
-	LSP           LSPConfig           `toml:"lsp"`
-	Bot           BotConfig           `toml:"bot"`
+	ReasoningLanguage string              `json:"-" toml:"reasoning_language"` // auto|zh|en; empty = auto
+	UI                UIConfig            `toml:"ui"`
+	Desktop           DesktopConfig       `toml:"desktop"`
+	Notifications     NotificationsConfig `toml:"notifications"`
+	Agent             AgentConfig         `toml:"agent"`
+	Providers         []ProviderEntry     `toml:"providers"`
+	Tools             ToolsConfig         `toml:"tools"`
+	Permissions       PermissionsConfig   `toml:"permissions"`
+	Sandbox           SandboxConfig       `toml:"sandbox"`
+	Network           NetworkConfig       `toml:"network"`
+	Plugins           []PluginEntry       `toml:"plugins"`
+	Skills            SkillsConfig        `toml:"skills"`
+	Codegraph         CodegraphConfig     `toml:"codegraph"`
+	BuiltInMCP        BuiltInMCPConfig    `toml:"builtin_mcp"`
+	Jiutian           JiutianConfig       `toml:"jiutian"`
+	Dream             DreamConfig         `toml:"dream"`
+	Statusline        StatuslineConfig    `toml:"statusline"`
+	LSP               LSPConfig           `toml:"lsp"`
+	Bot               BotConfig           `toml:"bot"`
 	// Cowork holds coWork (office) profile settings — currently just the browser
 	// path override. Empty means auto-detect; a non-empty path is tried first
 	// (and the user is guided to set it when no browser is found).
-	Cowork        CoworkConfig        `toml:"cowork"`
+	Cowork CoworkConfig `toml:"cowork"`
 	// LLM holds the global request budget (rate limiting) applied to all
 	// providers. RPM=0 (the default) disables limiting for backward compat.
-	LLM           LLMConfig           `toml:"llm"`
+	LLM LLMConfig `toml:"llm"`
 	// Profiles holds optional [[profiles]] entries that override the built-in
 	// dev/cowork profiles by name. A name collision with a builtin replaces it,
 	// so users can customise a profile's model/prompt/skills without code. Empty
@@ -299,7 +299,7 @@ type StatuslineConfig struct {
 type CodegraphConfig struct {
 	Enabled     bool   `toml:"enabled"`
 	AutoInstall bool   `toml:"auto_install"`
-	Path        string `toml:"path"`         // local binary path (skips download)
+	Path        string `toml:"path"` // local binary path (skips download)
 	Tier        string `toml:"tier"`
 	DownloadURL string `toml:"download_url"` // custom download base URL for air-gapped/intranet (replaces GitHub default)
 }
@@ -580,22 +580,22 @@ type LLMConfig struct {
 
 // IMAPConfig holds inbound mail server settings for email_read/search.
 type IMAPConfig struct {
-	Host        string `toml:"host"`         // IMAP server host, e.g. imap.example.com
-	Port        int    `toml:"port"`         // IMAP port (993 for implicit TLS, 143 for STARTTLS/plain)
-	Username    string `toml:"username"`     // mailbox login
-	PasswordEnv string `toml:"password_env"` // env var holding the password
-	SkipTLSVerify bool  `toml:"skip_tls_verify"` // opt in to skip TLS cert verification (self-signed/corporate CAs). Verification stays ON unless this is true.
+	Host          string `toml:"host"`            // IMAP server host, e.g. imap.example.com
+	Port          int    `toml:"port"`            // IMAP port (993 for implicit TLS, 143 for STARTTLS/plain)
+	Username      string `toml:"username"`        // mailbox login
+	PasswordEnv   string `toml:"password_env"`    // env var holding the password
+	SkipTLSVerify bool   `toml:"skip_tls_verify"` // opt in to skip TLS cert verification (self-signed/corporate CAs). Verification stays ON unless this is true.
 }
 
 // SMTPConfig holds outbound mail server settings. Secrets come from the env via
 // PasswordEnv (never stored in the TOML).
 type SMTPConfig struct {
-	Host        string `toml:"host"`         // SMTP server host, e.g. smtp.example.com
-	Port        int    `toml:"port"`         // SMTP port (587 for STARTTLS, 465 for implicit TLS, 25 plain)
-	From        string `toml:"from"`         // sender address, e.g. agent@example.com
-	Username    string `toml:"username"`     // SMTP auth username (often = From); empty = no auth
-	PasswordEnv string `toml:"password_env"` // env var holding the SMTP password (never stored)
-	UseTLS      bool   `toml:"use_tls"`      // implicit TLS (port 465); false = STARTTLS/plain. DEPRECATED: use encryption_mode.
+	Host           string `toml:"host"`            // SMTP server host, e.g. smtp.example.com
+	Port           int    `toml:"port"`            // SMTP port (587 for STARTTLS, 465 for implicit TLS, 25 plain)
+	From           string `toml:"from"`            // sender address, e.g. agent@example.com
+	Username       string `toml:"username"`        // SMTP auth username (often = From); empty = no auth
+	PasswordEnv    string `toml:"password_env"`    // env var holding the SMTP password (never stored)
+	UseTLS         bool   `toml:"use_tls"`         // implicit TLS (port 465); false = STARTTLS/plain. DEPRECATED: use encryption_mode.
 	EncryptionMode string `toml:"encryption_mode"` // "tls" (implicit, 465) | "starttls" (587) | "none" (25). Empty → migrate from use_tls.
 }
 
@@ -1454,7 +1454,7 @@ func Default() *Config {
 		// 0 (unlimited) would let the agent burst past the quota and hit 429s.
 		// Users with higher tiers can raise this. ReserveMain=2 keeps requests
 		// in reserve for the main agent under concurrent load.
-		LLM:       LLMConfig{RPM: 5, ReserveMain: 2},
+		LLM: LLMConfig{RPM: 5, ReserveMain: 2},
 		Providers: []ProviderEntry{
 			{Name: "moma", Kind: "openai", BaseURL: "https://jiutian.10086.cn/largemodel/moma/api/v3", Models: BuiltinMoMAModels, Default: "qwen/qwen3.6-35b", APIKeyEnv: "JIUTIAN_API_KEY", ContextWindow: 200_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},
 		},

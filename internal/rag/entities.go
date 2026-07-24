@@ -421,7 +421,6 @@ func (s *Store) RecalcRelationCounts(collection string) error {
 	return err
 }
 
-
 func (s *Store) TopRelations(collection string, limit int) ([]Relation, error) {
 	collection = normalizeCollection(collection)
 	rows, err := s.db.Query(`
@@ -742,7 +741,10 @@ func (s *Store) AllJobs() ([]JobRow, error) {
 // PendingChunksForJob returns the (chunkID, idx) pairs still pending/errored
 // for a job — used by Pipeline.Resume to rehydrate the queue after a restart.
 // The chunk TEXT is re-read from FTS5 by (path, idx).
-func (s *Store) PendingChunksForJob(jobID string) ([]struct{ ChunkID string; Idx int }, error) {
+func (s *Store) PendingChunksForJob(jobID string) ([]struct {
+	ChunkID string
+	Idx     int
+}, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rows, err := s.db.Query(`SELECT id, idx FROM rag_chunks WHERE job_id = ? AND status IN (?, ?) ORDER BY idx`,
@@ -1407,9 +1409,9 @@ type pairHeap []struct {
 	score float32
 }
 
-func (h pairHeap) Len() int            { return len(h) }
-func (h pairHeap) Less(a, b int) bool  { return h[a].score < h[b].score } // min-heap
-func (h pairHeap) Swap(a, b int)       { h[a], h[b] = h[b], h[a] }
+func (h pairHeap) Len() int           { return len(h) }
+func (h pairHeap) Less(a, b int) bool { return h[a].score < h[b].score } // min-heap
+func (h pairHeap) Swap(a, b int)      { h[a], h[b] = h[b], h[a] }
 
 // push inserts a pair, keeping only the top `max` elements (evicts the
 // smallest if over capacity). Implements a bounded min-heap.

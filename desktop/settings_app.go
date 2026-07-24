@@ -145,35 +145,35 @@ type JiutianView struct {
 
 // SettingsView is the whole Settings panel payload.
 type SettingsView struct {
-	DefaultModel      string          `json:"defaultModel"`
-	PlannerModel      string          `json:"plannerModel"`
+	DefaultModel string `json:"defaultModel"`
+	PlannerModel string `json:"plannerModel"`
 	// FastTaskModel is the lightweight model dream/distill run on (background
 	// tasks). The SettingsPanel exposes a per-model picker next to the default
 	// model so the user can route background tasks to a cheaper/faster model.
-	FastTaskModel     string          `json:"fastTaskModel"`
-	SubagentModel     string          `json:"subagentModel"`
-	SubagentEffort    string          `json:"subagentEffort"`
-	AutoPlan          string          `json:"autoPlan"`
-	Providers         []ProviderView  `json:"providers"`
-	OfficialProviders []ProviderView  `json:"officialProviders"`
-	Permissions       PermissionsView `json:"permissions"`
-	Sandbox           SandboxView     `json:"sandbox"`
-	Network           NetworkView     `json:"network"`
-	Agent             AgentView       `json:"agent"`
-	Bot               BotSettingsView `json:"bot"`
+	FastTaskModel     string             `json:"fastTaskModel"`
+	SubagentModel     string             `json:"subagentModel"`
+	SubagentEffort    string             `json:"subagentEffort"`
+	AutoPlan          string             `json:"autoPlan"`
+	Providers         []ProviderView     `json:"providers"`
+	OfficialProviders []ProviderView     `json:"officialProviders"`
+	Permissions       PermissionsView    `json:"permissions"`
+	Sandbox           SandboxView        `json:"sandbox"`
+	Network           NetworkView        `json:"network"`
+	Agent             AgentView          `json:"agent"`
+	Bot               BotSettingsView    `json:"bot"`
 	Cowork            CoWorkSettingsView `json:"cowork"`
-	WebSearch         WebSearchView   `json:"webSearch"`
-	Jiutian           JiutianView     `json:"jiutian"`
-	DesktopLanguage   string          `json:"desktopLanguage"`
-	DesktopTheme      string          `json:"desktopTheme"`
-	DesktopThemeStyle string          `json:"desktopThemeStyle"`
-	CloseBehavior     string          `json:"closeBehavior"`
-	DisplayMode       string          `json:"displayMode"`
-	CheckUpdates      bool            `json:"checkUpdates"`
-	Telemetry         bool            `json:"telemetry"`
-	Metrics           bool            `json:"metrics"`
-	ExpandThinking    bool            `json:"expandThinking"`
-	ConfigPath        string          `json:"configPath"`
+	WebSearch         WebSearchView      `json:"webSearch"`
+	Jiutian           JiutianView        `json:"jiutian"`
+	DesktopLanguage   string             `json:"desktopLanguage"`
+	DesktopTheme      string             `json:"desktopTheme"`
+	DesktopThemeStyle string             `json:"desktopThemeStyle"`
+	CloseBehavior     string             `json:"closeBehavior"`
+	DisplayMode       string             `json:"displayMode"`
+	CheckUpdates      bool               `json:"checkUpdates"`
+	Telemetry         bool               `json:"telemetry"`
+	Metrics           bool               `json:"metrics"`
+	ExpandThinking    bool               `json:"expandThinking"`
+	ConfigPath        string             `json:"configPath"`
 	// ProviderKinds lists the provider implementations the kernel actually
 	// registered (provider.Kinds()), so the editor's "kind" picker offers only
 	// kinds that resolve — selecting an unregistered one would fail the rebuild.
@@ -389,8 +389,8 @@ func (a *App) Settings() SettingsView {
 				Password: cfg.Network.Proxy.Password,
 			},
 		},
-		Agent: AgentView{Temperature: cfg.Agent.Temperature, MaxSteps: cfg.Agent.MaxSteps, PlannerMaxSteps: cfg.Agent.PlannerMaxSteps, SystemPrompt: cfg.Agent.SystemPrompt, RPM: cfg.LLM.RPM},
-		Bot:   botSettingsView(cfg.Bot),
+		Agent:  AgentView{Temperature: cfg.Agent.Temperature, MaxSteps: cfg.Agent.MaxSteps, PlannerMaxSteps: cfg.Agent.PlannerMaxSteps, SystemPrompt: cfg.Agent.SystemPrompt, RPM: cfg.LLM.RPM},
+		Bot:    botSettingsView(cfg.Bot),
 		Cowork: coworkSettingsView(cfg.Cowork),
 		WebSearch: WebSearchView{
 			BraveKeySet:  os.Getenv("BRAVE_API_KEY") != "" || os.Getenv("BRAVE_SEARCH_API_KEY") != "",

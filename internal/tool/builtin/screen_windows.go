@@ -100,8 +100,8 @@ const (
 	mouseeventfMiddleUp   uint32 = 0x0040
 	mouseeventfWheel      uint32 = 0x0800
 
-	keyeventfKeyUp     uint32 = 0x0002
-	keyeventfUnicode   uint32 = 0x0004
+	keyeventfKeyUp   uint32 = 0x0002
+	keyeventfUnicode uint32 = 0x0004
 )
 
 // bitmapInfoHeader for GetDIBits pixel extraction (BGRA, top-down).

@@ -41,11 +41,11 @@ type EmailAttachment struct {
 
 // EmailMessage is the read/search result: envelope fields + a body preview.
 type EmailMessage struct {
-	From        string           `json:"from"`
-	To          string           `json:"to"`
-	Subject     string           `json:"subject"`
-	Date        string           `json:"date"`
-	Preview     string           `json:"preview"`
+	From        string            `json:"from"`
+	To          string            `json:"to"`
+	Subject     string            `json:"subject"`
+	Date        string            `json:"date"`
+	Preview     string            `json:"preview"`
 	Attachments []EmailAttachment `json:"attachments,omitempty"`
 }
 
@@ -579,12 +579,12 @@ func (emailReadTool) ReadOnly() bool { return false } // save_attachments writes
 
 func (emailReadTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct {
-		Limit            int    `json:"limit"`
-		UnreadOnly       bool   `json:"unread_only"`
-		Account          string `json:"account"`
-		Since            string `json:"since"`
-		Before           string `json:"before"`
-		SaveAttachments  string `json:"save_attachments"`
+		Limit           int    `json:"limit"`
+		UnreadOnly      bool   `json:"unread_only"`
+		Account         string `json:"account"`
+		Since           string `json:"since"`
+		Before          string `json:"before"`
+		SaveAttachments string `json:"save_attachments"`
 	}
 	if len(args) > 0 {
 		_ = json.Unmarshal(args, &p)

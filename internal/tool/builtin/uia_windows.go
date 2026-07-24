@@ -26,12 +26,12 @@ import (
 
 // UIAElement is one accessibility element with semantic info for SoM labeling.
 type UIAElement struct {
-	Name      string  `json:"name"`       // accessible name ("登录", "用户名")
-	Type      string  `json:"type"`       // ControlType ("Button", "Edit", "ComboBox")
-	Box       [4]int  `json:"box"`        // [x1,y1,x2,y2] physical pixels
-	Center    [2]int  `json:"center"`     // [cx,cy] physical pixels
+	Name      string  `json:"name"`   // accessible name ("登录", "用户名")
+	Type      string  `json:"type"`   // ControlType ("Button", "Edit", "ComboBox")
+	Box       [4]int  `json:"box"`    // [x1,y1,x2,y2] physical pixels
+	Center    [2]int  `json:"center"` // [cx,cy] physical pixels
 	IsEnabled bool    `json:"is_enabled"`
-	Hwnd      uintptr `json:"-"`          // window handle (internal, not JSON-exposed)
+	Hwnd      uintptr `json:"-"` // window handle (internal, not JSON-exposed)
 }
 
 // controlTypeIDs maps UIA ControlType int IDs to readable names. Values from

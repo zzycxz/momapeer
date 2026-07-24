@@ -33,8 +33,8 @@ type TaskView struct {
 	Profile       string `json:"profile"`
 	Enabled       bool   `json:"enabled"`
 	OneShot       bool   `json:"oneShot"`
-	LastRun       string `json:"lastRun"`       // "" if never
-	NextRun       string `json:"nextRun"`       // "" if paused / one-shot fired
+	LastRun       string `json:"lastRun"` // "" if never
+	NextRun       string `json:"nextRun"` // "" if paused / one-shot fired
 	RunCount      int    `json:"runCount"`
 	LastResult    string `json:"lastResult"`
 	OutputMode    string `json:"outputMode"`

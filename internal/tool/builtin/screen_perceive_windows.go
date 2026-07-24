@@ -205,9 +205,9 @@ func formatPerceiveResult(labeledPath string, elements []LabeledElement, screenW
 		ejs = append(ejs, elemJSON{el.ID, el.Type, el.Name, el.Category, el.Center[0], el.Center[1]})
 	}
 	result := map[string]any{
-		"labeled_image": labeledPath,
-		"screen_size":   map[string]int{"w": screenW, "h": screenH},
-		"elements":      ejs,
+		"labeled_image":  labeledPath,
+		"screen_size":    map[string]int{"w": screenW, "h": screenH},
+		"elements":       ejs,
 		"vlm_confidence": confidence,
 	}
 	if vlmErr != "" {

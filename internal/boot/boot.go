@@ -30,8 +30,8 @@ import (
 	"github.com/zzycxz/momapeer/internal/hook"
 	"github.com/zzycxz/momapeer/internal/installsource"
 	"github.com/zzycxz/momapeer/internal/instruction"
-	"github.com/zzycxz/momapeer/internal/jobs"
 	"github.com/zzycxz/momapeer/internal/jiutian"
+	"github.com/zzycxz/momapeer/internal/jobs"
 	"github.com/zzycxz/momapeer/internal/lsp"
 	"github.com/zzycxz/momapeer/internal/memory"
 	"github.com/zzycxz/momapeer/internal/netclient"
@@ -1144,7 +1144,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	var runner agent.Runner = executor
 	label := entry.Model
 	var classifier *control.ProviderAutoPlanClassifier
-
 
 	if control.NormalizeAutoPlan(cfg.Agent.AutoPlan) == control.AutoPlanOn && cfg.Agent.AutoPlanClassifier != "" {
 		cm := cfg.Agent.AutoPlanClassifier

@@ -39,10 +39,10 @@ func TestWriteDOCXRoundtrip(t *testing.T) {
 		t.Fatalf("open zip: %v", err)
 	}
 	want := map[string]bool{
-		"[Content_Types].xml":         false,
-		"word/document.xml":           false,
-		"word/styles.xml":             false,
-		"word/numbering.xml":          false,
+		"[Content_Types].xml":          false,
+		"word/document.xml":            false,
+		"word/styles.xml":              false,
+		"word/numbering.xml":           false,
 		"word/_rels/document.xml.rels": false,
 	}
 	for _, f := range zr.File {

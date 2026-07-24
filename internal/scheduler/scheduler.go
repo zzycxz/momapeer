@@ -98,9 +98,9 @@ type RunRecord struct {
 	TaskID     string    `json:"task_id"`
 	Name       string    `json:"name"`
 	At         time.Time `json:"at"`
-	Status     string    `json:"status"`       // "ok" | "error" | "skipped"
-	Result     string    `json:"result"`       // truncated
-	OutputMode string    `json:"output_mode"`  // echoed from the task at fire time
+	Status     string    `json:"status"`      // "ok" | "error" | "skipped"
+	Result     string    `json:"result"`      // truncated
+	OutputMode string    `json:"output_mode"` // echoed from the task at fire time
 }
 
 // Store persists tasks to a JSON file so they survive restarts. The file is

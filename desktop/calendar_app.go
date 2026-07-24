@@ -21,8 +21,8 @@ type CalendarEventView struct {
 	Title         string   `json:"title"`
 	Description   string   `json:"description"`
 	Location      string   `json:"location"`
-	Start         string   `json:"start"`         // "2006-01-02T15:04"
-	End           string   `json:"end"`           // "2006-01-02T15:04"
+	Start         string   `json:"start"` // "2006-01-02T15:04"
+	End           string   `json:"end"`   // "2006-01-02T15:04"
 	AllDay        bool     `json:"allDay"`
 	Timezone      string   `json:"timezone"`
 	Color         string   `json:"color"`

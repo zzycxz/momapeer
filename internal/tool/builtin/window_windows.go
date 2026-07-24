@@ -58,12 +58,12 @@ const (
 
 // HWND_TOPMOST / NOT, and SetWindowPos flags.
 const (
-	hwndTopmost    = ^uintptr(0) // (HWND)-1
-	hwndNoTopmost  = ^uintptr(1) // (HWND)-2
-	swpNoSize      = 0x0001
-	swpNoMove      = 0x0002
-	swpNoActivate  = 0x0010
-	wmClose        = 0x0010
+	hwndTopmost   = ^uintptr(0) // (HWND)-1
+	hwndNoTopmost = ^uintptr(1) // (HWND)-2
+	swpNoSize     = 0x0001
+	swpNoMove     = 0x0002
+	swpNoActivate = 0x0010
+	wmClose       = 0x0010
 )
 
 // resolveWindow finds the first visible window whose title contains `title`
@@ -139,7 +139,7 @@ func focusWindow(hwnd uintptr) error {
 // before any perceive/act on it.
 type windowFocus struct{}
 
-func (windowFocus) Name() string { return "window_focus" }
+func (windowFocus) Name() string   { return "window_focus" }
 func (windowFocus) ReadOnly() bool { return false }
 func (windowFocus) Description() string {
 	return "Bring a window to the foreground and give it keyboard focus, by a substring of its title. This is the FIRST thing to do after launching an app and before typing/clicking into it: without focus, screen_type/screen_key go to whatever window happens to be active (the #1 cause of 'text didn't appear where I expected'). Also restores the window if minimized. Example: window_focus {\"title\":\"记事本\"}. Verify with screen_perceive after."
@@ -148,7 +148,9 @@ func (windowFocus) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","description":"substring of the target window's title, case-insensitive (e.g. \"记事本\", \"notepad\", \"保存\")"}},"required":["title"]}`)
 }
 func (windowFocus) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var p struct{ Title string `json:"title"` }
+	var p struct {
+		Title string `json:"title"`
+	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
@@ -176,7 +178,7 @@ func (windowFocus) Execute(ctx context.Context, args json.RawMessage) (string, e
 // occluded — a reliable workspace state before perceiving/clicking.
 type windowMaximize struct{}
 
-func (windowMaximize) Name() string { return "window_maximize" }
+func (windowMaximize) Name() string   { return "window_maximize" }
 func (windowMaximize) ReadOnly() bool { return false }
 func (windowMaximize) Description() string {
 	return "Maximize a window (by title substring) so its full content is visible and it's not occluded by other windows. Good to call before screen_perceive so the whole UI is on screen. Example: window_maximize {\"title\":\"记事本\"}."
@@ -185,7 +187,9 @@ func (windowMaximize) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","description":"substring of the target window's title, case-insensitive"}},"required":["title"]}`)
 }
 func (windowMaximize) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var p struct{ Title string `json:"title"` }
+	var p struct {
+		Title string `json:"title"`
+	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
@@ -203,7 +207,7 @@ func (windowMaximize) Execute(ctx context.Context, args json.RawMessage) (string
 // windowRestore un-maximizes / un-minimizes a window to its normal size.
 type windowRestore struct{}
 
-func (windowRestore) Name() string { return "window_restore" }
+func (windowRestore) Name() string   { return "window_restore" }
 func (windowRestore) ReadOnly() bool { return false }
 func (windowRestore) Description() string {
 	return "Restore a window (by title substring) from maximized or minimized state to its normal size. Use when you need a smaller, movable window or to undo a previous window_maximize. Example: window_restore {\"title\":\"记事本\"}."
@@ -212,7 +216,9 @@ func (windowRestore) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","description":"substring of the target window's title, case-insensitive"}},"required":["title"]}`)
 }
 func (windowRestore) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var p struct{ Title string `json:"title"` }
+	var p struct {
+		Title string `json:"title"`
+	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
@@ -232,7 +238,7 @@ func (windowRestore) Execute(ctx context.Context, args json.RawMessage) (string,
 // ambiguity about where to click), or to reveal a window partially off-screen.
 type windowMove struct{}
 
-func (windowMove) Name() string { return "window_move" }
+func (windowMove) Name() string   { return "window_move" }
 func (windowMove) ReadOnly() bool { return false }
 func (windowMove) Description() string {
 	return "Move and/or resize a window to exact coordinates by title substring. Use it to place a window where you KNOW the layout will be (so screen_click coordinates are unambiguous), or to bring an off-screen window fully into view. Pass x,y for the new top-left and w,h for the new size (all in physical screen pixels). Example: window_move {\"title\":\"记事本\",\"x\":0,\"y\":0,\"w\":800,\"h\":600}."
@@ -271,7 +277,7 @@ func (windowMove) Execute(ctx context.Context, args json.RawMessage) (string, er
 // windowClose closes a window cleanly (sends WM_CLOSE, same as clicking the X).
 type windowClose struct{}
 
-func (windowClose) Name() string { return "window_close" }
+func (windowClose) Name() string   { return "window_close" }
 func (windowClose) ReadOnly() bool { return false }
 func (windowClose) Description() string {
 	return "Close a window cleanly by title substring (sends WM_CLOSE, the same as clicking the close button). Cleaner than killing a process. Example: window_close {\"title\":\"记事本\"}."
@@ -280,7 +286,9 @@ func (windowClose) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","description":"substring of the target window's title, case-insensitive"}},"required":["title"]}`)
 }
 func (windowClose) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var p struct{ Title string `json:"title"` }
+	var p struct {
+		Title string `json:"title"`
+	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}

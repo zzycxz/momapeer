@@ -24,7 +24,6 @@ import (
 	"github.com/zzycxz/momapeer/internal/tool"
 )
 
-
 // protocolVersion is the MCP revision momapeer advertises during initialize.
 const protocolVersion = "2024-11-05"
 

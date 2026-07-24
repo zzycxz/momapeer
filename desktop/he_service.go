@@ -26,15 +26,15 @@ const (
 
 // HEService manages the Hyper-Extract Python server process.
 type HEService struct {
-	mu         sync.Mutex
-	cmd        *exec.Cmd
-	client     *rag.HEClient
-	port       int
-	python     string
-	script     string
-	running    bool
-	heAvail    bool // Hyper-Extract library actually loaded (not just HTTP up)
-	cancelFn   context.CancelFunc
+	mu       sync.Mutex
+	cmd      *exec.Cmd
+	client   *rag.HEClient
+	port     int
+	python   string
+	script   string
+	running  bool
+	heAvail  bool // Hyper-Extract library actually loaded (not just HTTP up)
+	cancelFn context.CancelFunc
 }
 
 // NewHEService creates a new Hyper-Extract service.

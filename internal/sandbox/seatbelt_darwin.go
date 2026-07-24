@@ -76,11 +76,11 @@ func writeAllowDirs(roots []string, strict bool) []string {
 			// `cargo run` or npm script would execute. Builds that need to
 			// install tooling will fail under strict mode; that's the point.
 			for _, sub := range []string{
-				"Library/Caches",          // macOS toolchain caches (Swift, Xcode)
-				".cache",                  // pip / generic XDG cache
-				".cargo/registry/cache",   // cargo downloaded crate tarballs
-				".cargo/registry/src",     // cargo extracted crate sources
-				"go/pkg/mod/cache",        // go module cache (downloaded modules)
+				"Library/Caches",        // macOS toolchain caches (Swift, Xcode)
+				".cache",                // pip / generic XDG cache
+				".cargo/registry/cache", // cargo downloaded crate tarballs
+				".cargo/registry/src",   // cargo extracted crate sources
+				"go/pkg/mod/cache",      // go module cache (downloaded modules)
 			} {
 				dirs = append(dirs, filepath.Join(home, sub))
 			}

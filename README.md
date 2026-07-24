@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/zzycxz/momapeer/releases"><img src="https://img.shields.io/badge/version-v0.1.6-0153e5?style=flat-square" alt="Version 0.1.6"/></a>
+  <a href="https://github.com/zzycxz/momapeer/releases"><img src="https://img.shields.io/badge/version-v0.5.0-0153e5?style=flat-square" alt="Version 0.5.0"/></a>
   <a href="https://github.com/zzycxz/momapeer/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/zzycxz/momapeer/ci.yml?style=flat-square&label=ci&labelColor=161b22&logo=githubactions&logoColor=white" alt="CI"/></a>
   <a href="./LICENSE"><img src="https://img.shields.io/github/license/zzycxz/momapeer.svg?style=flat-square&color=8b949e&labelColor=161b22" alt="license"/></a>
   <a href="https://github.com/zzycxz/momapeer/stargazers"><img src="https://img.shields.io/github/stars/zzycxz/momapeer.svg?style=flat-square&color=dbab09&labelColor=161b22&logo=github&logoColor=white" alt="GitHub stars"/></a>
@@ -63,11 +63,9 @@ Agent 可以在 **终端**（TUI）、**桌面客户端**（基于 Wails）、**
 ### 自主智能与自进化
 
 - **Goal 独立 Judge** — 目标达成评估由独立 LLM 模型执行（基于 transcript 证据，temperature=0），防止代理乐观停止。
-- **Max Mode（Best-of-N）** — N 个并行候选推理 + 独立 judge 择优，适用于复杂架构设计和疑难 bug，显著提升推理质量。
 - **Dream / Distill 自进化** — Dream（7 天周期）自动沉淀会话知识到项目记忆；Distill（30 天周期）自动发现重复工作流并打包为可复用 Skill。
-- **Memory FTS5 全文检索** — 基于 SQLite FTS5 + BM25 排序的记忆搜索，按相关性检索而非全量注入，token 开销随记忆数量线性增长。
 - **Memory Archive 软删除** — 记忆删除后移至 `.archive/` 目录，可追溯恢复，不再永久丢失。
-- **GlobalDir 跨项目记忆** — 用户偏好和反馈指导记忆在所有项目间共享，切换项目不丢失积累。
+- **Profile 隔离记忆** — dev/cowork 模式记忆目录完全隔离，切换模式不丢失积累。用户偏好和反馈指导记忆在同模式所有项目间共享。
 
 ### 安全与可靠性
 
@@ -96,7 +94,7 @@ Agent 可以在 **终端**（TUI）、**桌面客户端**（基于 Wails）、**
 
 ## 安装指南
 
-当前版本：**v0.1.6**
+当前版本：**v0.5.0**
 
 ```sh
 npm i -g momapeer                        # 任意系统——自动拉取对应平台的原生二进制

@@ -3290,11 +3290,11 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 			break
 		}
 		m.finalizeStreamed()
-			switch e.Tool.Name {
-			case "todo_write":
-				// The result decides whether this list becomes canonical; dispatch only
-				// means the model asked for an update.
-			default:
+		switch e.Tool.Name {
+		case "todo_write":
+			// The result decides whether this list becomes canonical; dispatch only
+			// means the model asked for an update.
+		default:
 			m.commitSpacer()
 			if block := diffBlock(e.Tool.Name, e.Tool.Args, e.Tool.FileDiff, m.width, diffScrollbackMaxLines); block != nil {
 				for _, ln := range block {

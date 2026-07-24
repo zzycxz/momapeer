@@ -27,10 +27,10 @@ func TestShouldComposeThreshold(t *testing.T) {
 
 func TestReadVerifyVerdict(t *testing.T) {
 	tests := []struct {
-		name      string
-		reply     string
-		wantPass  bool
-		wantFail  string
+		name     string
+		reply    string
+		wantPass bool
+		wantFail string
 	}{
 		{
 			name:     "pass verdict",

@@ -15,7 +15,7 @@ func TestPruneDanglingRelations(t *testing.T) {
 		},
 		Relations: []Relation{
 			{Source: "张三", Target: "MoMAPeer", Type: "负责"},   // valid
-			{Source: "张三", Target: "幻觉实体", Type: "虚构"}, // dangling target
+			{Source: "张三", Target: "幻觉实体", Type: "虚构"},       // dangling target
 			{Source: "虚构公司", Target: "MoMAPeer", Type: "投资"}, // dangling source
 		},
 	}

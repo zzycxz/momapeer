@@ -38,22 +38,22 @@ import (
 
 // RagNodeView is one node in the RAG file/folder tree.
 type RagNodeView struct {
-	Key        string       `json:"key"`        // unique (path)
-	Label      string       `json:"label"`      // display name (basename)
-	Kind       string       `json:"kind"`       // "folder" | "file"
-	Path       string       `json:"path"`       // absolute path
-	RelPath    string       `json:"relPath"`    // relative to import root
-	IsDir      bool         `json:"isDir"`
-	Collection string       `json:"collection"`
+	Key        string `json:"key"`     // unique (path)
+	Label      string `json:"label"`   // display name (basename)
+	Kind       string `json:"kind"`    // "folder" | "file"
+	Path       string `json:"path"`    // absolute path
+	RelPath    string `json:"relPath"` // relative to import root
+	IsDir      bool   `json:"isDir"`
+	Collection string `json:"collection"`
 	// Status for files: "indexed" (FTS5 only) | "extracting" | "enriched" | "error" | "cancelled"
 	// Folders aggregate: "" (no status) unless all children share one.
-	Status      string `json:"status"`
-	HasFTS5     bool   `json:"hasFts5"`     // FTS5 chunks exist for this file
-	JobID       string `json:"jobId"`       // current/last extraction job
-	DoneChunks  int    `json:"doneChunks"`  // extraction progress
-	TotalChunks int    `json:"totalChunks"`
-	EntityCount int    `json:"entityCount"` // extracted entities attributed to this file (best-effort)
-	ErrorMsg    string `json:"errorMsg"`
+	Status      string        `json:"status"`
+	HasFTS5     bool          `json:"hasFts5"`    // FTS5 chunks exist for this file
+	JobID       string        `json:"jobId"`      // current/last extraction job
+	DoneChunks  int           `json:"doneChunks"` // extraction progress
+	TotalChunks int           `json:"totalChunks"`
+	EntityCount int           `json:"entityCount"` // extracted entities attributed to this file (best-effort)
+	ErrorMsg    string        `json:"errorMsg"`
 	Children    []RagNodeView `json:"children,omitempty"` // folder recursion
 }
 
@@ -62,7 +62,7 @@ type RagNodeView struct {
 type RagCollectionView struct {
 	// ID is the collection's stable identifier (= full path or flat name).
 	ID   string `json:"id"`
-	Name string `json:"name"`   // display name (last path segment, e.g. "领导材料")
+	Name string `json:"name"` // display name (last path segment, e.g. "领导材料")
 	// Path is the full path (e.g. "工作/领导材料"); same as Name for flat
 	// collections without a "/" separator.
 	Path string `json:"path"`
@@ -84,8 +84,8 @@ type RagImportResult struct {
 
 // RagSearchHitView is one search result layer (entities/relations or text).
 type RagSearchHitView struct {
-	Entities  []RagEntityView `json:"entities"`
-	Relations []RagRelView    `json:"relations"`
+	Entities  []RagEntityView  `json:"entities"`
+	Relations []RagRelView     `json:"relations"`
 	Snippets  []RagSnippetView `json:"snippets"`
 }
 
@@ -167,20 +167,20 @@ func (a *App) ListRagTree(collection string) []RagNodeView {
 		}
 		ent := a.fileEntityCount(j.Path)
 		node := RagNodeView{
-			Key:          j.Path,
-			Label:        filepath.Base(j.Path),
-			Kind:         "file",
-			Path:         j.Path,
-			RelPath:      j.RelPath,
-			IsDir:        false,
-			Collection:   j.Collection,
-			Status:       fileStatus(j),
-			HasFTS5:      true, // jobs only exist for FTS5-imported files
-			JobID:        j.ID,
-			DoneChunks:   j.DoneChunks,
-			TotalChunks:  j.TotalChunks,
-			EntityCount:  ent,
-			ErrorMsg:     j.ErrorMsg,
+			Key:         j.Path,
+			Label:       filepath.Base(j.Path),
+			Kind:        "file",
+			Path:        j.Path,
+			RelPath:     j.RelPath,
+			IsDir:       false,
+			Collection:  j.Collection,
+			Status:      fileStatus(j),
+			HasFTS5:     true, // jobs only exist for FTS5-imported files
+			JobID:       j.ID,
+			DoneChunks:  j.DoneChunks,
+			TotalChunks: j.TotalChunks,
+			EntityCount: ent,
+			ErrorMsg:    j.ErrorMsg,
 		}
 		insertIntoTree(root, j.RelPath, node)
 	}
@@ -247,10 +247,10 @@ func insertIntoTree(root *RagNodeView, relPath string, file RagNodeView) {
 		}
 		if child == nil {
 			cur.Children = append(cur.Children, RagNodeView{
-				Key:    filepath.Join(cur.Path, seg),
-				Label:  seg,
-				Kind:   "folder",
-				IsDir:  true,
+				Key:      filepath.Join(cur.Path, seg),
+				Label:    seg,
+				Kind:     "folder",
+				IsDir:    true,
 				Children: []RagNodeView{},
 			})
 			child = &cur.Children[len(cur.Children)-1]
@@ -908,14 +908,14 @@ func (a *App) HEHealth() HEHealthView {
 
 // HETemplateView is one extraction template from the HE server.
 type HETemplateView struct {
-	Name           string           `json:"name"`
-	DisplayName    string           `json:"displayName"`
-	Description    string           `json:"description"`
-	Category       string           `json:"category"`
-	Available      bool             `json:"available"`
-	TemplateType   string           `json:"templateType"`
-	EntityFields   []rag.FieldMeta  `json:"entityFields"`
-	RelationFields []rag.FieldMeta  `json:"relationFields"`
+	Name           string          `json:"name"`
+	DisplayName    string          `json:"displayName"`
+	Description    string          `json:"description"`
+	Category       string          `json:"category"`
+	Available      bool            `json:"available"`
+	TemplateType   string          `json:"templateType"`
+	EntityFields   []rag.FieldMeta `json:"entityFields"`
+	RelationFields []rag.FieldMeta `json:"relationFields"`
 }
 
 // RagListHETemplates returns extraction templates from the Hyper-Extract server,
@@ -1036,14 +1036,14 @@ type CommunityResultView struct {
 
 // GraphNodeView is one node in the knowledge graph visualization.
 type GraphNodeView struct {
-	ID          string        `json:"id"`
-	Label       string        `json:"label"`
-	Type        string        `json:"type"`
-	Description string        `json:"description"`
-	Sources     []rag.Source  `json:"sources"`
-	RelationCnt int           `json:"relationCnt"`
-	Collection  string        `json:"collection"`
-	Community   int           `json:"community"`
+	ID          string       `json:"id"`
+	Label       string       `json:"label"`
+	Type        string       `json:"type"`
+	Description string       `json:"description"`
+	Sources     []rag.Source `json:"sources"`
+	RelationCnt int          `json:"relationCnt"`
+	Collection  string       `json:"collection"`
+	Community   int          `json:"community"`
 	// Degree is the number of edges touching this node (in + out). The graph
 	// canvas scales node size by degree so high-degree entities (mentioned in
 	// many relations) render larger, giving a visual sense of importance.
@@ -1068,14 +1068,14 @@ type GraphDataView struct {
 
 // EntityDetailView is the full detail of a single entity.
 type EntityDetailView struct {
-	Name        string                    `json:"name"`
-	NameRaw     string                    `json:"nameRaw"`
-	Type        string                    `json:"type"`
-	Description string                    `json:"description"`
-	Sources     []rag.Source              `json:"sources"`
-	Relations   []rag.EntityRelationView  `json:"relations"`
-	Community   int                       `json:"community"`
-	RelationCnt int                       `json:"relationCnt"`
+	Name        string                   `json:"name"`
+	NameRaw     string                   `json:"nameRaw"`
+	Type        string                   `json:"type"`
+	Description string                   `json:"description"`
+	Sources     []rag.Source             `json:"sources"`
+	Relations   []rag.EntityRelationView `json:"relations"`
+	Community   int                      `json:"community"`
+	RelationCnt int                      `json:"relationCnt"`
 }
 
 // EntityPatch holds editable fields for an entity.
@@ -1087,9 +1087,9 @@ type EntityPatch struct {
 
 // DocPreviewView is a document's content with chunk highlights.
 type DocPreviewView struct {
-	Path    string            `json:"path"`
-	Content string            `json:"content"`
-	Chunks  []ChunkHighlight  `json:"chunks"`
+	Path    string           `json:"path"`
+	Content string           `json:"content"`
+	Chunks  []ChunkHighlight `json:"chunks"`
 }
 
 // ChunkHighlight marks one extracted chunk's position in the original text.

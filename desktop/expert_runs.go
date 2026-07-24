@@ -48,16 +48,16 @@ const (
 // frontend can render the experts' progress that happened while the tab was
 // hidden — without this, those events are lost (they were broadcast to nobody).
 type expertRunState struct {
-	runID     string
-	teamID    string
-	tabID     string // the expert-session tab this run writes to
-	teamName  string
-	task      string
-	mode      string
-	status    expertRunStatus
-	startedAt int64 // unix ms
-	err       string
-	cancel    context.CancelFunc // cancels the orchestrator goroutine (e.g. on tab close)
+	runID       string
+	teamID      string
+	tabID       string // the expert-session tab this run writes to
+	teamName    string
+	task        string
+	mode        string
+	status      expertRunStatus
+	startedAt   int64 // unix ms
+	err         string
+	cancel      context.CancelFunc  // cancels the orchestrator goroutine (e.g. on tab close)
 	streamCache []StreamMessageWire // accumulated live-stream messages (protected by expertRunsMu)
 }
 
@@ -67,7 +67,7 @@ type expertRunState struct {
 // ExpertSessionView can restore the progress that happened while it was
 // unmounted.
 type StreamMessageWire struct {
-	Kind       string `json:"kind"`             // "expert" | "synthesis"
+	Kind       string `json:"kind"` // "expert" | "synthesis"
 	ExpertName string `json:"expertName"`
 	Round      int    `json:"round"`
 	Text       string `json:"text"`

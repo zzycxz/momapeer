@@ -63,7 +63,7 @@ type PageRole struct {
 
 // Theme is the color/font spec applied to text added by the CUA.
 type Theme struct {
-	PrimaryColor    string `json:"primary_color,omitempty"`    // "RRGGBB" hex, no #
+	PrimaryColor    string `json:"primary_color,omitempty"` // "RRGGBB" hex, no #
 	AccentColor     string `json:"accent_color,omitempty"`
 	BackgroundColor string `json:"background_color,omitempty"`
 	FontTitle       string `json:"font_title,omitempty"` // e.g. "微软雅黑"

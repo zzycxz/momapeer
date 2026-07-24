@@ -39,24 +39,24 @@ type Store struct {
 // vecCache holds entity embeddings in a flat contiguous slice for cache-friendly
 // parallel cosine similarity. One entry per (collection, model) key.
 type vecCache struct {
-	mu       sync.RWMutex
-	loaded   bool
+	mu         sync.RWMutex
+	loaded     bool
 	collection string
-	model    string
+	model      string
 	// Flat vector storage: all vecs concatenated, dims inferred from len/dims.
-	vecs   []float32
-	dims   int
-	metas  []vecMeta // parallel metadata (entity info) per vector
+	vecs  []float32
+	dims  int
+	metas []vecMeta // parallel metadata (entity info) per vector
 }
 
 type vecMeta struct {
-	id       int64
-	coll     string
-	name     string
-	nameRaw  string
-	typ      string
-	desc     string
-	sources  []Source
+	id      int64
+	coll    string
+	name    string
+	nameRaw string
+	typ     string
+	desc    string
+	sources []Source
 }
 
 // Open creates/opens the RAG store at dbPath. The schema is a single FTS5 table
@@ -277,34 +277,34 @@ func migrate(db *sql.DB) error {
 		// v2 also rebuilds rag_fts to add the body_raw column. FTS5 virtual
 		// tables cannot be ALTERed, so this is a drop+recreate+reinsert that
 		// re-derives the bigram body from the pre-v2 raw body.
-			if v == 2 {
-				if err := migrateV2RebuildFTS(db); err != nil {
-					return fmt.Errorf("migration v%d fts rebuild: %w", v, err)
-				}
+		if v == 2 {
+			if err := migrateV2RebuildFTS(db); err != nil {
+				return fmt.Errorf("migration v%d fts rebuild: %w", v, err)
 			}
-			// v3 backfills relation_cnt for all pre-existing entities.
-			if v == 3 {
-				if _, err := db.Exec(`
+		}
+		// v3 backfills relation_cnt for all pre-existing entities.
+		if v == 3 {
+			if _, err := db.Exec(`
 					UPDATE rag_entities SET relation_cnt = (
 						SELECT COUNT(*) FROM rag_relations r
 						WHERE r.collection = rag_entities.collection
 						  AND (r.source = rag_entities.name OR r.target = rag_entities.name)
 					)`); err != nil {
-					return fmt.Errorf("migration v%d backfill relation_cnt: %w", v, err)
-				}
+				return fmt.Errorf("migration v%d backfill relation_cnt: %w", v, err)
 			}
-			// v4 backfills relation weight from the sources JSON array length
-			// (each entry = one chunk that extracted this edge). Guard with
-			// json_valid so malformed JSON in the sources column doesn't block
-			// migration — those rows keep the DEFAULT 1.0 weight.
-			if v == 4 {
-				if _, err := db.Exec(`
+		}
+		// v4 backfills relation weight from the sources JSON array length
+		// (each entry = one chunk that extracted this edge). Guard with
+		// json_valid so malformed JSON in the sources column doesn't block
+		// migration — those rows keep the DEFAULT 1.0 weight.
+		if v == 4 {
+			if _, err := db.Exec(`
 					UPDATE rag_relations SET weight = MAX(1.0, COALESCE(json_array_length(sources), 1))
 				 WHERE sources IS NOT NULL AND sources != '' AND json_valid(sources)
 				`); err != nil {
-					return fmt.Errorf("migration v%d backfill weight: %w", v, err)
-				}
+				return fmt.Errorf("migration v%d backfill weight: %w", v, err)
 			}
+		}
 		if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", v)); err != nil {
 			return fmt.Errorf("set user_version=%d: %w", v, err)
 		}
@@ -424,7 +424,11 @@ func migrateV2RebuildFTS(db *sql.DB) error {
 		return nil // already migrated (fresh DB or re-run)
 	}
 	// Read all existing rows (old schema: collection, path, chunk, body).
-	type ftsRow struct{ collection, path string; chunk int; body string }
+	type ftsRow struct {
+		collection, path string
+		chunk            int
+		body             string
+	}
 	rows, err := db.Query(`SELECT collection, path, chunk, body FROM rag_fts`)
 	if err != nil {
 		return err
@@ -811,9 +815,9 @@ func (s *Store) Vacuum() error {
 // CollectionInfo describes one collection for rag_list.
 type CollectionInfo struct {
 	Name      string
-	Documents int    // distinct paths
-	Chunks    int    // total chunks
-	Size      int64  // bytes of body text indexed (approx)
+	Documents int   // distinct paths
+	Chunks    int   // total chunks
+	Size      int64 // bytes of body text indexed (approx)
 }
 
 // List returns a summary per collection (all collections when name is empty).

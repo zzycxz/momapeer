@@ -59,13 +59,13 @@ const momaBaseURL = "https://jiutian.10086.cn/largemodel/moma/api/v3"
 
 func main() {
 	var (
-		task      = flag.String("task", "找到屏幕上可以输入文字的区域，给我它的中心坐标", "what to look for in each frame")
-		model     = flag.String("model", "qwen/qwen3.6-27b", "moma multimodal model")
-		srcDir    = flag.String("dir", ".momapeer/attachments", "dir to replay screenshots from (replay mode)")
-		image     = flag.String("image", "", "analyze a single image file (overrides -dir)")
-		live      = flag.Bool("live", false, "capture the current screen once and analyze it (Windows)")
-		traceDir  = flag.String("trace", "cua-replay-trace", "where to copy frames + VLM responses")
-		limit     = flag.Int("limit", 0, "max frames to process (0 = all)")
+		task     = flag.String("task", "找到屏幕上可以输入文字的区域，给我它的中心坐标", "what to look for in each frame")
+		model    = flag.String("model", "qwen/qwen3.6-27b", "moma multimodal model")
+		srcDir   = flag.String("dir", ".momapeer/attachments", "dir to replay screenshots from (replay mode)")
+		image    = flag.String("image", "", "analyze a single image file (overrides -dir)")
+		live     = flag.Bool("live", false, "capture the current screen once and analyze it (Windows)")
+		traceDir = flag.String("trace", "cua-replay-trace", "where to copy frames + VLM responses")
+		limit    = flag.Int("limit", 0, "max frames to process (0 = all)")
 	)
 	flag.Parse()
 
@@ -231,8 +231,8 @@ func analyzeFrame(apiKey, model string, imgBytes []byte, task string) (text stri
 // --- chat request/response types ---
 
 type chatRequest struct {
-	Model    string   `json:"model"`
-	Stream   bool     `json:"stream"`
+	Model    string    `json:"model"`
+	Stream   bool      `json:"stream"`
 	Messages []chatMsg `json:"messages"`
 }
 type chatMsg struct {

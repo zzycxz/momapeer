@@ -66,8 +66,8 @@ func Protect(plaintext []byte) ([]byte, error) {
 		return nil, nil
 	}
 	var out dataBlob
-	in := newBlob(plaintext)      // heap-allocated; pinned for the call
-	entropy := &dataBlob{}        // non-NULL empty blob (NULL triggers err 87)
+	in := newBlob(plaintext) // heap-allocated; pinned for the call
+	entropy := &dataBlob{}   // non-NULL empty blob (NULL triggers err 87)
 	r, _, lastErr := procCryptProtect.Call(
 		uintptr(unsafe.Pointer(in)),
 		0, // description (NULL is allowed)
