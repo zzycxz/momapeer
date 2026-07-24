@@ -6,8 +6,3 @@
 *.sum   text eol=lf
 .githooks/** text eol=lf
 benchmarks/**/*.sh text eol=lf
-.momapeer/skills/**/*.dll filter=lfs diff=lfs merge=lfs -text
-.momapeer/skills/**/*.pyd filter=lfs diff=lfs merge=lfs -text
-.momapeer/skills/**/*.zip filter=lfs diff=lfs merge=lfs -text
-.momapeer/skills/**/*.pptx filter=lfs diff=lfs merge=lfs -text
-.momapeer/skills/**/*.svg filter=lfs diff=lfs merge=lfs -text

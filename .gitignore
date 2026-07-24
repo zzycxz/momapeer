@@ -31,8 +31,6 @@
 /.claude/
 /.momapeer.zip
 /.momapeer/*
-!/.momapeer/skills/
-!/.momapeer/skills/**
 /bin/
 /cua-replay-trace/
 /cua-test.txt
