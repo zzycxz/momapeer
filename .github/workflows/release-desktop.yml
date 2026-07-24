@@ -33,6 +33,7 @@ jobs:
             platform: windows/amd64
             artifact: momapeer-windows-amd64.exe
             binary_name: momapeer.exe
+            setup_artifact: momapeer-setup-*-amd64.exe
             apt_deps: ''
             build_args: ''
 
@@ -40,6 +41,7 @@ jobs:
             platform: windows/arm64
             artifact: momapeer-windows-arm64.exe
             binary_name: momapeer.exe
+            setup_artifact: momapeer-setup-*-arm64.exe
             apt_deps: ''
             build_args: ''
 
@@ -147,11 +149,6 @@ jobs:
         working-directory: ./desktop/build/bin
         run: mv ${{ matrix.binary_name }} ${{ matrix.artifact }}
 
-      - name: Rename Artifact (Windows)
-        if: runner.os == 'Windows'
-        working-directory: ./desktop/build/bin
-        run: Rename-Item -Path "${{ matrix.binary_name }}" -NewName "${{ matrix.artifact }}"
-
       - name: Build NSIS Installer (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -171,12 +168,14 @@ jobs:
           (Get-Content scripts\installer.nsi) -replace '!define APP_VERSION ".*"', "!define APP_VERSION `"$ver`"" | Set-Content scripts\installer.nsi
           # Build installer
           & "C:\Program Files (x86)\NSIS\makensis.exe" scripts\installer.nsi
-          # Rename with version
-          $setupName = "momapeer-setup-$ver.exe"
+          # Rename with version and arch
+          $arch = "${{ matrix.platform }}".Replace("windows/", "")
+          $setupName = "momapeer-setup-$ver-$arch.exe"
           Rename-Item "dist\momapeer-setup.exe" $setupName
           Move-Item $setupName "desktop\build\bin\"
 
-      - name: Upload Artifact
+      - name: Upload Artifact (Windows)
+        if: runner.os == 'Windows'
         uses: softprops/action-gh-release@v2
         with:
           name: momapeer ${{ github.ref_name }}
@@ -185,9 +184,19 @@ jobs:
             ## MoMAPeer Desktop ${{ github.ref_name }}
 
             See [CHANGELOG.md](https://github.com/zzycxz/momapeer/blob/main/CHANGELOG.md) for details.
-          files: |
-            ./desktop/build/bin/${{ matrix.artifact }}
-            ./desktop/build/bin/momapeer-setup-*.exe
+          files: ./desktop/build/bin/${{ matrix.setup_artifact }}
+
+      - name: Upload Artifact (macOS/Linux)
+        if: runner.os != 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: momapeer ${{ github.ref_name }}
+          make_latest: true
+          body: |
+            ## MoMAPeer Desktop ${{ github.ref_name }}
+
+            See [CHANGELOG.md](https://github.com/zzycxz/momapeer/blob/main/CHANGELOG.md) for details.
+          files: ./desktop/build/bin/${{ matrix.artifact }}
 
   manifest:
     name: Generate Auto-Updater Manifest
