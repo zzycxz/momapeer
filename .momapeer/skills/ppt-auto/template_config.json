@@ -1,0 +1,117 @@
+{
+  "canvas": {
+    "height": 720,
+    "width": 1280
+  },
+  "colors": {
+    "accent": "#FF7F00",
+    "brand_green": "#8CC63F",
+    "card_bg": "#F5F7FA",
+    "line": "#D9EAF7",
+    "primary": "#1084CD",
+    "secondary": "#D9EAF7",
+    "secondary_light": "#EAF5FC",
+    "text": "#333333",
+    "text_muted": "#B0B7C3",
+    "text_secondary": "#888888",
+    "white": "#FFFFFF"
+  },
+  "default_prompt": {
+    "content_requirements": [
+      "内容要具体，有数据支撑",
+      "普通内容页建议3-5个内容块，内容要充实，尽量减少空白区域",
+      "布局要多样化，不要全用卡片",
+      "可以包含表格、时间线、对比图、仪表盘等",
+      "配色以中国移动主蓝 #1084CD 为主，活力橙 #FF7F00 只用于关键数据、按钮、警告，绿色只作为品牌呼应色少量使用"
+    ],
+    "output_requirements": [
+      "SVG格式，viewBox=0 0 1280 720",
+      "使用模板背景图，不要在背景图上添加任何遮罩、半透明层、渐变叠加",
+      "背景图保持原样，只在上面叠加内容文字和装饰元素",
+      "文字在框体内，不溢出",
+      "禁止使用filter/pattern/mask"
+    ],
+    "pages": 8,
+    "style": "专业简洁，蓝色商务风格，信息密度高",
+    "title_position": {
+      "content_pages": "x=60, y=60（左上角，固定位置，不要居中或偏移）",
+      "cover_page": "居中",
+      "ending_page": "居中"
+    }
+  },
+  "fonts": {
+    "family": "Microsoft YaHei, Arial, sans-serif"
+  },
+  "mode": "fast",
+  "rules": {
+    "alignment": "同类元素必须对齐，间距均匀，不要参差不齐",
+    "background_rules": {
+      "content_page": "可叠加浅蓝卡片、细线、表格和图表；避免大面积色块、强渐变、重阴影和复杂装饰",
+      "cover_page": "只叠加标题文字，不要添加任何装饰元素",
+      "ending_page": "只叠加致谢文字（感谢聆听+副标题+联系方式），不要添加卡片、图表、色块等装饰元素，保持简洁"
+    },
+    "color_usage": "每页以白底和主蓝#1084CD为主，浅蓝用于表头/细线/弱底色，活力橙#FF7F00只用于关键数据、按钮、警告和风险标记；禁止紫色、棕色、土黄色、霓虹色和彩虹图表",
+    "content_density": {
+      "element_variety": {
+        "allowed_types": [
+          "rect",
+          "text",
+          "line",
+          "circle",
+          "path",
+          "polygon"
+        ],
+        "description": "至少使用2种不同类型的SVG元素",
+        "min_element_types": 2
+      },
+      "fill_requirement": "中国移动风格要求内容充实、信息密度高，尽量减少空白区域；保证清晰和对齐的前提下，把内容区域填满",
+      "max_whitespace_ratio": 0.35,
+      "min_content_blocks": 3,
+      "min_lines_per_block": 2,
+      "min_rect_elements": 4,
+      "min_text_elements": 10,
+      "recommended_content_blocks": "普通内容页建议3-5个内容块，复杂页最多6个内容块；内容要充实，尽量减少大块空白",
+      "spatial_coverage": {
+        "description": "所有内容元素的包围盒面积之和 / 内容区域总面积 ≥ 40%，内容要充实不留大块空白",
+        "min_coverage_ratio": 0.4
+      },
+      "vertical_coverage": {
+        "content_area": {
+          "y_end": 620,
+          "y_start": 90
+        },
+        "description": "将内容区域(y=90~620)等分为4个纵向区域，4个区域都必须有内容元素",
+        "min_zones_with_content": 4,
+        "zone_count": 4
+      }
+    },
+    "font_hierarchy": "标题26px，卡片标题18px，正文14px，同一层级字号必须一致",
+    "forbidden_elements": [
+      "filter",
+      "feDropShadow",
+      "pattern",
+      "mask",
+      "foreignObject"
+    ],
+    "text_in_box": "文字必须在框体内部，垂直居中公式：text_y = box_y + box_h/2 + font_size/3",
+    "text_length": "单行不超过20个中文字符"
+  },
+  "slides": {
+    "content": 2,
+    "cover": 1,
+    "ending": 3
+  },
+  "template": "内置:templates/中国移动模板.pptx",
+  "template_override": null,
+  "template_usage": {
+    "apply_to": {
+      "background": true,
+      "colors": true,
+      "content_structure": false,
+      "layout": false,
+      "logo": true
+    },
+    "description": "使用模板的品牌标识、配色和背景装饰；内容布局可调整，但必须保持中国移动商务风格、留白和克制配色",
+    "mode": "fast"
+  }
+}
