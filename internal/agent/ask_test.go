@@ -76,7 +76,7 @@ func TestAskToolRejectsExactDuplicateOptionLabels(t *testing.T) {
 
 func TestAskToolTrimsPromptAndOptionsBeforePrompting(t *testing.T) {
 	asker := &recordingAsker{}
-	ctx := withCallContext(context.Background(), "call_1", event.Discard, asker, false)
+	ctx := withCallContext(context.Background(), "call_1", event.Discard, asker)
 	out, err := NewAskTool().Execute(ctx, []byte(`{
 		"questions":[{
 			"header":" Direction ",
