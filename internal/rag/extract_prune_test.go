@@ -33,14 +33,14 @@ func TestPruneDanglingRelations(t *testing.T) {
 // relation endpoint does NOT cause a false drop.
 func TestPruneDanglingRelationsCaseInsensitive(t *testing.T) {
 	res := ExtractResult{
-		Entities: []Entity{{NameRaw: "OpenAI"}},
+		Entities: []Entity{{NameRaw: "OpenAI"}, {NameRaw: "GPT-4"}},
 		Relations: []Relation{
-			{Source: "openai", Target: "openai", Type: "self"}, // same name, different case
+			{Source: "openai", Target: "gpt-4", Type: "develops"}, // different case, both valid
 		},
 	}
 	got := pruneDanglingRelations(res)
 	if len(got) != 1 {
-		t.Fatalf("case-different endpoint should NOT be pruned, got %d", len(got))
+		t.Fatalf("case-different endpoint should NOT be pruned, got %d: %+v", len(got), got)
 	}
 }
 

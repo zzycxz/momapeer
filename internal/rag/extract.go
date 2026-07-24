@@ -76,11 +76,11 @@ type PipelineConfig struct {
 }
 
 // DefaultPipelineConfig returns conservative defaults that prioritize "no
-// errors" over throughput.
+// errors" over throughput. Low concurrency (1) avoids API rate limits (429).
 func DefaultPipelineConfig() PipelineConfig {
 	return PipelineConfig{
-		Concurrency: 3,
-		Interval:    3 * time.Second,
+		Concurrency: 1,
+		Interval:    5 * time.Second,
 		MaxRetries:  2, // 2 attempts per chunk (1 retry); fail fast so progress moves
 		RetryBase:   2 * time.Second,
 		ChunkSize:   0, // use chunkDoc's default (3000 chars)

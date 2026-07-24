@@ -646,6 +646,7 @@ export const en = {
   "settings.jiutianVideoUnderstandHint": "Analyze screen recordings, demo videos",
   "settings.jiutianBadge": "Jiutian",
   "settings.jiutianOff": "off",
+  "settings.jiutianDomainHint": "e.g. jiutian.10086.cn",
   "settings.jiutianEnable": " enable",
   "settings.jiutianDisable": " disable",
   "settings.screenshotTitle": "Screenshot hotkey",

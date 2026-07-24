@@ -292,31 +292,22 @@ func (a *App) RagImportPaths(collection string, paths []string) (RagImportResult
 	}, nil
 }
 
-// RagStartExtract is a no-op when the pipeline already enqueued extraction at
-// import time (which it does). We expose it so the UI's "深度提取" button can
-// re-trigger extraction for a file that was imported but whose extraction was
-// cancelled or errored. It re-enqueues by re-importing (FTS5 is idempotent,
-// re-extract creates a fresh job).
-//
-// When path is a template name (e.g. "finance/graph" — contains "/" but is a
-// known template), it re-extracts ALL documents in the collection using that
-// template's domain-specific prompts. Existing entities/relations are cleared
-// first so the graph reflects the new template's focus.
+// RagStartExtract triggers deep extraction. Incremental: only extracts documents
+// that haven't been successfully extracted yet (pending/error/extracting/cancelled).
+// Already-done documents keep their entities — no clearing, no wasted API calls.
+// This avoids the "full re-extract every time" problem that caused API rate
+// limits (429) and wasted tokens on already-extracted documents.
 func (a *App) RagStartExtract(collection, template string) error {
-	// Normalize empty collection to "default" to match import behavior.
 	if collection == "" {
 		collection = "default"
 	}
 	isTemplate := rag.IsTemplate(template)
 
 	// Template-based extraction: prefer Hyper-Extract (Python) when available.
-	// Use IsReady (not IsRunning) — the HTTP server can be up while the HE
-	// library itself failed to import (missing langchain_core / config.toml).
 	if isTemplate && a.heService != nil && a.heService.IsReady() {
 		return a.ragStartHEExtract(collection, template)
 	}
 
-	// Fallback: LLM pipeline extraction.
 	if a.ragPipeline == nil {
 		return fmt.Errorf("RAG pipeline offline")
 	}
@@ -327,11 +318,10 @@ func (a *App) RagStartExtract(collection, template string) error {
 	}
 
 	if isTemplate {
+		// Incremental: only re-enqueue jobs that are NOT done. Done jobs keep
+		// their entities — no clearing, no wasting API calls on already-extracted files.
 		if a.ragStore == nil {
 			return fmt.Errorf("RAG store offline")
-		}
-		if err := a.ragStore.DeleteCollectionEntities(collection); err != nil {
-			return fmt.Errorf("clear entities: %w", err)
 		}
 		jobs, err := a.ragStore.AllJobs()
 		if err != nil {
@@ -339,19 +329,27 @@ func (a *App) RagStartExtract(collection, template string) error {
 		}
 		var paths []string
 		seen := map[string]bool{}
+		skipped := 0
 		for _, j := range jobs {
-			if j.Collection == normalizeCollectionRag(collection) && !seen[j.Path] {
-				paths = append(paths, j.Path)
-				seen[j.Path] = true
+			if j.Collection != normalizeCollectionRag(collection) || seen[j.Path] {
+				continue
 			}
+			if j.Status == "done" {
+				skipped++
+				continue // already extracted — skip
+			}
+			paths = append(paths, j.Path)
+			seen[j.Path] = true
 		}
 		if len(paths) == 0 {
-			return fmt.Errorf("no documents in collection to extract")
+			return fmt.Errorf("所有文档已提取完成（跳过 %d 个），无需重复提取", skipped)
 		}
+		slog.Info("rag: incremental extract", "collection", collection, "pending", len(paths), "skipped_done", skipped)
 		if _, err := a.ragPipeline.EnqueuePaths(collection, paths, nodePrompt, edgePrompt, true); err != nil {
 			return err
 		}
 	} else {
+		// Single file path: re-extract just that file.
 		if _, err := a.ragPipeline.EnqueuePaths(collection, []string{template}, "", "", true); err != nil {
 			return err
 		}

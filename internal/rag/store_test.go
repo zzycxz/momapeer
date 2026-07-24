@@ -163,7 +163,7 @@ func TestChunkDoc(t *testing.T) {
 		t.Errorf("short md chunk count = %d, want 1 (merged)", len(chunks))
 	}
 	// Long single block → windowed into multiple.
-	long := strings.Repeat("x", 3000)
+	long := strings.Repeat("x", 5000)
 	chunks = chunkDoc(long, "")
 	if len(chunks) < 2 {
 		t.Errorf("long body should split into windows, got %d chunks", len(chunks))

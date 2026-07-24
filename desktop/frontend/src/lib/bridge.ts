@@ -423,6 +423,11 @@ export interface AppBindings {
   StopScreenshotHotkey(): Promise<void>;
   StartEStopHotkey(): Promise<void>;
   StopEStopHotkey(): Promise<void>;
+  RagCreateCollection(name: string): Promise<void>;
+  RagDeleteCollection(name: string): Promise<void>;
+  RagRenameCollection(oldName: string, newName: string): Promise<void>;
+  SetDesktopMetrics(enabled: boolean): Promise<void>;
+  SetPlannerModel(model: string): Promise<void>;
 }
 
 // Compile-time drift check. Exclude<A, B> extracts keys in A that are missing
@@ -3181,7 +3186,7 @@ function makeMockApp(): AppBindings {
     // so the panel shows a progress bar outside the Wails shell.
     async ListRagCollections(): Promise<RagCollectionView[]> {
       return [
-        { name: "default", documents: mockRagDocs, chunks: mockRagDocs * 4, entities: mockRagEntities },
+        { id: "default", name: "default", path: "default", parent: "", documents: mockRagDocs, chunks: mockRagDocs * 4, entities: mockRagEntities },
       ];
     },
     async ListRagTree(_collection: string): Promise<RagNodeView[]> {
@@ -3394,5 +3399,10 @@ function makeMockApp(): AppBindings {
         ],
       };
     },
+    async RagCreateCollection(_name: string) {},
+    async RagDeleteCollection(_name: string) {},
+    async RagRenameCollection(_oldName: string, _newName: string) {},
+    async SetDesktopMetrics(_enabled: boolean) {},
+    async SetPlannerModel(_model: string) {},
   };
 }

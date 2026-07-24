@@ -647,6 +647,7 @@ export const zh: Record<DictKey, string> = {
   "settings.jiutianVideoUnderstandHint": "分析操作录屏、演示视频内容",
   "settings.jiutianBadge": "九天",
   "settings.jiutianOff": "已关闭",
+  "settings.jiutianDomainHint": "如 jiutian.10086.cn",
   "settings.jiutianEnable": "开启",
   "settings.jiutianDisable": "关闭",
   "settings.screenshotTitle": "快捷截屏",
