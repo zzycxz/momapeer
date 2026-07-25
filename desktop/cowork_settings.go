@@ -86,9 +86,12 @@ type IMAPSettings struct {
 // resolved from the .env so the panel shows their set/unset state (masked in UI).
 func coworkSettingsView(c config.CoworkConfig) CoWorkSettingsView {
 	env := loadCoworkEnv()
-	// Load PPT templates from the skill's template directory.
-	// Scan for .pptx files and present them as available templates.
+	// Load PPT templates from the skill's template directory, falling back to
+	// the user-config ppt-templates dir when the skill dir doesn't exist.
 	skillTplDir := ppttemplate.SkillTemplatesDir()
+	if skillTplDir == "" {
+		skillTplDir = ppttemplate.DefaultDir()
+	}
 	templates := scanPPTXTemplates(skillTplDir)
 
 	// Resolve SMTP/IMAP from EmailAccounts (preferred) or legacy fields.
