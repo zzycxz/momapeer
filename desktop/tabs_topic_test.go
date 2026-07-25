@@ -205,7 +205,7 @@ func TestListWorkspacesMigratesLegacyWorkspaceList(t *testing.T) {
 	if got := workspaces[0].Path; got != legacyRoot {
 		t.Fatalf("workspace path = %q, want %q", got, legacyRoot)
 	}
-	projects := loadProjectsFile().Projects
+	projects := loadProjectsFile("dev").Projects
 	if len(projects) != 1 || projects[0].Root != legacyRoot {
 		t.Fatalf("legacy workspace was not migrated into projects: %+v", projects)
 	}
@@ -491,7 +491,7 @@ func TestReorderProjectsPersistsGlobalSidebarOrder(t *testing.T) {
 	}
 
 	app := NewApp()
-	if _, err := app.CreateTopic("global", "", "Global note"); err != nil {
+	if _, err := app.CreateTopic("global", "", "dev", "Global note"); err != nil {
 		t.Fatalf("create global topic: %v", err)
 	}
 	if err := app.ReorderProjects([]string{second, desktopGlobalOrderToken, first}, "dev"); err != nil {
@@ -611,7 +611,7 @@ func TestUntitledProjectTopicUsesSameFallbackEverywhere(t *testing.T) {
 	if err := saveProjectsFile(desktopProjectFile{Projects: []desktopProject{{
 		Root:   projectRoot,
 		Topics: []string{topicID},
-	}}}); err != nil {
+	}}}, "dev"); err != nil {
 		t.Fatalf("save projects: %v", err)
 	}
 
@@ -642,7 +642,7 @@ func TestCreateTopicDefaultsToAutoNewSessionTitle(t *testing.T) {
 
 	projectRoot := t.TempDir()
 	before := time.Now().UnixMilli()
-	topic, err := NewApp().CreateTopic("project", projectRoot, "")
+	topic, err := NewApp().CreateTopic("project", projectRoot, "dev", "")
 	after := time.Now().UnixMilli()
 	if err != nil {
 		t.Fatalf("create topic: %v", err)
@@ -673,11 +673,11 @@ func TestCreateTopicAppearsFirstInProjectTree(t *testing.T) {
 
 	projectRoot := t.TempDir()
 	app := NewApp()
-	first, err := app.CreateTopic("project", projectRoot, "")
+	first, err := app.CreateTopic("project", projectRoot, "dev", "")
 	if err != nil {
 		t.Fatalf("create first topic: %v", err)
 	}
-	second, err := app.CreateTopic("project", projectRoot, "")
+	second, err := app.CreateTopic("project", projectRoot, "dev", "")
 	if err != nil {
 		t.Fatalf("create second topic: %v", err)
 	}
@@ -698,11 +698,11 @@ func TestCreateGlobalTopicAppearsFirstInProjectTree(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	app := NewApp()
-	first, err := app.CreateTopic("global", "", "")
+	first, err := app.CreateTopic("global", "", "dev", "")
 	if err != nil {
 		t.Fatalf("create first global topic: %v", err)
 	}
-	second, err := app.CreateTopic("global", "", "")
+	second, err := app.CreateTopic("global", "", "dev", "")
 	if err != nil {
 		t.Fatalf("create second global topic: %v", err)
 	}
@@ -770,7 +770,7 @@ func TestRenameTopicLocksTitleManual(t *testing.T) {
 
 	projectRoot := t.TempDir()
 	app := NewApp()
-	topic, err := app.CreateTopic("project", projectRoot, "")
+	topic, err := app.CreateTopic("project", projectRoot, "dev", "")
 	if err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
@@ -790,7 +790,7 @@ func TestRenameTopicUpdatesOpenTabMeta(t *testing.T) {
 
 	projectRoot := t.TempDir()
 	app := NewApp()
-	topic, err := app.CreateTopic("project", projectRoot, "旧标题")
+	topic, err := app.CreateTopic("project", projectRoot, "dev", "旧标题")
 	if err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
@@ -820,7 +820,7 @@ func TestRenameTopicRecreatesDeletedProjectTitleIndexFromOpenTab(t *testing.T) {
 
 	projectRoot := t.TempDir()
 	app := NewApp()
-	topic, err := app.CreateTopic("project", projectRoot, "旧标题")
+	topic, err := app.CreateTopic("project", projectRoot, "dev", "旧标题")
 	if err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
@@ -904,7 +904,7 @@ func TestAutoTitleTopicFromFirstUserMessage(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
-	topic, err := NewApp().CreateTopic("project", projectRoot, "")
+	topic, err := NewApp().CreateTopic("project", projectRoot, "dev", "")
 	if err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
@@ -933,7 +933,7 @@ func TestAutoTitleDoesNotOverrideManualTopicTitle(t *testing.T) {
 
 	projectRoot := t.TempDir()
 	app := NewApp()
-	topic, err := app.CreateTopic("project", projectRoot, "")
+	topic, err := app.CreateTopic("project", projectRoot, "dev", "")
 	if err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
@@ -1241,12 +1241,12 @@ func TestLegacyMigrationConcurrentRunsHaveNoLostUpdates(t *testing.T) {
 	wg.Wait()
 
 	gotSet := map[string]bool{}
-	for _, id := range loadProjectsFile().GlobalTopics {
+	for _, id := range loadProjectsFile("dev").GlobalTopics {
 		gotSet[id] = true
 	}
 	for id := range want {
 		if !gotSet[id] {
-			t.Fatalf("concurrent migration lost topic %q; GlobalTopics=%v", id, loadProjectsFile().GlobalTopics)
+			t.Fatalf("concurrent migration lost topic %q; GlobalTopics=%v", id, loadProjectsFile("dev").GlobalTopics)
 		}
 	}
 }
