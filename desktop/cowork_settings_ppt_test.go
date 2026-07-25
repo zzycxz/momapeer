@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/zzycxz/momapeer/internal/config"
@@ -13,16 +14,19 @@ import (
 // templates list is populated from the (isolated) templates dir, and the dir path
 // is absolute. This is the data the React dropdown renders, so it must be right.
 func TestCoworkSettingsViewPPTTemplate(t *testing.T) {
-	// Isolate the templates dir so the test reads only what we seed (and never
-	// touches the user's real ppt-templates). Windows: AppData; *nix: XDG_CONFIG_HOME.
+	// Isolate the templates dir so the test reads only what we seed.
+	// os.UserConfigDir() returns %AppData% on Windows, $XDG_CONFIG_HOME on Linux/macOS.
 	fakeHome := t.TempDir()
 	t.Setenv("AppData", filepath.Join(fakeHome, "AppData"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(fakeHome, "config"))
 
-	// Seed two templates into where DefaultDir will look (the coworkSettingsView
-	// helper calls DefaultDir, which creates the dir if missing — so we just need
-	// the files in place; DefaultDir won't overwrite them).
-	tplDir := filepath.Join(fakeHome, "AppData", "momapeer", "ppt-templates")
+	// Determine where DefaultDir will actually look on this platform.
+	// os.UserConfigDir() = AppData on Windows, XDG_CONFIG_HOME (or ~/.config) on *nix.
+	configBase, _ := os.UserConfigDir()
+	if configBase == "" {
+		t.Skip("cannot resolve user config dir")
+	}
+	tplDir := filepath.Join(configBase, "momapeer", "ppt-templates")
 	if err := os.MkdirAll(tplDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +62,11 @@ func TestCoworkSettingsViewNoTemplates(t *testing.T) {
 	fakeHome := t.TempDir()
 	t.Setenv("AppData", filepath.Join(fakeHome, "AppData"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(fakeHome, "config"))
+	// On macOS, os.UserConfigDir() uses ~/Library/Application Support regardless
+	// of XDG_CONFIG_HOME. Skip if we can't isolate the config dir.
+	if runtime.GOOS == "darwin" {
+		t.Skip("macOS: UserConfigDir ignores XDG_CONFIG_HOME; cannot isolate")
+	}
 
 	cfg := config.CoworkConfig{PPTActiveTemplate: ""}
 	v := coworkSettingsView(cfg)

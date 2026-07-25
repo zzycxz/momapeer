@@ -121,7 +121,7 @@ func TestDeleteTopicKeepsSessionHistory(t *testing.T) {
 
 	projectRoot := t.TempDir()
 	topicID := "topic_keep_history"
-	if err := addProject(projectRoot, ""); err != nil {
+	if err := addProject(projectRoot, "", "dev"); err != nil {
 		t.Fatalf("add project: %v", err)
 	}
 	if err := setTopicTitle(projectRoot, topicID, "Keep history"); err != nil {
@@ -148,7 +148,7 @@ func TestRenameProjectUpdatesSidebarTitle(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
-	if err := addProject(projectRoot, ""); err != nil {
+	if err := addProject(projectRoot, "", "dev"); err != nil {
 		t.Fatalf("add project: %v", err)
 	}
 	if err := NewApp().RenameProject(projectRoot, "Client API"); err != nil {
@@ -176,7 +176,7 @@ func TestListWorkspacesUsesProjectRegistryTitles(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
-	if err := addProject(projectRoot, "Client API"); err != nil {
+	if err := addProject(projectRoot, "Client API", "dev"); err != nil {
 		t.Fatalf("add project: %v", err)
 	}
 
@@ -447,13 +447,13 @@ func TestReorderProjectsPersistsSidebarAndWorkspaceOrder(t *testing.T) {
 	first := t.TempDir()
 	second := t.TempDir()
 	third := t.TempDir()
-	if err := addProject(first, "First"); err != nil {
+	if err := addProject(first, "First", "dev"); err != nil {
 		t.Fatalf("add first project: %v", err)
 	}
-	if err := addProject(second, "Second"); err != nil {
+	if err := addProject(second, "Second", "dev"); err != nil {
 		t.Fatalf("add second project: %v", err)
 	}
-	if err := addProject(third, "Third"); err != nil {
+	if err := addProject(third, "Third", "dev"); err != nil {
 		t.Fatalf("add third project: %v", err)
 	}
 
@@ -483,10 +483,10 @@ func TestReorderProjectsPersistsGlobalSidebarOrder(t *testing.T) {
 
 	first := t.TempDir()
 	second := t.TempDir()
-	if err := addProject(first, "First"); err != nil {
+	if err := addProject(first, "First", "dev"); err != nil {
 		t.Fatalf("add first project: %v", err)
 	}
-	if err := addProject(second, "Second"); err != nil {
+	if err := addProject(second, "Second", "dev"); err != nil {
 		t.Fatalf("add second project: %v", err)
 	}
 
@@ -519,10 +519,10 @@ func TestReorderProjectsRejectsInvalidOrder(t *testing.T) {
 
 	first := t.TempDir()
 	second := t.TempDir()
-	if err := addProject(first, "First"); err != nil {
+	if err := addProject(first, "First", "dev"); err != nil {
 		t.Fatalf("add first project: %v", err)
 	}
-	if err := addProject(second, "Second"); err != nil {
+	if err := addProject(second, "Second", "dev"); err != nil {
 		t.Fatalf("add second project: %v", err)
 	}
 	app := NewApp()
@@ -549,7 +549,7 @@ func TestRemoveWorkspaceUsesSharedProjectRegistryForCurrentProject(t *testing.T)
 	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
-	if err := addProject(projectRoot, "Current Project"); err != nil {
+	if err := addProject(projectRoot, "Current Project", "dev"); err != nil {
 		t.Fatalf("add project: %v", err)
 	}
 	app := NewApp()
@@ -574,7 +574,7 @@ func TestRestoredProjectTabUsesStoredTopicTitle(t *testing.T) {
 
 	projectRoot := t.TempDir()
 	topicID := "topic_stored_title"
-	if err := addProject(projectRoot, ""); err != nil {
+	if err := addProject(projectRoot, "", "dev"); err != nil {
 		t.Fatalf("add project: %v", err)
 	}
 	if err := setTopicTitle(projectRoot, topicID, "你是谁"); err != nil {
@@ -853,7 +853,7 @@ func TestRenameTopicRecreatesDeletedProjectTitleIndexFromSessionMeta(t *testing.
 
 	projectRoot := t.TempDir()
 	topicID := "topic_missing_index"
-	if err := addProject(projectRoot, ""); err != nil {
+	if err := addProject(projectRoot, "", "dev"); err != nil {
 		t.Fatalf("add project: %v", err)
 	}
 	if err := setTopicTitle(projectRoot, topicID, "旧标题"); err != nil {
@@ -958,7 +958,7 @@ func TestTrashTopicMovesRelatedSessionsToTrash(t *testing.T) {
 
 	projectRoot := t.TempDir()
 	topicID := "topic_trash_history"
-	if err := addProject(projectRoot, ""); err != nil {
+	if err := addProject(projectRoot, "", "dev"); err != nil {
 		t.Fatalf("add project: %v", err)
 	}
 	if err := setTopicTitle(projectRoot, topicID, "Trash history"); err != nil {
@@ -1033,7 +1033,7 @@ func TestRestoreProjectTopicSessionReindexesProjectTree(t *testing.T) {
 
 	projectRoot := t.TempDir()
 	topicID := "topic_restore_project"
-	if err := addProject(projectRoot, ""); err != nil {
+	if err := addProject(projectRoot, "", "dev"); err != nil {
 		t.Fatalf("add project: %v", err)
 	}
 	if err := setTopicTitle(projectRoot, topicID, "Project restore"); err != nil {
@@ -1101,7 +1101,7 @@ func TestTrashTopicMovesOpenSessionToTrash(t *testing.T) {
 
 	projectRoot := t.TempDir()
 	topicID := "topic_open_trash"
-	if err := addProject(projectRoot, ""); err != nil {
+	if err := addProject(projectRoot, "", "dev"); err != nil {
 		t.Fatalf("add project: %v", err)
 	}
 	if err := setTopicTitle(projectRoot, topicID, "Open trash"); err != nil {
