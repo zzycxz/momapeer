@@ -43,6 +43,7 @@ jobs:
           fi
 
       - name: vet
+        if: runner.os != 'Windows'
         run: go vet ./...
 
       - name: build
@@ -130,6 +131,7 @@ jobs:
           pnpm --dir frontend build
 
       - name: vet
+        if: runner.os != 'Windows'
         run: go vet ./...
 
       - name: build
