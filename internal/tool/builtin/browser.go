@@ -2226,7 +2226,7 @@ func (browserWait) Schema() json.RawMessage {
 }`)
 }
 
-func (browserWait) ReadOnly() bool { return true }
+func (browserWait) ReadOnly() bool { return false // wait blocks execution, not read-only
 
 func (browserWait) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct {
