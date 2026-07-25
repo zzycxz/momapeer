@@ -42,6 +42,19 @@ linters:
         linters:
           - staticcheck
         text: SA5011
+      # browser.go: recentPageFingerprints field is used only inside
+      # recordPageState which is called only on Windows/browser builds;
+      # golangci-lint sees it as unused on Linux CI.
+      - path: internal/tool/builtin/browser\.go
+        linters:
+          - unused
+        text: recentPageFingerprints
+      # screen_perceive_other.go: the screenPerceive type and methods are
+      # Windows-only stubs; on Linux they appear unused but are needed for
+      # cross-compilation.
+      - path: internal/tool/builtin/screen_perceive_other\.go
+        linters:
+          - unused
 
 issues:
   max-issues-per-linter: 0
