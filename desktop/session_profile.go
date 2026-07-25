@@ -62,3 +62,18 @@ func (a *App) activeProfileKeyRaw() string {
 	}
 	return strings.TrimSpace(tab.profile)
 }
+
+// activeProfileKeyLocked is the lock-free variant of activeProfileKey for use
+// when the caller already holds a.mu (Lock or RLock). Calling activeProfileKey()
+// from within a held lock causes a deadlock (RLock blocks on held Lock).
+func (a *App) activeProfileKeyLocked() string {
+	tab := a.activeTabLocked()
+	if tab == nil {
+		return config.ProfileDev
+	}
+	key := config.ProfileNameKey(tab.profile)
+	if key == "" {
+		return config.ProfileDev
+	}
+	return key
+}

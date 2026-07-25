@@ -477,10 +477,10 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 	}
 	switch tab.Scope {
 	case "global":
-		m.ProjectColor = globalProjectColor(a.activeProfileKey())
-		m.WorkspaceName = globalProjectTitle(a.activeProfileKey())
+		m.ProjectColor = globalProjectColor(a.activeProfileKeyLocked())
+		m.WorkspaceName = globalProjectTitle(a.activeProfileKeyLocked())
 	case "project":
-		m.ProjectColor = projectColor(tab.WorkspaceRoot, a.activeProfileKey())
+		m.ProjectColor = projectColor(tab.WorkspaceRoot, a.activeProfileKeyLocked())
 	}
 	if tab.Ctrl != nil {
 		m.Running = tab.Ctrl.Running()
@@ -809,7 +809,7 @@ func (a *App) blankTabMatchesTargetLocked(tab *WorkspaceTab, scope, workspaceRoo
 func (a *App) indexedBlankTopicIDLocked(scope, workspaceRoot string) string {
 	titleRoot := topicTitleRoot(scope, workspaceRoot)
 	titles := loadTopicTitles(titleRoot)
-	f := loadProjectsFile(a.activeProfileKey())
+	f := loadProjectsFile(a.activeProfileKeyLocked())
 
 	var topicIDs []string
 	if scope == "global" {
