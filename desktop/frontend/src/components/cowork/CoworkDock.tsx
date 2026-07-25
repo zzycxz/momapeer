@@ -502,7 +502,7 @@ function MailView() {
 // RagDock (Gp) — 分类 / 文件（精简为 2 tab）
 // ===========================================================================
 
-type RagTab = "collections" | "files";
+type RagTab = "collections" | "files" | "extract";
 
 function RagDock({
   onEntityClick,
@@ -521,7 +521,6 @@ function RagDock({
   const [entityCollection, setEntityCollection] = useState<string | null>(null);
   const [docPath, setDocPath] = useState<string | null>(null);
   const [docCollection, setDocCollection] = useState("");
-  const [showExtract, setShowExtract] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState("");
   const [newCollectionParent, setNewCollectionParent] = useState("");
@@ -650,6 +649,17 @@ function RagDock({
             <FileText size={13} />
             <span className="workbench-dock__tab-label">文件</span>
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "extract"}
+            className={"workbench-dock__tab" + (tab === "extract" ? " workbench-dock__tab--active" : "")}
+            onClick={() => setTab("extract")}
+            title="深度提取"
+          >
+            <Zap size={13} />
+            <span className="workbench-dock__tab-label">提取</span>
+          </button>
         </div>
       </div>
 
@@ -769,33 +779,19 @@ function RagDock({
           </div>
         )}
 
-        {/* === 文件 tab（含提取功能）=== */}
+        {/* === 提取 tab === */}
+        {tab === "extract" && (
+          <TemplateSelect
+            collection={activeCollection}
+            onBack={() => setTab("files")}
+          />
+        )}
+
+        {/* === 文件 tab === */}
         {tab === "files" && (
           <div className="rag-dock__files">
-            {/* 深度提取按钮 */}
-            <button
-              className="btn btn--primary btn--small rag-dock__extract-btn"
-              onClick={() => setShowExtract(true)}
-              style={{ margin: "0 8px 8px", width: "calc(100% - 16px)" }}
-            >
-              <Zap size={14} />
-              <span>深度提取</span>
-            </button>
-
-            {/* 提取面板（展开时覆盖文件列表） */}
-            {showExtract && (
-              <div className="rag-dock__extract-panel">
-                <TemplateSelect
-                  collection={activeCollection}
-                  onBack={() => setShowExtract(false)}
-                />
-              </div>
-            )}
-
             {/* 文件列表 */}
-            {!showExtract && (
-              <>
-                {tree.length === 0 ? (
+            {tree.length === 0 ? (
                   <div className="cowork-dock__empty-state">
                     <FileText size={22} />
                     <p>暂无文件</p>
@@ -842,8 +838,6 @@ function RagDock({
                     ))}
                   </div>
                 )}
-              </>
-            )}
           </div>
         )}
       </div>
