@@ -477,10 +477,10 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 	}
 	switch tab.Scope {
 	case "global":
-		m.ProjectColor = globalProjectColor()
-		m.WorkspaceName = globalProjectTitle()
+		m.ProjectColor = globalProjectColor(a.activeProfileKey())
+		m.WorkspaceName = globalProjectTitle(a.activeProfileKey())
 	case "project":
-		m.ProjectColor = projectColor(tab.WorkspaceRoot)
+		m.ProjectColor = projectColor(tab.WorkspaceRoot, a.activeProfileKey())
 	}
 	if tab.Ctrl != nil {
 		m.Running = tab.Ctrl.Running()
@@ -809,7 +809,7 @@ func (a *App) blankTabMatchesTargetLocked(tab *WorkspaceTab, scope, workspaceRoo
 func (a *App) indexedBlankTopicIDLocked(scope, workspaceRoot string) string {
 	titleRoot := topicTitleRoot(scope, workspaceRoot)
 	titles := loadTopicTitles(titleRoot)
-	f := loadProjectsFile()
+	f := loadProjectsFile(a.activeProfileKey())
 
 	var topicIDs []string
 	if scope == "global" {
@@ -1021,7 +1021,7 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 	sessionDir := desktopSessionDir(root)
 	topicID := strings.TrimSpace(tab.TopicID)
 	if tab.Scope == "global" {
-		migratedTopics := migrateLegacySessionsIntoGlobalTopics(config.SessionDir())
+		migratedTopics := migrateLegacySessionsIntoGlobalTopics(config.SessionDir(), a.activeProfileKey())
 		if len(migratedTopics) > 0 {
 			a.emitProjectTreeChanged()
 		}
@@ -1072,7 +1072,7 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 	ctrl.SetGoal(tab.goal)
 
 	if dir := ctrl.SessionDir(); dir != "" {
-		migratedTopics := migrateLegacySessionsIntoGlobalTopics(dir)
+		migratedTopics := migrateLegacySessionsIntoGlobalTopics(dir, a.activeProfileKey())
 		if len(migratedTopics) > 0 {
 			a.emitProjectTreeChanged()
 		}
@@ -1732,12 +1732,12 @@ func normalizeProjectColor(color string) string {
 	}
 }
 
-func projectColor(root string) string {
+func projectColor(root string, profileKey ...string) string {
 	root = normalizeProjectRoot(root)
 	if root == "" {
-		return globalProjectColor()
+		return globalProjectColor(profileKey...)
 	}
-	for _, p := range loadProjectsFile().Projects {
+	for _, p := range loadProjectsFile(profileKey...).Projects {
 		if p.Root == root {
 			return normalizeProjectColor(p.Color)
 		}
@@ -1745,12 +1745,12 @@ func projectColor(root string) string {
 	return ""
 }
 
-func globalProjectColor() string {
-	return normalizeProjectColor(loadProjectsFile().GlobalColor)
+func globalProjectColor(profileKey ...string) string {
+	return normalizeProjectColor(loadProjectsFile(profileKey...).GlobalColor)
 }
 
-func globalProjectTitle() string {
-	if title := strings.TrimSpace(loadProjectsFile().GlobalTitle); title != "" {
+func globalProjectTitle(profileKey ...string) string {
+	if title := strings.TrimSpace(loadProjectsFile(profileKey...).GlobalTitle); title != "" {
 		return title
 	}
 	return "Global"
@@ -1793,23 +1793,23 @@ func renameProject(root, title string, profileKey ...string) error {
 	return saveProjectsFile(f, profileKey...)
 }
 
-func setProjectColor(root, color string) error {
+func setProjectColor(root, color string, profileKey ...string) error {
 	root = normalizeProjectRoot(root)
 	color = normalizeProjectColor(color)
 	if root == "" {
-		f := loadProjectsFile()
+		f := loadProjectsFile(profileKey...)
 		f.GlobalColor = color
-		return saveProjectsFile(f)
+		return saveProjectsFile(f, profileKey...)
 	}
-	f := loadProjectsFile()
+	f := loadProjectsFile(profileKey...)
 	for i, p := range f.Projects {
 		if p.Root == root {
 			f.Projects[i].Color = color
-			return saveProjectsFile(f)
+			return saveProjectsFile(f, profileKey...)
 		}
 	}
 	f.Projects = append(f.Projects, desktopProject{Root: root, Color: color})
-	return saveProjectsFile(f)
+	return saveProjectsFile(f, profileKey...)
 }
 
 func removeProject(root string, profileKey ...string) error {
@@ -2083,7 +2083,7 @@ func ensureTopicIndexed(args ...string) error {
 		}
 	}
 	f.Projects = append(f.Projects, desktopProject{Root: workspaceRoot, Topics: []string{topicID}})
-	return saveProjectsFile(f)
+	return saveProjectsFile(f, profile)
 }
 
 var telemSaveMu sync.Mutex
@@ -2221,7 +2221,7 @@ var legacyMigrationMu sync.Mutex
 // invalidated if the directory is deleted (e.g. user clears data).
 const topicMigratedMarker = ".topic-migrated"
 
-func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
+func migrateLegacySessionsIntoGlobalTopics(dir string, profileKey ...string) []string {
 	if strings.TrimSpace(dir) == "" {
 		return nil
 	}
@@ -2243,7 +2243,7 @@ func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
 	titles := loadSessionTitles(dir)
 	topicTitles := loadTopicTitles("")
 	topicSources := loadTopicTitleSources("")
-	f := loadProjectsFile()
+	f := loadProjectsFile(profileKey...)
 
 	var migratedTopicIDs []string
 	for _, info := range infos {
@@ -2296,12 +2296,11 @@ func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
 		migratedTopicIDs = append(migratedTopicIDs, topicID)
 	}
 	if len(migratedTopicIDs) == 0 {
-		// Nothing to migrate — mark as done so future calls skip the scan.
 		_ = os.WriteFile(markerPath, []byte(time.Now().UTC().Format(time.RFC3339)), 0o644)
 		return nil
 	}
 	f.GlobalTopics = uniqueStrings(append(migratedTopicIDs, f.GlobalTopics...))
-	_ = saveProjectsFile(f)
+	_ = saveProjectsFile(f, profileKey...)
 	_ = saveTopicTitles("", topicTitles)
 	_ = saveTopicTitleSources("", topicSources)
 	// Mark as done after a successful migration pass.
@@ -2309,7 +2308,7 @@ func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
 	return migratedTopicIDs
 }
 
-func restoreSessionTopicIndex(dir, sessionPath string) error {
+func restoreSessionTopicIndex(dir, sessionPath string, profileKey ...string) error {
 	sessionPath = strings.TrimSpace(sessionPath)
 	if sessionPath == "" {
 		return nil
@@ -2319,7 +2318,7 @@ func restoreSessionTopicIndex(dir, sessionPath string) error {
 		return err
 	}
 	if !ok || strings.TrimSpace(meta.TopicID) == "" {
-		migrateLegacySessionsIntoGlobalTopics(dir)
+		migrateLegacySessionsIntoGlobalTopics(dir, profileKey...)
 		return nil
 	}
 
@@ -2350,7 +2349,7 @@ func restoreSessionTopicIndex(dir, sessionPath string) error {
 		return err
 	}
 
-	f := loadProjectsFile()
+	f := loadProjectsFile(profileKey...)
 	if scope == "global" {
 		f.GlobalTopics = prependUniqueString(f.GlobalTopics, topicID)
 		meta.Scope = "global"
@@ -2376,7 +2375,7 @@ func restoreSessionTopicIndex(dir, sessionPath string) error {
 	}
 	meta.TopicID = topicID
 	meta.TopicTitle = title
-	if err := saveProjectsFile(f); err != nil {
+	if err := saveProjectsFile(f, profileKey...); err != nil {
 		return err
 	}
 	return agent.SaveBranchMetaPreserveUpdated(sessionPath, meta)
@@ -2496,7 +2495,7 @@ func (a *App) CreateTopic(args ...string) (TopicMeta, error) {
 // RenameProject updates the sidebar-only display title for a project folder.
 // Empty title clears the override and falls back to the folder name.
 func (a *App) RenameProject(workspaceRoot, title string) error {
-	if err := renameProject(workspaceRoot, title); err != nil {
+	if err := renameProject(workspaceRoot, title, a.activeProfileKey()); err != nil {
 		return err
 	}
 	a.emitProjectTreeChanged()
@@ -2506,7 +2505,7 @@ func (a *App) RenameProject(workspaceRoot, title string) error {
 // SetProjectColor updates the project-level accent color used by project topics
 // in the sidebar and tabs. Empty color restores the default accent.
 func (a *App) SetProjectColor(workspaceRoot, color string) error {
-	if err := setProjectColor(workspaceRoot, color); err != nil {
+	if err := setProjectColor(workspaceRoot, color, a.activeProfileKey()); err != nil {
 		return err
 	}
 	a.emitProjectTreeChanged()
@@ -2571,8 +2570,9 @@ func (a *App) ReorderProjects(workspaceRoots []string, profile string) error {
 // RenameTopic updates a topic's display title.
 func (a *App) RenameTopic(topicID, title string) error {
 	trimmed := strings.TrimSpace(title)
+	profileKey := a.activeProfileKey()
 	// Find which workspace this topic belongs to by scanning all project topic titles.
-	f := loadProjectsFile()
+	f := loadProjectsFile(profileKey)
 	for _, p := range f.Projects {
 		m := loadTopicTitles(p.Root)
 		if _, ok := m[topicID]; ok {
@@ -2707,7 +2707,8 @@ func (a *App) emitProjectTreeChanged() {
 
 // DeleteTopic removes a topic and its title metadata.
 func (a *App) DeleteTopic(topicID string) error {
-	f := loadProjectsFile()
+	profileKey := a.activeProfileKey()
+	f := loadProjectsFile(profileKey)
 	found := false
 	for _, p := range f.Projects {
 		m := loadTopicTitles(p.Root)
@@ -2747,7 +2748,7 @@ func (a *App) DeleteTopic(topicID string) error {
 			}
 		}
 	}
-	_ = saveProjectsFile(f)
+	_ = saveProjectsFile(f, profileKey)
 	a.emitProjectTreeChanged()
 	return nil
 }
@@ -2880,7 +2881,7 @@ func (a *App) TrashTopic(topicID string) error {
 // index (backward compatible). Wails binds this as a 1-arg method; the frontend
 // always passes a profile ("dev"/"cowork").
 func (a *App) ListProjectTree(profile string) []ProjectNode {
-	migrateLegacySessionsIntoGlobalTopics(config.SessionDir())
+	migrateLegacySessionsIntoGlobalTopics(config.SessionDir(), profile)
 	f := loadProjectsFile(profile)
 	out := []ProjectNode{}
 	type topicSummary struct {
@@ -3423,9 +3424,9 @@ func (a *App) knownSessionDirs() []string {
 		seen[dir] = true
 		out = append(out, dir)
 	}
-	add(config.SessionDir()) // legacy/global sessions from earlier desktop builds
+	add(config.SessionDir())
 	add(desktopSessionDir(globalWorkspaceRoot()))
-	for _, project := range loadProjectsFile().Projects {
+	for _, project := range loadProjectsFile(a.activeProfileKey()).Projects {
 		add(desktopSessionDir(project.Root))
 	}
 	a.mu.RLock()

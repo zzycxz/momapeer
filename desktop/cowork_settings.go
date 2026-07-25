@@ -148,13 +148,13 @@ func coworkSettingsView(c config.CoworkConfig) CoWorkSettingsView {
 // scanPPTXTemplates scans a directory for .pptx files and returns them as template views.
 func scanPPTXTemplates(dir string) []ppttemplate.View {
 	if dir == "" {
-		return nil
+		return []ppttemplate.View{}
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil
+		return []ppttemplate.View{}
 	}
-	var out []ppttemplate.View
+	out := make([]ppttemplate.View, 0)
 	for _, e := range entries {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".pptx" {
 			continue

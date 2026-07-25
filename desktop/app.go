@@ -1681,7 +1681,7 @@ func (a *App) RestoreSession(path string) error {
 	if err := restoreTrashedSessionFile(dir, path); err != nil {
 		return err
 	}
-	if err := restoreSessionTopicIndex(dir, filepath.Join(dir, key)); err != nil {
+	if err := restoreSessionTopicIndex(dir, filepath.Join(dir, key), a.activeProfileKey()); err != nil {
 		return err
 	}
 	a.emitProjectTreeChanged()
