@@ -33,6 +33,15 @@ export interface CoWorkLayoutProps {
   onDockResizeStart?: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onDockResizeKey?: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   onDockResetWidth?: () => void;
+  // Left sidebar width resizer — absolute-positioned (like coding-mode), driven
+  // by the shared sidebarWidth state. The coding-mode .sidebar-resizer is hidden
+  // under .app--cowork, so cowork renders its own.
+  sidebarWidth?: number;
+  sidebarMinWidth?: number;
+  sidebarMaxWidth?: number;
+  onSidebarResizeStart?: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onSidebarResizeKey?: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
+  onSidebarResetWidth?: () => void;
 }
 
 export function CoWorkLayout({
@@ -53,6 +62,12 @@ export function CoWorkLayout({
   onDockResizeStart,
   onDockResizeKey,
   onDockResetWidth,
+  sidebarWidth,
+  sidebarMinWidth,
+  sidebarMaxWidth,
+  onSidebarResizeStart,
+  onSidebarResizeKey,
+  onSidebarResetWidth,
 }: CoWorkLayoutProps) {
   const t = useT();
   const [activePanel, setActivePanel] = useState<CoWorkPanel>("taskCenter");
@@ -105,6 +120,25 @@ export function CoWorkLayout({
 
   return (
     <div className={`cowork-layout ${sidebarCollapsed ? "cowork-layout--sidebar-collapsed" : ""}`}>
+      {/* Left sidebar width resizer — absolute-positioned (mirrors coding-mode
+         .sidebar-resizer). Rendered only when not collapsed and handlers wired.
+         The coding-mode .sidebar-resizer is display:none under .app--cowork, so
+         cowork renders its own to keep the sidebar resizable. */}
+      {!sidebarCollapsed && onSidebarResizeStart && (
+        <button
+          className="sidebar-resizer"
+          type="button"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={t("sidebar.resize")}
+          aria-valuemin={sidebarMinWidth}
+          aria-valuemax={sidebarMaxWidth}
+          aria-valuenow={sidebarWidth}
+          onPointerDown={onSidebarResizeStart}
+          onKeyDown={onSidebarResizeKey}
+          onDoubleClick={onSidebarResetWidth}
+        />
+      )}
       {/* Left: workspace / knowledge / scheduled / skills.
           Kept mounted (not conditionally removed) on collapse so the grid column
           width animates smoothly — the sidebar slot shrinks to 0px via the

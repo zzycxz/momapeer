@@ -72,7 +72,7 @@ export function GraphToolbar({
         value={collection}
         onChange={(e) => onCollectionChange(e.target.value)}
       >
-        <option value="">全部集合</option>
+        <option value="">全部</option>
         {collections.map((c) => (
           <option key={c.name} value={c.name}>
             {c.name} ({c.entities})

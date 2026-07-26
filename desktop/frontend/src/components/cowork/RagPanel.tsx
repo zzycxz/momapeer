@@ -49,6 +49,19 @@ export function RagPanel() {
     app.RagListTemplates().then(setSupportedFormats).catch(() => setSupportedFormats([]));
   }, []);
 
+  // Listen for collection selection from CoworkDock (right panel).
+  // This keeps the central panel's activeCollection in sync with the dock.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail && typeof detail.collection === "string") {
+        setActiveCollection(detail.collection);
+      }
+    };
+    window.addEventListener("rag:collection-selected", handler);
+    return () => window.removeEventListener("rag:collection-selected", handler);
+  }, []);
+
   // Check if the active collection has communities assigned. Used to toggle
   // the community legend section. Debounced to avoid request storms during
   // extraction (which fires many rag:changed events).

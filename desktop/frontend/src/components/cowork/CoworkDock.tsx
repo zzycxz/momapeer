@@ -701,6 +701,7 @@ function RagDock({
                 onChange={() => {
                   setActiveCollections(null);
                   setActiveCollection("");
+                  window.dispatchEvent(new CustomEvent("rag:collection-selected", { detail: { collection: "" } }));
                   (app as unknown as { SetSessionCollections: (c: string[]) => Promise<void> })
                     .SetSessionCollections([])
                     .catch(() => {});
@@ -742,6 +743,8 @@ function RagDock({
                     className="rag-dock__collection-name"
                     onClick={() => {
                       setActiveCollection(c.name);
+                      // Sync to RagPanel (central panel) via global event.
+                      window.dispatchEvent(new CustomEvent("rag:collection-selected", { detail: { collection: c.name } }));
                       setTab("files");
                     }}
                     style={{ cursor: "pointer" }}

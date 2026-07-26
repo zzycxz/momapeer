@@ -1783,9 +1783,11 @@ a[href] {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 50%;
+  /* Anchor the visual line to the resizer's right edge (= the dock's left edge)
+     instead of centering it, so the line sits flush against the dock rather
+     than floating ~4px away in the middle of the 8px hit area. */
+  right: 0;
   width: 1px;
-  transform: translateX(-50%);
   background: var(--border-soft);
   transition: background 0.12s, box-shadow 0.12s;
 }
@@ -19067,6 +19069,14 @@ a[href] {
   /* align-self:stretch fills the single cowork content row — the resizer has no
      children, so without this it collapses to ~0px height and is unclickable. */
   align-self: stretch;
+}
+
+/* Same situation for the left sidebar-resizer: .app--cowork hides the coding-
+   mode one, so cowork renders its own (absolute-positioned, same class). Re-
+   show it; left/top still come from the shared .sidebar-resizer rule
+   (left:calc(var(--sidebar-width) - 4px), top:var(--app-chrome-height)). */
+.cowork-layout .sidebar-resizer {
+  display: block;
 }
 
 :root[data-theme-style] .cowork-dock {

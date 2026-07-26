@@ -2739,6 +2739,12 @@ export default function App() {
             onDockResizeStart={startWorkspacePanelResize}
             onDockResizeKey={resizeWorkspacePanelWithKeyboard}
             onDockResetWidth={() => setSavedWorkspacePanelWidth(workspacePanelResetWidth)}
+            sidebarWidth={sidebarWidth}
+            sidebarMinWidth={SIDEBAR_MIN_WIDTH}
+            sidebarMaxWidth={SIDEBAR_MAX_WIDTH}
+            onSidebarResizeStart={startSidebarResize}
+            onSidebarResizeKey={resizeSidebarWithKeyboard}
+            onSidebarResetWidth={() => setExpandedSidebarWidth(defaultSidebarWidth())}
           />
         )}
         <AppChrome
