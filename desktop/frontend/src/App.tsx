@@ -2793,7 +2793,7 @@ export default function App() {
             {projectTreeNode}
           </section>
 
-          <section className="cowork-sidebar__group" style={{ padding: '0 8px', marginBottom: '0px', marginTop: 'auto' }}>
+          <section className="cowork-sidebar__group" style={{ marginBottom: '0px', marginTop: 'auto' }}>
             <button
               className={`cowork-sidebar__item ${preferenceOpen ? "cowork-sidebar__item--active" : ""}`}
               onClick={() => {

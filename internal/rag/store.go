@@ -502,12 +502,14 @@ func (s *Store) Import(collection, path string, tags []string) (int, error) {
 	chunks := chunkDoc(body, ext)
 
 	// Delete existing chunks for this path+collection, then insert fresh.
+	// Also clean up any placeholder docs for this collection (they exist only
+	// to make empty collections visible in ListRagCollections).
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec("DELETE FROM rag_fts WHERE collection = ? AND path = ?", collection, path); err != nil {
+	if _, err := tx.Exec("DELETE FROM rag_fts WHERE collection = ? AND (path = ? OR path LIKE 'placeholder://%')", collection, path); err != nil {
 		return 0, err
 	}
 	for i, c := range chunks {
