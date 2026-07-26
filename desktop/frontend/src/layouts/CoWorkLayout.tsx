@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { BookOpen, CalendarDays, SquarePen, Users, SlidersHorizontal } from "lucide-react";
 
 import { useT } from "../lib/i18n";
@@ -23,6 +23,16 @@ export interface CoWorkLayoutProps {
   dockMaximized?: boolean;
   dockOnClose?: () => void;
   dockOnToggleMaximized?: () => void;
+  // Right dock width resizer — the cowork dock shares the same width state and
+  // drag logic as the coding-mode workspace panel, so App.tsx hands the same
+  // handlers in. Without these the cowork dock had no resizer and couldn't be
+  // resized.
+  dockWidth?: number;
+  dockMinWidth?: number;
+  dockMaxAriaWidth?: number;
+  onDockResizeStart?: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onDockResizeKey?: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
+  onDockResetWidth?: () => void;
 }
 
 export function CoWorkLayout({
@@ -37,6 +47,12 @@ export function CoWorkLayout({
   dockMaximized = false,
   dockOnClose,
   dockOnToggleMaximized,
+  dockWidth,
+  dockMinWidth,
+  dockMaxAriaWidth,
+  onDockResizeStart,
+  onDockResizeKey,
+  onDockResetWidth,
 }: CoWorkLayoutProps) {
   const t = useT();
   const [activePanel, setActivePanel] = useState<CoWorkPanel>("taskCenter");
@@ -89,9 +105,12 @@ export function CoWorkLayout({
 
   return (
     <div className={`cowork-layout ${sidebarCollapsed ? "cowork-layout--sidebar-collapsed" : ""}`}>
-      {/* Left: workspace / knowledge / scheduled / skills */}
-      {!sidebarCollapsed && (
-        <aside className="cowork-sidebar">
+      {/* Left: workspace / knowledge / scheduled / skills.
+          Kept mounted (not conditionally removed) on collapse so the grid column
+          width animates smoothly — the sidebar slot shrinks to 0px via the
+          cowork-layout--sidebar-collapsed class (mirroring coding-mode .layout),
+          and the aside's overflow:hidden clips its content as it collapses. */}
+      <aside className="cowork-sidebar">
         <div className="cowork-sidebar__scroll">
           <button
             className="sidebar__new"
@@ -145,7 +164,6 @@ export function CoWorkLayout({
           </section>
         </div>
       </aside>
-      )}
 
       {/* Center: dynamic panel based on selection */}
       <section className="cowork-main">
@@ -181,6 +199,26 @@ export function CoWorkLayout({
           <RagPanel />
         )}
       </section>
+
+      {/* Right dock width resizer — mirrors the coding-mode
+         workspace-panel-resizer. Sits in grid column 3 (between main=2 and
+         dock=4); dragging updates the shared dock width state. Only rendered
+         when the dock is open and the resize handlers are wired. */}
+      {rightDockOpen && onDockResizeStart && (
+        <button
+          className="workspace-panel-resizer"
+          type="button"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={t("rightDock.resize")}
+          aria-valuemin={dockMinWidth}
+          aria-valuemax={dockMaxAriaWidth}
+          aria-valuenow={dockWidth}
+          onPointerDown={onDockResizeStart}
+          onKeyDown={onDockResizeKey}
+          onDoubleClick={onDockResetWidth}
+        />
+      )}
 
       {/* Right: tabbed dock (今日 / 邮件 / 文件) or RAG knowledge nav. */}
       {rightDockOpen && (

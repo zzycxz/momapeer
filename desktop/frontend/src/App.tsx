@@ -2733,6 +2733,12 @@ export default function App() {
               closeTransientOverlays();
               setWorkspacePanelMaximized((value) => !value);
             }}
+            dockWidth={workspacePanelRenderWidth}
+            dockMinWidth={workspacePanelResizeMinWidth}
+            dockMaxAriaWidth={Math.max(workspacePanelMaxWidth, workspacePanelRenderWidth)}
+            onDockResizeStart={startWorkspacePanelResize}
+            onDockResizeKey={resizeWorkspacePanelWithKeyboard}
+            onDockResetWidth={() => setSavedWorkspacePanelWidth(workspacePanelResetWidth)}
           />
         )}
         <AppChrome

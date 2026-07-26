@@ -19030,7 +19030,11 @@ a[href] {
   grid-row: 2 / -1;
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: var(--sidebar-width, 260px) minmax(0, 1fr) auto;
+  /* sidebar | main | resizer | dock — the resizer column sits between main and
+     the dock so the workspace-panel-resizer (a relative-positioned grid item,
+     mirroring coding-mode) can be dragged to resize the dock. When the dock /
+     resizer are not rendered the trailing auto tracks collapse to nothing. */
+  grid-template-columns: var(--sidebar-width, 260px) minmax(0, 1fr) var(--workspace-resizer-width, 8px) auto;
   /* Pin the single row to the container's height. Without this the implicit
      row track defaults to `auto` (sized by content), so a tall ExpertPanel or
      ExpertSessionView stretches the row past the viewport and the inner
@@ -19042,10 +19046,27 @@ a[href] {
   min-height: 0;
   overflow: hidden;
   background: var(--bg);
+  /* Mirror the coding-mode .layout: animate grid column changes so collapsing
+     / expanding the sidebar slides smoothly instead of snapping. */
+  transition: grid-template-columns 0.16s ease;
 }
 
 .cowork-layout--sidebar-collapsed {
-  grid-template-columns: 0px minmax(0, 1fr) auto;
+  grid-template-columns: 0px minmax(0, 1fr) var(--workspace-resizer-width, 8px) auto;
+}
+
+/* The workspace-panel-resizer is shared with coding mode. The .app--cowork rule
+   above hides the coding-mode resizer (display:none) along with the rest of the
+   dev layout — but the cowork dock renders its OWN resizer with the same class
+   inside .cowork-layout, so we must re-show it here. Specificity ties with the
+   .app--cowork rule (0,2,0) and this comes later in source, so it wins. */
+.cowork-layout .workspace-panel-resizer {
+  display: block;
+  grid-row: 1;
+  grid-column: 3;
+  /* align-self:stretch fills the single cowork content row — the resizer has no
+     children, so without this it collapses to ~0px height and is unclickable. */
+  align-self: stretch;
 }
 
 :root[data-theme-style] .cowork-dock {
@@ -19061,10 +19082,20 @@ a[href] {
   background: var(--sidebar-bg);
   border-right: 1px solid var(--border-soft);
   min-height: 0;
+  /* min-width:0 lets the grid shrink this column to 0 on collapse (mirrors the
+     coding-mode .sidebar); otherwise min-width:auto would keep it at the
+     content's intrinsic width and break the collapse animation. */
+  min-width: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   padding: 14px 12px 0;
+  /* Pin to grid column 1 so the main/dock columns keep their slots even when
+     the sidebar is conditionally removed from the DOM on collapse. Without an
+     explicit column, auto-placement would drop cowork-main into the 0px-wide
+     collapsed column and it would visually vanish. */
+  grid-row: 1;
+  grid-column: 1;
 }
 
 :root[data-theme-style] .cowork-sidebar__scroll {
@@ -19085,6 +19116,10 @@ a[href] {
   background: var(--chat-bg);
   min-height: 0;
   height: 100%;
+  /* Pin to grid column 2 so it never lands in the sidebar's (possibly 0px)
+     column when the sidebar is conditionally unmounted on collapse. */
+  grid-row: 1;
+  grid-column: 2;
   /* Hidden, not auto: this is a layout shell (header + transcript + composer)
      whose height is already pinned by the .cowork-layout grid. Letting it
      scroll stole wheel events from the inner .cowork-main__transcript (the real
@@ -19100,6 +19135,10 @@ a[href] {
   background: var(--bg-elev);
   border-left: 1px solid var(--border-soft);
   min-height: 0;
+  /* Pin to grid column 4 (after sidebar=1, main=2, resizer=3) so it keeps its
+     slot regardless of which siblings are mounted. */
+  grid-row: 1;
+  grid-column: 4;
   /* The dock owns its layout (tools + body); no outer padding/scroll — the
      body scrolls internally so the tab strip stays pinned. Mirrors the
      coding-mode workbench-dock. */
@@ -21564,57 +21603,41 @@ a[href] {
   text-align: center;
   padding: 6px;
 }
-.rag-template__list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.rag-template__item {
-  padding: 10px 12px;
+/* Template dropdown */
+.rag-template__select {
+  width: 100%;
   border: 1px solid var(--border-soft);
   border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  outline: none;
   cursor: pointer;
+}
+.rag-template__select:focus {
+  border-color: var(--accent);
+}
+.rag-template__desc-card {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  transition: border-color 0.12s, background 0.12s;
-}
-.rag-template__item:hover {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border-soft));
-  background: color-mix(in srgb, var(--accent) 3%, transparent);
-}
-.rag-template__item--selected {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
-}
-.rag-template__item-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--fg);
-}
-.rag-template__item-desc {
-  font-size: 11px;
-  color: var(--fg-faint);
-}
-.rag-template__item-head {
-  display: flex;
-  align-items: center;
   gap: 6px;
 }
-.rag-template__item-type {
-  font-size: 10px;
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  padding: 1px 6px;
-  border-radius: 3px;
-  font-weight: 500;
+.rag-template__desc-text {
+  font-size: 11px;
+  color: var(--fg-faint);
+  line-height: 1.4;
 }
-.rag-template__item-fields {
+.rag-template__fields {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  margin-top: 4px;
 }
 .rag-template__field-group {
   display: flex;

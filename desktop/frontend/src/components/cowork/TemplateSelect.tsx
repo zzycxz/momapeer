@@ -300,50 +300,58 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
         </div>
       )}
 
-      {/* Template selection */}
+      {/* Template selection — dropdown */}
       <div className="rag-template__section">
         <span className="rag-template__label">提取模板</span>
-        <div className="rag-template__list">
-          {templates.length > 0 ? templates.map((t) => {
-            const entityFields = asArray(t.entityFields);
-            const relationFields = asArray(t.relationFields);
-            return (
-            <div
-              key={t.name}
-              className={`rag-template__item ${selectedTemplate === t.name ? "rag-template__item--selected" : ""}`}
-              onClick={() => setSelectedTemplate(t.name)}
+        {templates.length > 0 ? (
+          <>
+            <select
+              className="rag-template__select"
+              value={selectedTemplate}
+              onChange={(e) => setSelectedTemplate(e.target.value)}
             >
-              <div className="rag-template__item-head">
-                <span className="rag-template__item-name">{t.displayName}</span>
-                {t.templateType && <span className="rag-template__item-type">{t.templateType}</span>}
-              </div>
-              <span className="rag-template__item-desc">{t.description}</span>
-              {(entityFields.length > 0 || relationFields.length > 0) && (
-                <div className="rag-template__item-fields">
-                  {entityFields.length > 0 && (
-                    <span className="rag-template__field-group">
-                      <span className="rag-template__field-label">实体</span>
-                      {entityFields.map((f) => (
-                        <span key={f.name} className="rag-template__field-chip" title={f.description}>{f.name}</span>
-                      ))}
-                    </span>
-                  )}
-                  {relationFields.length > 0 && (
-                    <span className="rag-template__field-group">
-                      <span className="rag-template__field-label">关系</span>
-                      {relationFields.map((f) => (
-                        <span key={f.name} className="rag-template__field-chip" title={f.description}>{f.name}</span>
-                      ))}
-                    </span>
+              {templates.map((t) => (
+                <option key={t.name} value={t.name}>
+                  {t.displayName}{t.templateType ? ` · ${t.templateType}` : ""}
+                </option>
+              ))}
+            </select>
+            {/* Show selected template description + fields */}
+            {(() => {
+              const sel = templates.find((t) => t.name === selectedTemplate);
+              if (!sel) return null;
+              const entityFields = asArray(sel.entityFields);
+              const relationFields = asArray(sel.relationFields);
+              return (
+                <div className="rag-template__desc-card">
+                  <span className="rag-template__desc-text">{sel.description}</span>
+                  {(entityFields.length > 0 || relationFields.length > 0) && (
+                    <div className="rag-template__fields">
+                      {entityFields.length > 0 && (
+                        <span className="rag-template__field-group">
+                          <span className="rag-template__field-label">实体</span>
+                          {entityFields.map((f) => (
+                            <span key={f.name} className="rag-template__field-chip" title={f.description}>{f.name}</span>
+                          ))}
+                        </span>
+                      )}
+                      {relationFields.length > 0 && (
+                        <span className="rag-template__field-group">
+                          <span className="rag-template__field-label">关系</span>
+                          {relationFields.map((f) => (
+                            <span key={f.name} className="rag-template__field-chip" title={f.description}>{f.name}</span>
+                          ))}
+                        </span>
+                      )}
+                    </div>
                   )}
                 </div>
-              )}
-            </div>
-            );
-          }) : (
-            <div className="rag-template__empty">暂无可用模板</div>
-          )}
-        </div>
+              );
+            })()}
+          </>
+        ) : (
+          <div className="rag-template__empty">暂无可用模板</div>
+        )}
       </div>
 
       {/* Action buttons */}
