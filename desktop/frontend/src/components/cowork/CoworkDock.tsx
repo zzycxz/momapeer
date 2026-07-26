@@ -22,6 +22,7 @@ import {
   CircleDashed,
   FileText,
   Folder,
+  FolderPlus,
   Mail,
 
   RefreshCw,
@@ -30,6 +31,7 @@ import {
 } from "lucide-react";
 
 import { app, onRagChanged, onRagProgress } from "../../lib/bridge";
+import { useToast } from "../../lib/toast";
 
 // realApp mirrors bridge.ts's private helper: returns the Wails binding only
 // when window.go.main.App is present (i.e. we are inside the desktop shell).
@@ -525,6 +527,52 @@ function RagDock({
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState("");
   const [newCollectionParent, setNewCollectionParent] = useState("");
+  const { showToast } = useToast();
+
+  // Import files directly into a specific collection from the dock.
+  const handleImportToCollection = async (collectionName: string) => {
+    try {
+      const path = await app.PickWorkspace();
+      if (!path) return;
+      const res = await app.RagImportPaths(collectionName, [path]);
+      showToast(`已导入 ${res.files} 个文件到「${collectionName}」。FTS5 即时可搜，点⚡提取生成知识图谱`, "info");
+      refreshCollections();
+    } catch (e) {
+      showToast(String(e), "error");
+    }
+  };
+
+  const refreshCollections = useCallback(() => {
+    (app as unknown as { ListRagCollections: () => Promise<RagCollectionView[]> })
+      .ListRagCollections()
+      .then(setCollections)
+      .catch(() => {});
+  }, []);
+
+  // Quick extract a single collection (incremental) without switching to the extract tab.
+  const handleQuickExtract = async (collectionName: string) => {
+    try {
+      await app.RagStartExtract(collectionName, "general/graph", "incremental");
+      showToast(`正在提取「${collectionName}」…`, "info");
+    } catch (e) {
+      const msg = String(e);
+      if (msg.includes("已提取完成")) {
+        showToast(`「${collectionName}」已全部提取完成`, "info");
+      } else {
+        showToast(`提取失败：${msg}`, "error");
+      }
+    }
+  };
+
+  // Drag-and-drop import into the dock — drops onto the collections area.
+  const [dragOver, setDragOver] = useState(false);
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    // Wails delivers drops to the window-level onFilesDropped handler in RagPanel.
+    // Here we just provide the visual drag highlight; the actual import is handled
+    // by the existing bridge. The activeCollection at drop time determines target.
+  };
 
   // Initial load: collections + session-scoped collections.
   useEffect(() => {
@@ -667,7 +715,12 @@ function RagDock({
       <div className="cowork-dock__body">
         {/* === 分类 tab === */}
         {tab === "collections" && (
-          <div className="rag-dock__collections">
+          <div
+            className={`rag-dock__collections ${dragOver ? "rag-dock__collections--drag" : ""}`}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => void handleDrop(e)}
+          >
             <div className="rag-dock__collection-header">
               <span className="rag-dock__collection-title">激活集合</span>
               <div className="rag-dock__collection-actions">
@@ -754,6 +807,20 @@ function RagDock({
                     {c.name}
                   </span>
                   <button
+                    className="rag-dock__collection-action-btn"
+                    title={`导入文件到此分类`}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); void handleImportToCollection(c.name); }}
+                  >
+                    <FolderPlus size={12} />
+                  </button>
+                  <button
+                    className="rag-dock__collection-action-btn"
+                    title={`增量提取此分类`}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); void handleQuickExtract(c.name); }}
+                  >
+                    <Zap size={12} />
+                  </button>
+                  <button
                     className="rag-dock__collection-delete"
                     title={`删除分类及全部文档`}
                     onClick={(e) => {
@@ -762,12 +829,7 @@ function RagDock({
                       if (window.confirm(`删除分类"${c.name}"及其全部 ${c.documents} 个文档和 ${c.entities} 个实体？\n\n此操作不可撤销。`)) {
                         (app as unknown as { RagDeleteCollection: (n: string) => Promise<void> })
                           .RagDeleteCollection(c.name)
-                          .then(() => {
-                            (app as unknown as { ListRagCollections: () => Promise<RagCollectionView[]> })
-                              .ListRagCollections()
-                              .then(setCollections)
-                              .catch(() => {});
-                          })
+                          .then(() => refreshCollections())
                           .catch(() => {});
                       }
                     }}
@@ -794,6 +856,11 @@ function RagDock({
         {tab === "extract" && (
           <TemplateSelect
             collection={activeCollection}
+            collections={collections}
+            onCollectionChange={(name) => {
+              setActiveCollection(name);
+              window.dispatchEvent(new CustomEvent("rag:collection-selected", { detail: { collection: name } }));
+            }}
             onBack={() => setTab("files")}
           />
         )}
@@ -801,14 +868,45 @@ function RagDock({
         {/* === 文件 tab === */}
         {tab === "files" && (
           <div className="rag-dock__files">
+            {/* 分类快速切换 */}
+            <select
+              className="rag-dock__file-select"
+              value={activeCollection}
+              onChange={(e) => {
+                setActiveCollection(e.target.value);
+                window.dispatchEvent(new CustomEvent("rag:collection-selected", { detail: { collection: e.target.value } }));
+              }}
+            >
+              <option value="">全部</option>
+              {collections.map((c) => (
+                <option key={c.path || c.name} value={c.name}>
+                  {c.parent ? "└ " : ""}{c.name} ({c.documents})
+                </option>
+              ))}
+            </select>
+
             {/* 文件列表 */}
             {tree.length === 0 ? (
-                  <div className="cowork-dock__empty-state">
-                    <FileText size={22} />
-                    <p>暂无文件</p>
-                  </div>
-                ) : (
-                  <div className="rag-dock__file-tree">
+              activeCollection ? (
+                <div className="cowork-dock__empty-state">
+                  <FileText size={22} />
+                  <p>此分类暂无文件</p>
+                  <button
+                    className="btn btn--small btn--primary"
+                    onClick={() => void handleImportToCollection(activeCollection)}
+                  >
+                    <FolderPlus size={14} />
+                    <span>导入文件</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="cowork-dock__empty-state">
+                  <FileText size={22} />
+                  <p>暂无文件</p>
+                </div>
+              )
+            ) : (
+              <div className="rag-dock__file-tree">
                     {tree.map((node) => (
                       <RagNode
                         key={node.key}

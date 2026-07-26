@@ -41,13 +41,15 @@ interface ExtractJob {
 
 export interface TemplateSelectProps {
   collection: string;
+  collections?: Array<{ name: string; path: string; parent: string }>;
+  onCollectionChange?: (name: string) => void;
   onBack: () => void;
   onViewGraph?: () => void;
 }
 
 const MAX_POLL_TICKS = 150; // 150 × 2s = 5min max
 
-export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSelectProps) {
+export function TemplateSelect({ collection, collections, onCollectionChange, onBack, onViewGraph }: TemplateSelectProps) {
   const { showToast } = useToast();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [heReady, setHeReady] = useState<boolean | null>(null);
@@ -282,10 +284,25 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
         <span className="rag-template__title">深度提取</span>
       </div>
 
-      {/* Collection */}
+      {/* Collection — dropdown selector */}
       <div className="rag-template__section">
         <span className="rag-template__label">集合</span>
-        <span className="rag-template__value">{collection || "全部"}</span>
+        {collections && onCollectionChange ? (
+          <select
+            className="rag-template__select"
+            value={collection}
+            onChange={(e) => onCollectionChange(e.target.value)}
+          >
+            <option value="">全部</option>
+            {collections.map((c) => (
+              <option key={c.path || c.name} value={c.name}>
+                {c.parent ? "└ " : ""}{c.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="rag-template__value">{collection || "全部"}</span>
+        )}
       </div>
 
       {/* HE service status */}

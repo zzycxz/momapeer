@@ -21381,6 +21381,12 @@ a[href] {
   min-height: 0;
   overflow-y: auto;
 }
+.rag-dock__collections--drag {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+}
+}
 .rag-dock__collection-header {
   display: flex;
   align-items: center;
@@ -21433,6 +21439,7 @@ a[href] {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.rag-dock__collection-action-btn,
 .rag-dock__collection-delete {
   display: flex;
   align-items: center;
@@ -21448,12 +21455,32 @@ a[href] {
   transition: opacity 0.12s, color 0.12s, background 0.12s;
   flex: 0 0 auto;
 }
+.rag-dock__collection-item:hover .rag-dock__collection-action-btn,
 .rag-dock__collection-item:hover .rag-dock__collection-delete {
   opacity: 1;
+}
+.rag-dock__collection-action-btn:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .rag-dock__collection-delete:hover {
   color: var(--err, #dc2626);
   background: color-mix(in srgb, var(--err, #dc2626) 12%, transparent);
+}
+.rag-dock__file-select {
+  margin: 0 8px 8px;
+  width: calc(100% - 16px);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 12px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  outline: none;
+}
+.rag-dock__file-select:focus {
+  border-color: var(--accent);
 }
 .rag-dock__collection-stats {
   color: var(--fg-faint);
