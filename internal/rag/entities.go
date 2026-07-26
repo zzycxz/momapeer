@@ -652,12 +652,28 @@ func (s *Store) MarkChunkDone(chunkID string, jobID string, latencyMs int64, err
 		status = ChunkError
 		errMsg = err.Error()
 	}
+	// Skip if this chunk was already marked done/error (idempotent guard
+	// against double-counting from Resume or retry edge cases).
+	var prevStatus string
+	if e := tx.QueryRow(`SELECT status FROM rag_chunks WHERE id = ?`, chunkID).Scan(&prevStatus); e != nil {
+		return e
+	}
+	if prevStatus == ChunkDone || prevStatus == ChunkError {
+		return tx.Commit() // already processed — don't double-count
+	}
 	if _, e := tx.Exec(`UPDATE rag_chunks SET status = ?, latency_ms = ?, error_msg = ?, attempts = attempts + 1 WHERE id = ?`,
 		status, latencyMs, errMsg, chunkID); e != nil {
 		return e
 	}
-	if _, e := tx.Exec(`UPDATE rag_jobs SET done_chunks = done_chunks + 1, updated_at = ? WHERE id = ?`,
-		time.Now().UTC().Format(time.RFC3339), jobID); e != nil {
+	// Count actual done/error chunks rather than incrementing a counter —
+	// avoids overflow when done_chunks gets out of sync.
+	var doneCount int
+	if e := tx.QueryRow(`SELECT COUNT(*) FROM rag_chunks WHERE job_id = ? AND status IN (?, ?)`,
+		jobID, ChunkDone, ChunkError).Scan(&doneCount); e != nil {
+		return e
+	}
+	if _, e := tx.Exec(`UPDATE rag_jobs SET done_chunks = ?, updated_at = ? WHERE id = ?`,
+		doneCount, time.Now().UTC().Format(time.RFC3339), jobID); e != nil {
 		return e
 	}
 	// If all chunks done, flip job status.
