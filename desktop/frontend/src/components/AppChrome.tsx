@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Minus, PanelLeft, PanelRight, Search, Square, X } from "lucide-react";
 import { TabBar } from "./TabBar";
 import type { TabMeta } from "../lib/types";
@@ -163,24 +164,9 @@ export function AppChrome({
           <PanelRight size={16} />
         </button>
       )}
-      {/* Profile switcher: toggles between dev (coding) and cowork (office).
-          Button shows the TARGET mode (what you'll switch TO), not the current mode.
-          A dot indicator marks the current active mode. */}
-      <button
-        className={[
-          "app-chrome__profile-toggle",
-          profile.toLowerCase() === "cowork" ? "app-chrome__profile-toggle--cowork" : "",
-        ].filter(Boolean).join(" ")}
-        type="button"
-        onClick={() => onSwitchProfile(profile.toLowerCase() === "cowork" ? "dev" : "cowork")}
-        aria-label={profile.toLowerCase() === "cowork" ? t("cowork.switchToDev") : t("cowork.switchToCoWork")}
-        title={profile.toLowerCase() === "cowork" ? t("cowork.switchToDev") : t("cowork.switchToCoWork")}
-      >
-        <span className="app-chrome__profile-dot" aria-hidden="true" />
-        <span className="app-chrome__profile-label">
-          {profile.toLowerCase() === "cowork" ? t("cowork.badgeCoWork") : t("cowork.badgeDev")}
-        </span>
-      </button>
+      {/* Profile segmented switcher: a pill control with a sliding highlight
+          indicator. See ProfileSegmented below. */}
+      <ProfileSegmented profile={profile} onSwitchProfile={onSwitchProfile} t={t} />
       {showWindowsPreviewControls && (
         <div className="app-chrome__window-controls app-chrome__window-controls--windows" aria-hidden="true">
           <span className="app-chrome__window-control app-chrome__window-control--minimize">
@@ -195,5 +181,77 @@ export function AppChrome({
         </div>
       )}
     </header>
+  );
+}
+
+/* Profile segmented switcher: a pill control with a sliding highlight indicator.
+   Config-driven — to add a third entry (e.g. "academic"), push a segment to the
+   array and the indicator auto-splits to fit (width = 100%/N via --seg-count);
+   the slider tracks activeIdx with translateX(idx * 100%). No CSS/JS change.
+
+   Visual feedback: keeps a LOCAL optimistic active index so clicking a segment
+   instantly moves the highlight and flips it to the accent color, without
+   waiting for the backend's profile:changed event to round-trip. An effect
+   re-syncs the local index whenever the `profile` prop changes (e.g. when the
+   switch lands, or when the active tab changes elsewhere), so the indicator
+   never desyncs from the real state. */
+const PROFILE_SEGMENTS = [
+  { key: "dev", labelKey: "cowork.badgeDev", titleKey: "cowork.switchToDev" },
+  { key: "cowork", labelKey: "cowork.badgeCoWork", titleKey: "cowork.switchToCoWork" },
+] as const;
+
+function ProfileSegmented({
+  profile,
+  onSwitchProfile,
+  t,
+}: {
+  profile: string;
+  onSwitchProfile: (name: string) => void;
+  t: (key: never, vars?: Record<string, string | number>) => string;
+}) {
+  const activeKey = profile.toLowerCase() === "cowork" ? "cowork" : "dev";
+  const propIdx = Math.max(
+    0,
+    PROFILE_SEGMENTS.findIndex((s) => s.key === activeKey),
+  );
+  // Optimistic local index — updates instantly on click; re-synced from prop.
+  const [activeIdx, setActiveIdx] = useState(propIdx);
+  useEffect(() => {
+    setActiveIdx(propIdx);
+  }, [propIdx]);
+
+  return (
+    <div
+      className="app-chrome__profile-seg"
+      role="tablist"
+      aria-label="Profile"
+      style={{ "--seg-count": PROFILE_SEGMENTS.length } as Record<string, number>}
+    >
+      <span
+        className="app-chrome__profile-seg-indicator"
+        style={{ transform: `translateX(${activeIdx * 100}%)` }}
+        aria-hidden="true"
+      />
+      {PROFILE_SEGMENTS.map((seg, i) => (
+        <button
+          key={seg.key}
+          type="button"
+          role="tab"
+          aria-selected={i === activeIdx}
+          className={[
+            "app-chrome__profile-seg-item",
+            i === activeIdx ? "app-chrome__profile-seg-item--active" : "",
+          ].filter(Boolean).join(" ")}
+          onClick={() => {
+            // Optimistic: move highlight immediately for instant feedback.
+            setActiveIdx(i);
+            onSwitchProfile(seg.key);
+          }}
+          title={t(seg.titleKey as never)}
+        >
+          {t(seg.labelKey as never)}
+        </button>
+      ))}
+    </div>
   );
 }
