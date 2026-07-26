@@ -109,7 +109,7 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
   const handleSilentExtract = async () => {
     setLoading(true);
     try {
-      await app.RagStartExtract(collection, selectedTemplate);
+      await app.RagStartExtract(collection, selectedTemplate, "silent");
       onBack();
     } catch (e) {
       const msg = String(e);
@@ -120,6 +120,66 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleFullExtract = async () => {
+    if (!window.confirm("确定重新提取全部文档？已有实体和关系将被清空。")) return;
+    setLoading(true);
+    setJobs([]);
+    setShowResult(false);
+    setResult(null);
+    try {
+      await app.RagStartExtract(collection, selectedTemplate, "full");
+      stopPolling();
+      let ticks = 0;
+      pollRef.current = setInterval(() => {
+        ticks++;
+        Promise.all([
+          app.ListRagTree(collection),
+          app.RagExtractResult(collection),
+        ]).then(([tree, extractResult]) => {
+          const flat = flatNodes(tree);
+          const mapped: ExtractJob[] = flat
+            .filter((n) => n.status === "extracting" || n.status === "queued" || n.status === "error" || n.status === "enriched")
+            .map((n) => ({
+              id: n.jobId || n.key,
+              collection,
+              path: n.path || n.label,
+              template: selectedTemplate,
+              status: n.status === "error" ? "failed" : n.status === "enriched" ? "done" : n.status,
+              progress: n.totalChunks > 0 ? Math.round((n.doneChunks / n.totalChunks) * 100) : 0,
+              error: n.errorMsg ?? "",
+              entities: n.entityCount ?? 0,
+              relations: 0,
+            }));
+          setJobs(mapped);
+          setResult(extractResult);
+          const fileNodes = flat.filter((n) => n.kind === "file");
+          const allDone = fileNodes.length === 0 || fileNodes.every(
+            (n) => n.status !== "extracting" && n.status !== "queued" && n.status !== "pending"
+          );
+          if (allDone || ticks >= MAX_POLL_TICKS) {
+            stopPolling();
+            setLoading(false);
+            const errorCount = mapped.filter((j) => j.status === "failed").length;
+            if (errorCount > 0) {
+              showToast(`提取完成，但有 ${errorCount} 个文件失败`, "warn");
+            }
+            if (extractResult.hasData) {
+              setShowResult(true);
+            }
+          }
+        }).catch(() => {
+          if (ticks >= MAX_POLL_TICKS) {
+            stopPolling();
+            setLoading(false);
+          }
+        });
+      }, 2000);
+    } catch (e) {
+      setLoading(false);
+      showToast(`启动提取失败：${e}`, "error");
     }
   };
 
@@ -142,7 +202,7 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
     setResult(null);
 
     try {
-      await app.RagStartExtract(collection, selectedTemplate);
+      await app.RagStartExtract(collection, selectedTemplate, "incremental");
       // Poll for progress with timeout guard.
       stopPolling();
       let ticks = 0;
@@ -301,20 +361,30 @@ export function TemplateSelect({ collection, onBack, onViewGraph }: TemplateSele
         ) : (
           <>
             <button
-              className="btn rag-template__btn"
-              onClick={() => void handleSilentExtract()}
-              disabled={loading}
-            >
-              <Clock size={14} />
-              <span>静默理解</span>
-            </button>
-            <button
               className="btn btn--primary rag-template__btn"
               onClick={() => void handleImmediateExtract()}
               disabled={loading}
             >
               <Zap size={14} />
-              <span>立即理解</span>
+              <span>增量理解</span>
+            </button>
+            <button
+              className="btn rag-template__btn"
+              onClick={() => void handleFullExtract()}
+              disabled={loading}
+              title="清空已有实体，重新提取全部文档"
+            >
+              <RefreshCw size={14} />
+              <span>重新理解</span>
+            </button>
+            <button
+              className="btn rag-template__btn"
+              onClick={() => void handleSilentExtract()}
+              disabled={loading}
+              title="后台静默提取，不等待"
+            >
+              <Clock size={14} />
+              <span>静默理解</span>
             </button>
           </>
         )}

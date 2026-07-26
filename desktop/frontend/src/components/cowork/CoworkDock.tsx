@@ -805,8 +805,8 @@ function RagDock({
                         depth={0}
                         onStartExtract={(n) => {
                           if (n.path) {
-                            (app as unknown as { RagStartExtract: (c: string, p: string) => Promise<void> })
-                              .RagStartExtract(activeCollection, n.path)
+                            (app as unknown as { RagStartExtract: (c: string, t: string, m: string) => Promise<void> })
+                              .RagStartExtract(activeCollection, n.path, "incremental")
                               .then(() => refreshTree())
                               .catch(() => refreshTree());
                           }

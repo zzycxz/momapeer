@@ -292,14 +292,17 @@ func (a *App) RagImportPaths(collection string, paths []string) (RagImportResult
 	}, nil
 }
 
-// RagStartExtract triggers deep extraction. Incremental: only extracts documents
-// that haven't been successfully extracted yet (pending/error/extracting/cancelled).
-// Already-done documents keep their entities — no clearing, no wasted API calls.
-// This avoids the "full re-extract every time" problem that caused API rate
-// limits (429) and wasted tokens on already-extracted documents.
-func (a *App) RagStartExtract(collection, template string) error {
+// RagStartExtract triggers deep extraction with a mode selector.
+//   - "incremental" (default): only extract pending/error documents, skip done.
+//   - "full": clear all entities/relations, re-extract everything.
+//   - "silent": same as incremental but the caller returns immediately (no polling).
+func (a *App) RagStartExtract(collection, template, mode string) error {
 	if collection == "" {
 		collection = "default"
+	}
+	// Normalize mode — empty defaults to incremental.
+	if mode != "full" && mode != "silent" {
+		mode = "incremental"
 	}
 	isTemplate := rag.IsTemplate(template)
 
@@ -318,11 +321,18 @@ func (a *App) RagStartExtract(collection, template string) error {
 	}
 
 	if isTemplate {
-		// Incremental: only re-enqueue jobs that are NOT done. Done jobs keep
-		// their entities — no clearing, no wasting API calls on already-extracted files.
 		if a.ragStore == nil {
 			return fmt.Errorf("RAG store offline")
 		}
+
+		// "full" mode: wipe entities/relations first so the graph reflects fresh extraction.
+		if mode == "full" {
+			if err := a.ragStore.DeleteCollectionEntities(collection); err != nil {
+				return fmt.Errorf("clear entities for full re-extract: %w", err)
+			}
+			slog.Info("rag: full re-extract (entities cleared)", "collection", collection)
+		}
+
 		jobs, err := a.ragStore.AllJobs()
 		if err != nil {
 			return fmt.Errorf("list jobs: %w", err)
@@ -334,9 +344,11 @@ func (a *App) RagStartExtract(collection, template string) error {
 			if j.Collection != normalizeCollectionRag(collection) || seen[j.Path] {
 				continue
 			}
-			if j.Status == "done" {
+			// In "full" mode, re-extract ALL documents.
+			// In "incremental"/"silent" mode, skip already-done documents.
+			if mode != "full" && j.Status == "done" {
 				skipped++
-				continue // already extracted — skip
+				continue
 			}
 			paths = append(paths, j.Path)
 			seen[j.Path] = true
@@ -344,12 +356,12 @@ func (a *App) RagStartExtract(collection, template string) error {
 		if len(paths) == 0 {
 			return fmt.Errorf("所有文档已提取完成（跳过 %d 个），无需重复提取", skipped)
 		}
-		slog.Info("rag: incremental extract", "collection", collection, "pending", len(paths), "skipped_done", skipped)
+		slog.Info("rag: extract started", "collection", collection, "mode", mode, "to-extract", len(paths), "skipped_done", skipped)
 		if _, err := a.ragPipeline.EnqueuePaths(collection, paths, nodePrompt, edgePrompt, true); err != nil {
 			return err
 		}
 	} else {
-		// Single file path: re-extract just that file.
+		// Single file path: re-extract just that file (mode ignored for single-file).
 		if _, err := a.ragPipeline.EnqueuePaths(collection, []string{template}, "", "", true); err != nil {
 			return err
 		}

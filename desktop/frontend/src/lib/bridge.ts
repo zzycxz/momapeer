@@ -375,7 +375,7 @@ export interface AppBindings {
   ListRagCollections(): Promise<RagCollectionView[]>;
   ListRagTree(collection: string): Promise<RagNodeView[]>;
   RagImportPaths(collection: string, paths: string[]): Promise<RagImportResult>;
-  RagStartExtract(collection: string, path: string): Promise<void>;
+  RagStartExtract(collection: string, template: string, mode: string): Promise<void>;
   RagExtractResult(collection: string): Promise<RagExtractResultView>;
   RagCancelExtract(jobId: string): Promise<void>;
   RagRemovePath(collection: string, path: string): Promise<void>;
@@ -3211,8 +3211,8 @@ function makeMockApp(): AppBindings {
       mockRagDocs += files;
       return { jobIds, files, ftsChunks: files * 4, message: `mock：已导入 ${files} 个文件` };
     },
-    async RagStartExtract(_collection: string, path: string): Promise<void> {
-      const node = mockRagTree.find((n) => n.path === path);
+    async RagStartExtract(_collection: string, _template: string, _mode: string): Promise<void> {
+      const node = mockRagTree.find((n) => n.path === _template);
       if (node) { node.status = "extracting"; node.doneChunks = 0; node.totalChunks = node.totalChunks || 8; simulateRagProgress(node.jobId, node); }
     },
     async RagExtractResult(_collection: string): Promise<RagExtractResultView> {
