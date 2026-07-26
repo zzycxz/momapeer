@@ -80,7 +80,7 @@ type PipelineConfig struct {
 func DefaultPipelineConfig() PipelineConfig {
 	return PipelineConfig{
 		Concurrency: 1,
-		Interval:    5 * time.Second,
+		Interval:    3 * time.Second,
 		MaxRetries:  2, // 2 attempts per chunk (1 retry); fail fast so progress moves
 		RetryBase:   2 * time.Second,
 		ChunkSize:   0, // use chunkDoc's default (3000 chars)
@@ -440,7 +440,7 @@ func (p *Pipeline) processTask(workerID int, t chunkTask) {
 	// Mark job as extracting (idempotent; first chunk flips pending→extracting).
 	_ = p.store.SetJobStatus(t.JobID, JobExtracting)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 
 	start := time.Now()

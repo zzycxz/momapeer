@@ -554,12 +554,12 @@ function GraphCanvasInner({
               }} />
             </div>
           </div>
-          {/* Dynamic hint: normal / stalled 15s / stalled 45s */}
-          {stalledSecs < 15 ? (
+          {/* Dynamic hint: normal / stalled 60s / stalled 120s */}
+          {stalledSecs < 60 ? (
             <span className="rag-graph__empty-hint" style={{ marginTop: "12px" }}>{t("cowork.ragGraphExtractingHint")}</span>
-          ) : stalledSecs < 45 ? (
+          ) : stalledSecs < 120 ? (
             <span className="rag-graph__empty-hint" style={{ marginTop: "12px", color: "var(--fg-dim)" }}>
-              ⏳ LLM 响应较慢，正在等待当前块完成（约 {30 - (stalledSecs % 30)}s 后超时重试）
+              ⏳ 当前文档较长，正在提取中…
             </span>
           ) : (
             <span className="rag-graph__empty-hint" style={{ marginTop: "12px", color: "color-mix(in srgb, orange 70%, var(--fg-dim))" }}>

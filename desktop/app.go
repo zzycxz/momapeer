@@ -436,6 +436,17 @@ func (a *App) initRAG() {
 	}
 	if extractor == nil {
 		slog.Warn("rag: extract model not configured — deep extraction disabled (FTS5 still works)")
+	} else {
+		// Wire the global RPM budget into the extractor so RAG extraction
+		// shares the user-configured RPM limit instead of hammering the API
+		// and getting 429'd. Extraction runs at background priority so it
+		// doesn't starve interactive conversation.
+		if budget := boot.GlobalBudget(); budget != nil {
+			if bs, ok := extractor.(ragpkg.BudgetSetter); ok {
+				bs.SetBudget(budget, "rag-extract")
+				slog.Info("rag: RPM budget wired", "rpm", budget.Status("").RPM)
+			}
+		}
 	}
 	a.ragPipeline = ragpkg.NewPipeline(store, extractor, cfg, func(ev ragpkg.ProgressEvent) {
 		if a.ctx != nil {
