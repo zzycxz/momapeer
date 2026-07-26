@@ -25,6 +25,7 @@ import {
   Mail,
 
   RefreshCw,
+  Trash2,
   Zap,
 } from "lucide-react";
 
@@ -732,7 +733,7 @@ function RagDock({
                           : activeCollections.filter((n) => n !== c.name);
                       }
                       setActiveCollections(next);
-                      (app as unknown as { SetSessionCollections: (c2: string[]) => Promise<void> })
+                      (app as unknown as { SetSessionCollections: (c: string[]) => Promise<void> })
                         .SetSessionCollections(next ?? [])
                         .catch(() => {});
                     }}
@@ -744,9 +745,18 @@ function RagDock({
                       setTab("files");
                     }}
                     style={{ cursor: "pointer" }}
-                    onContextMenu={(e) => {
+                    title={`${c.documents} 文档 · ${c.entities} 实体`}
+                  >
+                    {c.parent ? "└ " : "📁 "}
+                    {c.name}
+                  </span>
+                  <button
+                    className="rag-dock__collection-delete"
+                    title={`删除分类及全部文档`}
+                    onClick={(e) => {
                       e.preventDefault();
-                      if (window.confirm(`删除分类"${c.name}"及其所有文档？`)) {
+                      e.stopPropagation();
+                      if (window.confirm(`删除分类"${c.name}"及其全部 ${c.documents} 个文档和 ${c.entities} 个实体？\n\n此操作不可撤销。`)) {
                         (app as unknown as { RagDeleteCollection: (n: string) => Promise<void> })
                           .RagDeleteCollection(c.name)
                           .then(() => {
@@ -758,11 +768,9 @@ function RagDock({
                           .catch(() => {});
                       }
                     }}
-                    title={`右键删除 · ${c.documents} 文档 · ${c.entities} 实体`}
                   >
-                    {c.parent ? "└ " : "📁 "}
-                    {c.name}
-                  </span>
+                    <Trash2 size={12} />
+                  </button>
                   <span className="rag-dock__collection-stats">
                     {c.documents > 0 ? `${c.documents}` : ""}
                   </span>

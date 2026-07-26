@@ -2866,7 +2866,7 @@ function makeMockApp(): AppBindings {
     async ListTabs() {
       return mockTabs.map((tab) => ({ ...tab }));
     },
-    async OpenProjectTab(workspaceRoot: string, _topicID: string, _profile?: string) {
+    async OpenProjectTab(workspaceRoot: string, _topicID: string, profile?: string) {
       const existing = mockTabs.find((tab) => tab.scope === "project" && tab.workspaceRoot === workspaceRoot && tab.topicId === _topicID);
       if (existing) {
         const active = { ...existing, active: true, running: mockTopicRunsInScenario(_topicID) };
@@ -2889,11 +2889,12 @@ function makeMockApp(): AppBindings {
         toolApprovalMode: "ask",
         active: true,
         cwd: workspaceRoot,
+        profile: (profile || "dev").toLowerCase(),
       };
       mockTabs = [...mockTabs.map((item) => ({ ...item, active: false })), tab];
       return { ...tab };
     },
-    async OpenGlobalTab(_topicID: string, _profile?: string) {
+    async OpenGlobalTab(_topicID: string, profile?: string) {
       const existing = mockTabs.find((tab) => tab.scope === "global" && tab.topicId === _topicID);
       if (existing) {
         setMockActiveTab(existing.id);
@@ -2914,6 +2915,7 @@ function makeMockApp(): AppBindings {
         toolApprovalMode: "ask",
         active: true,
         cwd: "",
+        profile: (profile || "dev").toLowerCase(),
       };
       mockTabs = [...mockTabs.map((item) => ({ ...item, active: false })), tab];
       return { ...tab };

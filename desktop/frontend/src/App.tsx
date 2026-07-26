@@ -1290,6 +1290,15 @@ export default function App() {
           // of the current tab's profile.
           await ensureBlankTab(curScope, curRoot, targetProfile);
         }
+        // Optimistically flip the layout so the view swaps immediately, without
+        // waiting for the backend's profile:changed event to round-trip. The
+        // active-tab-sync effect re-confirms (or corrects) coworkActive once the
+        // new tab's profile field arrives; this just removes the dead time. In
+        // the browser dev mock (no Go backend) this flip is what makes the
+        // CoWorkLayout actually render, since the event never fires.
+        const nextCowork = targetProfile === "cowork";
+        setCoworkActive(nextCowork);
+        profileRef.current = nextCowork ? "cowork" : "dev";
         setProjectRevision((v) => v + 1);
       } catch (err) {
         console.error("[switchProfile] failed:", err);
@@ -2772,7 +2781,7 @@ export default function App() {
             {projectTreeNode}
           </section>
 
-          <section className="cowork-sidebar__group" style={{ padding: '0 8px', marginBottom: '16px' }}>
+          <section className="cowork-sidebar__group" style={{ padding: '0 8px', marginBottom: '0px', marginTop: 'auto' }}>
             <button
               className={`cowork-sidebar__item ${preferenceOpen ? "cowork-sidebar__item--active" : ""}`}
               onClick={() => {

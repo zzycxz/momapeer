@@ -21379,6 +21379,32 @@ a[href] {
 .rag-dock__collection-name {
   color: var(--fg);
   font-weight: 500;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rag-dock__collection-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+  flex: 0 0 auto;
+}
+.rag-dock__collection-item:hover .rag-dock__collection-delete {
+  opacity: 1;
+}
+.rag-dock__collection-delete:hover {
+  color: var(--err, #dc2626);
+  background: color-mix(in srgb, var(--err, #dc2626) 12%, transparent);
 }
 .rag-dock__collection-stats {
   color: var(--fg-faint);
@@ -23901,7 +23927,10 @@ a[href] {
   
 /* Cowork top bar UI alignment fix */
 .app--cowork .app-chrome__tab-strip { display: flex !important; }
-.app--cowork .app-chrome__panel-toggle--left { display: none !important; }
+/* The left sidebar-collapse toggle (app-chrome__panel-toggle--left) is shown in
+   cowork mode too: CoWorkLayout consumes sidebarCollapsed (it adds the
+   cowork-layout--sidebar-collapsed class and conditionally renders the aside),
+   so the same control that collapses the sidebar in coding mode works here. */
 
 /* --- RAG / cowork responsive layout ---
    The knowledge-base panels (toolbar, graph, dock) were designed for wide

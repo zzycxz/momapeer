@@ -104,13 +104,13 @@ export function CoWorkLayout({
             <span>{t("cowork.newTask") || "新建任务"}</span>
           </button>
 
-          <section className="sidebar__section sidebar__section--projects" style={{ marginBottom: '16px', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <section className="sidebar__section sidebar__section--projects" style={{ marginBottom: '8px', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
             {projectTreeNode}
           </section>
 
 
 
-          <section className="cowork-sidebar__group" style={{ marginBottom: '16px', marginTop: 'auto' }}>
+          <section className="cowork-sidebar__group" style={{ marginBottom: '0px', marginTop: 'auto' }}>
             <button
               className={`cowork-sidebar__item ${activePanel === "preference" ? "cowork-sidebar__item--active" : ""}`}
               onClick={() => setActivePanel("preference")}
