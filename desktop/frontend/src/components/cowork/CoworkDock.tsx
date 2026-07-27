@@ -19,6 +19,8 @@ import { useCallback, useEffect, useState } from "react";
 import {
   CalendarClock,
   CalendarDays,
+  ChevronDown,
+  ChevronRight,
   CircleDashed,
   FileText,
   Folder,
@@ -518,7 +520,7 @@ function RagDock({
   const [collections, setCollections] = useState<RagCollectionView[]>([]);
   const [activeCollection, setActiveCollection] = useState("");
   // activeCollections: null = "all selected", string[] = explicit subset.
-  const [activeCollections, setActiveCollections] = useState<string[] | null>(null);
+  const [, setActiveCollections] = useState<string[] | null>(null);
   const [tree, setTree] = useState<RagNodeView[]>([]);
   const [entityName, setEntityName] = useState<string | null>(null);
   const [entityCollection, setEntityCollection] = useState<string | null>(null);
@@ -528,6 +530,15 @@ function RagDock({
   const [newCollectionName, setNewCollectionName] = useState("");
   const [newCollectionParent, setNewCollectionParent] = useState("");
   const { showToast } = useToast();
+  const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
+  const toggleCat = (path: string) => {
+    setExpandedCats((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
 
   // Import files directly into a specific collection from the dock.
   const handleImportToCollection = async (collectionName: string) => {
@@ -746,102 +757,115 @@ function RagDock({
               </div>
             </div>
 
-            {/* "全部" pseudo-collection */}
-            <label className="rag-dock__collection-item">
-              <input
-                type="checkbox"
-                checked={activeCollections === null}
-                onChange={() => {
-                  setActiveCollections(null);
-                  setActiveCollection("");
-                  window.dispatchEvent(new CustomEvent("rag:collection-selected", { detail: { collection: "" } }));
-                  (app as unknown as { SetSessionCollections: (c: string[]) => Promise<void> })
-                    .SetSessionCollections([])
-                    .catch(() => {});
-                }}
-              />
-              <span className="rag-dock__collection-name" style={{ fontWeight: 500 }}>全部</span>
-            </label>
+            {/* "全部" — search across all collections */}
+            <div
+              className={`rag-dock__collection-row ${activeCollection === "" ? "rag-dock__collection-row--active" : ""}`}
+              onClick={() => {
+                setActiveCollection("");
+                setActiveCollections(null);
+                window.dispatchEvent(new CustomEvent("rag:collection-selected", { detail: { collection: "" } }));
+                (app as unknown as { SetSessionCollections: (c: string[]) => Promise<void> })
+                  .SetSessionCollections([])
+                  .catch(() => {});
+              }}
+              style={{ cursor: "pointer" }}
+            >
+              <span className="rag-dock__collection-chevron" style={{ visibility: "hidden" }} />
+              <Folder size={13} className="rag-dock__collection-icon" />
+              <span className="rag-dock__collection-label" style={{ fontWeight: 500 }}>全部</span>
+              <span className="rag-dock__collection-count">
+                {collections.reduce((s, c) => s + c.documents, 0)} 文档
+              </span>
+            </div>
 
-            {collections.map((c) => {
-              const checked = activeCollections === null || activeCollections.includes(c.name);
-              const isActive = activeCollection === c.name;
-              return (
-                <label
-                  key={c.path || c.name}
-                  className={`rag-dock__collection-item ${isActive ? "rag-dock__collection-item--active" : ""}`}
-                  style={{ paddingLeft: c.parent ? "24px" : undefined }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={(ev) => {
-                      let next: string[] | null;
-                      if (activeCollections === null) {
-                        next = ev.target.checked
-                          ? null
-                          : collections.map((x) => x.name).filter((n) => n !== c.name);
-                      } else {
-                        next = ev.target.checked
-                          ? [...activeCollections, c.name]
-                          : activeCollections.filter((n) => n !== c.name);
-                      }
-                      setActiveCollections(next);
-                      (app as unknown as { SetSessionCollections: (c: string[]) => Promise<void> })
-                        .SetSessionCollections(next ?? [])
-                        .catch(() => {});
-                    }}
-                  />
-                  <span
-                    className="rag-dock__collection-name"
-                    onClick={() => {
-                      setActiveCollection(c.name);
-                      // Sync to RagPanel (central panel) via global event.
-                      window.dispatchEvent(new CustomEvent("rag:collection-selected", { detail: { collection: c.name } }));
-                      setTab("files");
-                    }}
-                    style={{ cursor: "pointer" }}
-                    title={`${c.documents} 文档 · ${c.entities} 实体`}
-                  >
-                    {c.parent ? "└ " : "📁 "}
-                    {c.name}
-                  </span>
-                  <button
-                    className="rag-dock__collection-action-btn"
-                    title={`导入文件到此分类`}
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); void handleImportToCollection(c.name); }}
-                  >
-                    <FolderPlus size={12} />
-                  </button>
-                  <button
-                    className="rag-dock__collection-action-btn"
-                    title={`增量提取此分类`}
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); void handleQuickExtract(c.name); }}
-                  >
-                    <Zap size={12} />
-                  </button>
-                  <button
-                    className="rag-dock__collection-delete"
-                    title={`删除分类及全部文档`}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      if (window.confirm(`删除分类"${c.name}"及其全部 ${c.documents} 个文档和 ${c.entities} 个实体？\n\n此操作不可撤销。`)) {
-                        (app as unknown as { RagDeleteCollection: (n: string) => Promise<void> })
-                          .RagDeleteCollection(c.name)
-                          .then(() => refreshCollections())
-                          .catch(() => {});
-                      }
-                    }}
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                  <span className="rag-dock__collection-stats">
-                    {c.documents > 0 ? `${c.documents}` : ""}
-                  </span>
-                </label>
-              );
-            })}
+            {/* Build tree: root collections + their children */}
+            {(() => {
+              const roots = collections.filter((c) => !c.parent);
+              const childrenOf = (parent: string) => collections.filter((c) => c.parent === parent);
+              return roots.map((root) => {
+                const kids = childrenOf(root.path);
+                const hasKids = kids.length > 0;
+                const expanded = expandedCats.has(root.path);
+                const isRootActive = activeCollection === root.name;
+                return (
+                  <div key={root.path}>
+                    {/* Root collection row */}
+                    <div
+                      className={`rag-dock__collection-row ${isRootActive ? "rag-dock__collection-row--active" : ""}`}
+                      onClick={() => {
+                        setActiveCollection(root.name);
+                        window.dispatchEvent(new CustomEvent("rag:collection-selected", { detail: { collection: root.name } }));
+                      }}
+                      style={{ cursor: "pointer" }}
+                      title={`${root.documents} 文档 · ${root.entities} 实体`}
+                    >
+                      <button
+                        className="rag-dock__collection-chevron"
+                        onClick={(e) => { e.stopPropagation(); toggleCat(root.path); }}
+                        style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--fg-faint)", display: "flex", alignItems: "center" }}
+                      >
+                        {hasKids ? (expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />) : <span style={{ width: 12 }} />}
+                      </button>
+                      <Folder size={13} className="rag-dock__collection-icon" />
+                      <span className="rag-dock__collection-label">{root.name}</span>
+                      <span className="rag-dock__collection-count">{root.documents > 0 ? root.documents : ""}</span>
+                      {/* Hover action buttons */}
+                      <button className="rag-dock__collection-action-btn" title="导入" onClick={(e) => { e.stopPropagation(); void handleImportToCollection(root.name); }}>
+                        <FolderPlus size={12} />
+                      </button>
+                      <button className="rag-dock__collection-action-btn" title="提取" onClick={(e) => { e.stopPropagation(); void handleQuickExtract(root.name); }}>
+                        <Zap size={12} />
+                      </button>
+                      <button className="rag-dock__collection-delete" title="删除" onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm(`删除"${root.name}"及其全部文档？`)) {
+                          (app as unknown as { RagDeleteCollection: (n: string) => Promise<void> })
+                            .RagDeleteCollection(root.name).then(() => refreshCollections()).catch(() => {});
+                        }
+                      }}>
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                    {/* Children */}
+                    {expanded && hasKids && kids.map((kid) => {
+                      const isKidActive = activeCollection === kid.name;
+                      return (
+                        <div
+                          key={kid.path}
+                          className={`rag-dock__collection-row rag-dock__collection-row--child ${isKidActive ? "rag-dock__collection-row--active" : ""}`}
+                          onClick={() => {
+                            setActiveCollection(kid.name);
+                            window.dispatchEvent(new CustomEvent("rag:collection-selected", { detail: { collection: kid.name } }));
+                          }}
+                          style={{ cursor: "pointer" }}
+                          title={`${kid.documents} 文档 · ${kid.entities} 实体`}
+                        >
+                          <span className="rag-dock__collection-chevron" style={{ visibility: "hidden" }} />
+                          <span style={{ width: 13, textAlign: "center", color: "var(--fg-faint)" }}>└</span>
+                          <span className="rag-dock__collection-label">{kid.name}</span>
+                          <span className="rag-dock__collection-count">{kid.documents > 0 ? kid.documents : ""}</span>
+                          <button className="rag-dock__collection-action-btn" title="导入" onClick={(e) => { e.stopPropagation(); void handleImportToCollection(kid.name); }}>
+                            <FolderPlus size={12} />
+                          </button>
+                          <button className="rag-dock__collection-action-btn" title="提取" onClick={(e) => { e.stopPropagation(); void handleQuickExtract(kid.name); }}>
+                            <Zap size={12} />
+                          </button>
+                          <button className="rag-dock__collection-delete" title="删除" onClick={(e) => {
+                            e.stopPropagation();
+                            if (window.confirm(`删除"${kid.name}"及其全部文档？`)) {
+                              (app as unknown as { RagDeleteCollection: (n: string) => Promise<void> })
+                                .RagDeleteCollection(kid.name).then(() => refreshCollections()).catch(() => {});
+                            }
+                          }}>
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              });
+            })()}
 
             {collections.length === 0 && (
               <div className="cowork-dock__empty-state">

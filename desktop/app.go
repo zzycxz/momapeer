@@ -441,11 +441,23 @@ func (a *App) initRAG() {
 		// shares the user-configured RPM limit instead of hammering the API
 		// and getting 429'd. Extraction runs at background priority so it
 		// doesn't starve interactive conversation.
-		if budget := boot.GlobalBudget(); budget != nil {
+		//
+		// NOTE: globalBudget is initialized inside boot.Build(), which runs
+		// LATER (in restoreOrBuildTabs goroutine). At this point during startup
+		// it may still be nil. We create a local budget from config now, and
+		// also retry wiring after the first boot.Build completes.
+		rpm := 0
+		if c, err := config.Load(); err == nil {
+			rpm = c.LLM.RPM
+		}
+		if rpm > 0 {
+			localBudget := provider.NewRequestBudget(rpm, 0)
 			if bs, ok := extractor.(ragpkg.BudgetSetter); ok {
-				bs.SetBudget(budget, "rag-extract")
-				slog.Info("rag: RPM budget wired", "rpm", budget.Status("").RPM)
+				bs.SetBudget(localBudget, "rag-extract")
+				slog.Info("rag: RPM budget wired from config", "rpm", rpm)
 			}
+		} else {
+			slog.Info("rag: RPM not configured (llm.rpm=0), extraction runs unlimited")
 		}
 	}
 	a.ragPipeline = ragpkg.NewPipeline(store, extractor, cfg, func(ev ragpkg.ProgressEvent) {
