@@ -1797,6 +1797,29 @@ func (a *App) PickWorkspace() (string, error) {
 	return a.SwitchWorkspace(dir)
 }
 
+// PickImportFolder opens a directory dialog WITHOUT switching workspace.
+// Used by the RAG import flow so importing documents into a knowledge-base
+// collection doesn't pollute the project tree with a new workspace entry.
+func (a *App) PickImportFolder() (string, error) {
+	if a.ctx == nil {
+		return "", nil
+	}
+	cur, _ := os.Getwd()
+	a.mu.RLock()
+	if tab := a.activeTabLocked(); tab != nil && tab.WorkspaceRoot != "" {
+		cur = tab.WorkspaceRoot
+	}
+	a.mu.RUnlock()
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:            "选择要导入的文件夹",
+		DefaultDirectory: dialogDefaultDirectory(cur),
+	})
+	if err != nil || dir == "" {
+		return "", err
+	}
+	return dir, nil
+}
+
 func dialogDefaultDirectory(preferred string) string {
 	if dir := nearestExistingDirectory(preferred); dir != "" {
 		return dir

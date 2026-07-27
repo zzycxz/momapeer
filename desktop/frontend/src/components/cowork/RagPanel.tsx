@@ -119,7 +119,7 @@ export function RagPanel() {
   // Import handler.
   const handleImport = async () => {
     try {
-      const path = await app.PickWorkspace();
+      const path = await app.PickImportFolder();
       if (!path) return;
       const res = await app.RagImportPaths(activeCollection || "default", [path]);
       showToast(res.message, "info");

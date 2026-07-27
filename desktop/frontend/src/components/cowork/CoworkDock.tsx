@@ -543,7 +543,7 @@ function RagDock({
   // Import files directly into a specific collection from the dock.
   const handleImportToCollection = async (collectionName: string) => {
     try {
-      const path = await app.PickWorkspace();
+      const path = await app.PickImportFolder();
       if (!path) return;
       const res = await app.RagImportPaths(collectionName, [path]);
       showToast(`已导入 ${res.files} 个文件到「${collectionName}」。FTS5 即时可搜，点⚡提取生成知识图谱`, "info");

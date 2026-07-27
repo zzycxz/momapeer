@@ -173,6 +173,7 @@ export interface AppBindings {
   RenameSession(path: string, title: string): Promise<void>;
   ListWorkspaces(): Promise<WorkspaceView[]>;
   PickWorkspace(): Promise<string>;
+  PickImportFolder(): Promise<string>;
   SwitchWorkspace(path: string): Promise<string>;
   RemoveWorkspace(path: string): Promise<void>;
   ContextUsage(): Promise<ContextInfo>;
@@ -2038,6 +2039,9 @@ function makeMockApp(): AppBindings {
       // Browser dev has no native dialog; simulate picking a folder and re-root so
       // the topbar folder chip visibly changes.
       return mockSwitchWorkspace(cwd.endsWith("another-project") ? "~/projects/momapeer" : "~/projects/another-project");
+    },
+    async PickImportFolder() {
+      return "~/Documents/my-import-folder";
     },
     async SwitchWorkspace(path: string) {
       return mockSwitchWorkspace(path);
