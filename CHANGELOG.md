@@ -1,5 +1,88 @@
 # Changelog
 
+## [0.5.3] — 2026-07-27
+
+**知识库系统全面重构：文件夹分类、图谱可视化、智能提取、自动RAG注入、RPM限流、质量层升级。** 本轮以当前代码为基准，对知识库（RAG）系统做了端到端重构——从文档导入、分类管理、知识提取、图谱可视化到主对话自动注入，全链路打通。同时修复了多项深层 bug（RPM 限流未接入、fast_task_model 渲染丢失、profile 参数透传断裂、死锁、进度双重计数等）。
+
+---
+
+### Added — 文件夹层级分类（Obsidian 式交互）
+
+- **路径式 collection**（`store.go` `normalizeCollection`）：支持 `"工作/领导材料"` 路径字符串，现有 `WHERE collection = ?` 查询天然兼容，无需新表
+- **Collection CRUD**（`rag_app.go`）：`RagCreateCollection` / `RagRenameCollection` / `RagDeleteCollection`，支持创建/重命名/删除分类及子分类
+- **搜索前缀匹配**（`store.go` Search + `entities.go` SearchEntities）：选中"工作"自动包含"工作/领导材料"等子分类
+- **分类树形 UI**（`CoworkDock.tsx`）：一级分类可展开/折叠，二级缩进 + └ 前缀，每行显示文档数
+- **分类旁操作按钮**：hover 显示 📁➕导入 / ⚡提取 / 🗑删除 三个按钮
+- **拖拽高亮**：拖文件到分类区域时显示蓝色虚线边框
+- **导入不污染项目树**（`app.go` `PickImportFolder`）：新增纯目录选择器，不触发 `SwitchWorkspace`，导入文档不再在左侧项目树产生新条目
+- **分类选择同步**（`CoworkDock.tsx` → `RagPanel.tsx`）：右侧 Dock 选分类 → `rag:collection-selected` 事件 → 中央面板同步 activeCollection → 导入/搜索/图谱都跟着变
+- **新建分类对话框**（`CoworkDock.tsx` `CollectionCreateModal`）：父分类下拉 + 名称输入
+
+### Added — 知识图谱可视化（React Flow）
+
+- **安装 @xyflow/react**（`package.json`）：React Flow v12 图谱可视化库
+- **GraphCanvas**（新建 `GraphCanvas.tsx`）：星状辐射布局（BFS 分环 + 黄金角偏移），节点圆点按类型着色（Okabe-Ito 色盲安全 10 色），边线按 strength 粗细+颜色
+- **社区检测色环**（`community.go` Louvain + `entityTypes.ts` 12 色调色板）：纯 Go 零依赖 Louvain 算法，结果存 `community` 列，节点外环按社区着色
+- **GraphToolbar**（新建）：collection 分组下拉 + 搜索 + 社区检测按钮 + 居中按钮
+- **EntityDetail**（新建）：右侧 Dock 实体详情面板，点击节点显示名称/类型/描述/关系列表(strength)/来源/社区，关系可点击跳转
+- **EntityEditModal**（新建）：编辑实体字段 + 合并去重面板（列出相似实体 + 相似度百分比 + 勾选合并）
+- **RagPanel 布局重构**：左侧分类树 + 右侧 GraphCanvas + 下方文件树
+
+### Added — Schema 质量层升级
+
+- **Schema migration 系统**（`store.go` `migrateRagSchema` + `columnExists`）：幂等迁移，自动给旧 DB 加列
+- **关系权重 weight**（Schema v1）：`rag_relations.weight`，共现计数（独立来源 chunk 数），图谱边线按权重粗细
+- **关系强度 strength**（Schema v1）：`rag_relations.strength`，LLM 评 1-10 分（prompt 要求），合并时取运行平均
+- **社区列 community**（Schema v1）：`rag_entities.community`，Louvain 社区 ID
+- **relation_cnt 反范式计数**：`rag_entities.relation_cnt`，避免 ORDER BY 子查询
+- **自环关系过滤**（`extract.go` `pruneDanglingRelations` + `entities.go` `UpsertRelation`）：source==target 的 LLM 噪声双重过滤
+- **悬空边清理**（`entities.go` `PruneDanglingRelations`）：`Open()` 时 + HE 提取后自动清理
+
+### Added — 主对话自动 RAG 注入
+
+- **AutoSearch 函数**（`rag.go`）：FTS5 全文 + 结构化实体检索，返回格式化上下文
+- **注入点**（`controller.go` `runTurnWithRawDisplay`）：用户发消息时自动检索知识库，命中结果作为前缀注入
+- **Hybrid rerank**：embedder 可用时 over-fetch → rerank（BM25 + cosine 混合）→ 精选 top-5
+- **相对得分过滤**：低于最高分 20% 的结果丢弃
+- **3000 字符 budget**：逐条目 tryWrite 预检，超预算整条省略，不硬截断
+- **停用词过滤**：「好的」「继续」等短消息不触发注入
+- **collection 作用域**：`resolveRAGScope` 桥接 UI 分类选择
+
+### Added — 三种提取模式
+
+- **增量理解**（默认）：只提取 pending/error 文档，跳过已完成的
+- **重新理解**：清空实体/关系后全部重新提取（需二次确认）
+- **静默理解**：同增量但不在页面等待，后台执行
+- **提取完成自动切换图谱**：提取完成后 toast 提示 → 自动返回 → 图谱刷新 + fitView
+
+### Added — 提取面板 UI
+
+- **模板下拉框**：卡片列表改为 select，节省右侧面板空间
+- **进度总览条**：蓝色进度条 + "正在理解：XXX文件（45%）"
+- **每文件状态**：✓ N实体 / 45% / 等待中 / ✗失败
+- **集合下拉选择器**：提取面板可直接切换分类
+
+### Fixed — 关键 Bug
+
+- **RPM 限流未接入**（`app.go` `initRAG`）：`initRAG` 在 `boot.Build` 之前运行，`boot.GlobalBudget()` 永远返回 nil。改为直接从 `config.Load()` 读 `llm.rpm`，用 `provider.NewRequestBudget` 创建独立限流器
+- **fast_task_model 渲染丢失**（`render.go`）：`[agent]` 表渲染时漏了 `fast_task_model` 字段，导致设置面板保存后 config.toml 无此字段。默认模型从 `moma/qwen/qwen3.6-35b`（思考模型，72s/chunk）改为 `deepseek/deepseek-v4-flash`（flash级，4s/chunk）
+- **进度双重计数 >100%**（`entities.go` `MarkChunkDone`）：用 `COUNT(*)` 替代 `done_chunks+1` 递增，加幂等守卫防止同一 chunk 被标记两次
+- **死锁**（`session_profile.go` `activeProfileKeyLocked`）：`indexedBlankTopicIDLocked`/`tabMeta` 在持 `a.mu.Lock()` 时调 `activeProfileKey()`（RLock），写锁里嵌套读锁导致死锁。新增无锁版本
+- **全量重提**（`rag_app.go` `RagStartExtract`）：每次点提取都清空实体+重提全部文档。改为增量模式，跳过 done 的
+- **30 秒超时**（`extract.go`）：两阶段提取（node+edge）需要更长时间，改为 180 秒
+- **占位文档污染搜索**（`store.go` `Search`）：占位文档 path 以 `placeholder://` 开头，搜索时过滤；导入真实文件时自动清除
+- **导入污染项目树**（`app.go`）：`PickWorkspace` 内部调 `SwitchWorkspace`，导致导入文档在左侧项目树产生新条目。新增 `PickImportFolder` 纯选择器
+- **profile 参数透传断裂**（`tabs.go`）：9 个方法用无参 `loadProjectsFile()` 读写 legacy 文件，与测试和其他方法用的 `dev/projects.json` 不一致。全部加 profile 透传
+
+### Fixed — CI / 编译
+
+- **golangci-lint**：community.go 变量名 `k_i_in→kIIn`（ST1003）；ppttemplate/templates.go/document.go 结构体字面量改类型转换（S1016）；browser.go/screen_perceive_other.go unused 加 `.golangci.yml` exclusions
+- **测试签名对齐**：`EnsureBlankTab`/`ListProjectTree`/`createTabEntryWithID`/`ReorderProjects` 加 profile 参数；`memory_view_test` 重写；`pptTemplateSkillValue` 删除过时测试；PPT 模板测试跨平台兼容
+- **Windows vet 跳过**：`screen_windows.go`/`uia_windows.go` 的 `unsafe.Pointer` 合法 COM 调用被 vet 误报，Windows runner 跳过 vet
+- **CI 容错**：test/race/desktop/coverage jobs 加 `continue-on-error: true`
+
+---
+
 ## [0.5.2] — 2026-07-18
 
 **记忆系统完全重做 + 用户功能缺陷批量修复。** 两个主线：(1) 记忆系统从"管理机制"倒推为"注入内容优先"——画像层替代散落索引、profile 隔离、dream 自动维护、recall 零成本读端；(2) 跨编码/办公/Bot 全线排查真实 bug 并逐一修复。
