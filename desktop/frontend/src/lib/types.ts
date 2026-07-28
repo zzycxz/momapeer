@@ -554,9 +554,15 @@ export interface TaskView {
   lastResult: string;
   outputMode: string; // "" | "im" | "email" | "notify" | "file"
   outputDest: string;
+  outputAccount: string; // named mailbox for "email" mode; "" = default
   outputDir: string;
   color?: string;
   location?: string;
+  // Last delivery outcome. lastDeliverErr is empty when the last run delivered
+  // successfully (or had no delivery configured); non-empty means the agent ran
+  // but IM/email/file push failed — surfaced in the card so the user notices.
+  lastDeliverErr: string;
+  lastDeliverAt: string;
   humanSchedule: string;
   source: string;        // "manual" | "calendar"
   calendarEventId: string;
@@ -570,6 +576,7 @@ export interface TaskInput {
   prompt: string;
   outputMode?: string;
   outputDest?: string;
+  outputAccount?: string;
   outputDir?: string;
   color?: string;
   location?: string;
@@ -629,6 +636,10 @@ export interface CalendarEventView {
   reminders: number[];
   taskId: string;
   tags: string[];
+  // Reminder push routing (mirrors Go). Empty outputMode = toast only.
+  outputMode: string;
+  outputDest: string;
+  outputAccount: string;
   createdAt: string;
 }
 
@@ -646,6 +657,9 @@ export interface CalendarEventInput {
   recurrenceEnd: string;
   reminders: number[];
   tags: string[];
+  outputMode?: string;
+  outputDest?: string;
+  outputAccount?: string;
 }
 
 // --- RAG knowledge base (coWork RAG panel) ----------------------------------
@@ -1177,6 +1191,22 @@ export interface CoWorkSettingsView {
   // Emergency-stop hotkey for desktop automation (always on by default; set
   // "off" to disable). Cancels the in-flight turn globally.
   estopHotkey: string;
+  // Multi-mailbox list. When non-empty it's the source of truth on save (full
+  // overwrite); the legacy smtp/imap single-pair fields mirror the Default
+  // account for backward compat.
+  emailAccounts: EmailAccountView[];
+}
+
+// EmailAccountView is one mailbox in the multi-account list. password is
+// write-only (a freshly-typed value on save; the stored secret is never echoed
+// back). passwordSet reports whether a secret is stored.
+export interface EmailAccountView {
+  name: string;
+  default: boolean;
+  smtp: SMTPSettings;
+  imap: IMAPSettings;
+  password: string;
+  passwordSet: boolean;
 }
 
 // PPTTemplateView is a trimmed PPT template (id + name) for the settings
@@ -1229,6 +1259,18 @@ export interface BotInstallPollResult {
   status: string;
   message: string;
   error: string;
+}
+
+// RecentChatView is one recently-seen IM chat, offered as a push destination in
+// the task form's IM-target picker. userName is the best available display name
+// (private chat = user name; group may be empty when the platform doesn't
+// expose group names).
+export interface RecentChatView {
+  platform: string;
+  chatType: string;
+  chatId: string;
+  userName: string;
+  lastSeen: number;
 }
 
 export interface BotConnectionDiagnostic {

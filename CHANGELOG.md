@@ -1,8 +1,56 @@
 # Changelog
 
+## [0.5.5] — 2026-07-28
+
+**UI 微调与架构收敛：彻底重构侧边栏 TodayView 组件，解决极端窄屏幕下的排版坍塌问题；废弃冗余的面包块卡片堆叠，重塑纯净极简的高级感暗黑控制面板。**
+
+本轮迭代聚焦于前端界面的“第一性原则：普遍适用性”：坚决摒弃硬编码式的内联堆叠样式，回归纯粹的原生 CSS 架构。在极窄宽度的侧边栏限制下，不仅百分之百还原了原汁原味的极简无框排版，更是创造性地引入了 iOS 级 List Cell 纵向堆叠布局，完美地保留了每一滴系统级状态反馈（邮箱未读、Bot状态），彻底根治了信息拥挤断行的顽疾，打造出坚如磐石的沉底体验。
+
+---
+
+### Changed / Refactored — 极窄侧边栏 UI 体系重塑与坍塌防线
+
+- **无框原味极简架构回滚**（`CoworkDock.tsx`）：全面废除昨日版本中为“今日”面板增加的大量臃肿内联 `style`、多余边距及背景卡片嵌套，彻底去“面包化”，将整体视觉退回原汁原味的无边框、无冗余的高级极客质感
+- **统合式纵向状态控制面板**（`CoworkDock.tsx`）：将底部原本散落的邮箱探针状态、IM Bot 探针状态和刷新控制按钮，高度收敛为一张带有微距圆角与轻量阴影的一体化悬浮卡片；彻底摒弃容易导致元素互挤的水平分栏，改为**上下堆叠的 List Cell 列表布局**
+- **防文本折行与溢出防线**：在侧边栏极窄（<300px）苛刻环境下，通过 `minWidth: 0`、`whiteSpace: nowrap` 和溢出截断（`textOverflow: ellipsis`）机制，外加充分利用堆叠列宽，完美容纳了多维状态（如“X封未读”、“已连接”、“暂无新件”），不再允许任何核心文本被生硬折叠
+- **弹性沉底卡片与文案纠偏**：为主滚动视口增加 `flex: 1` 和 `overflow-y: auto` 的弹性闭环，使控制卡片宛如钉子般牢牢固定在侧边栏最底端；同时清理了无关标语，并将顶层简报标题精确归位于“今日日工任务”
+
+---
+
+## [0.5.4] — 2026-07-27
+
+**核心重构：(1) 知识图谱体系解耦与 HE 思想内化——将内置领域图谱模板提升为第一公民，彻底解除对外部 Python 服务的运行绑定；(2) 前端顶栏会话区作用域隔离——杜绝非主沟通界面下的 UI 污染与控件冗余；(3) 吸收 Hyper-Extract 交互精髓——打造可视化的本体分类图例胶囊开关，建立单文件删除清空时的级联扫荡机制与 0 文档标准空视图导引防线。**
+
+本轮迭代恪守《第一性原则：普遍适用性与高内聚解耦》和《测试学习准则》，全面消除了系统对外部依赖服务和深层 UI 耦合的隐患。在底层架构上，保证了即使在完全离线或无外置 Python 服务环境，九大内置领域图谱引擎亦能 100% 独立且全功能运转；在可视化体验上，吸纳了 Hyper-Extract 的本体图例直观控制思想，让图谱筛选做到极简无延迟交互；在工程自检上，构建了专用的端到端架构契约测试防线。
+
+---
+
+### Changed / Refactored — 知识图谱引擎全量自立化解耦（Decoupled & Self-Contained Adoption）
+
+- **内置领域模板第一公民化**（`internal/rag/templates.go` `ListTemplates`）：将内置的 9 大专业图谱 Schema（金融、医疗、法律、工业、中医、超图等）强制提升为无依赖第一公民，恒定配置为 `Available: true` 并预置完备的实体/关系 Schema 字段，不再受外部 `hyper_extract_server.py` 服务是否启动或连接的任何限制
+- **引擎就绪提示重铸**（`TemplateSelect.tsx`）：全面移除当外部依赖未就绪时误导用户的报警或降级文案，重写为展现自研“自适应两阶段全链路专业提取引擎”高可用性的正向自信状态横幅
+
+### Added / Refactored — 吸收 HE 交互精髓的图例控制与空状态防御屏障
+
+- **可视化本体图例胶囊开关组**（`GraphToolbar.tsx`）：吸纳 Hyper-Extract 可视化精髓，用横向滚动的交互式本体图例胶囊（Legend Pill Toggles）取代了藏在深层复选框内的旧筛法；用户轻点任意分类胶囊即可 0 延迟实时聚焦/灰隐该类别实体，直观展现全局实体颜色映射
+- **0 文档智能侦测与引导防线**（`GraphCanvas.tsx`）：新增 `docCount` 状态监控，当有效文库为 0（如用户删光文件或初建文库）时，系统自动杜绝僵尸图谱残留与无限转圈等待，直接呈现纯净温馨的导引视图（提示导入文件后点击深度提取来自立构建图谱）
+- **单路径删除级联整库扫荡**（`rag_app.go` `RagRemovePath`）：在单份文件删除逻辑中安插零文档侦测防线（`len(ListRagTree) == 0`），一旦删除导致集合彻底被空，系统立刻自动触发 `DeleteCollectionTree` 级联扫荡所有关联图谱及僵尸实体
+
+### Fixed / Changed — 会话顶栏作用域隔离与前端洁癖
+
+- **主会话控制条条件渲染**（`CoWorkLayout.tsx`）：为顶部全局栏 `{headerNode}` 增加严格的作用域栅栏，限定其仅在 `activePanel === "taskCenter"`（会话主沟通界面）下装载可见；当用户切换阅读知识库 (BookOpen)、任务中心或偏好设置时 100% 自动隐藏，杜绝“新会话 / 复制 / 导出 / 改名”等会话专用控件造成交互界面污染
+
+### Added — 自动化契约自检与教学脚本
+
+- **架构解耦端到端断言体系**（`test_graph_decoupled.py`）：在工作区根目录编写并发布用于自检后端第一公民地位、级联清空防线、顶栏会话隔离、图例胶囊及空视图导引的 5 大维度回归验证脚本；脚本执行结果 6 项核心指标 100% 验证通过
+
+---
+
 ## [0.5.3] — 2026-07-27
 
-**知识库系统全面重构：文件夹分类、图谱可视化、智能提取、自动RAG注入、RPM限流、质量层升级。** 本轮以当前代码为基准，对知识库（RAG）系统做了端到端重构——从文档导入、分类管理、知识提取、图谱可视化到主对话自动注入，全链路打通。同时修复了多项深层 bug（RPM 限流未接入、fast_task_model 渲染丢失、profile 参数透传断裂、死锁、进度双重计数等）。
+**两条主线：(1) 知识库系统全面重构——文件夹分类、图谱可视化、智能提取、自动RAG注入、RPM限流、质量层升级；(2) 日历与任务功能全面升级——修复邮件死代码、多邮箱账户管理、IM 目标可视化选择、日历提醒推送 IM/邮箱、QQ 群推送 bug 修复。**
+
+本轮以当前代码为基准做了两个独立的大改造。**知识库（RAG）系统**端到端重构——从文档导入、分类管理、知识提取、图谱可视化到主对话自动注入，全链路打通，并修复多项深层 bug（RPM 限流未接入、fast_task_model 渲染丢失、profile 参数透传断裂、死锁、进度双重计数等）。**日历与任务系统**则从可用性角度全面排查并修复——发现并修复了一个让所有出站邮件功能彻底失效的死代码 bug，把多邮箱、IM 会话选择、日历提醒推送等此前停留在数据模型层、UI 层断档的能力全部打通。
 
 ---
 
@@ -82,6 +130,68 @@
 - **CI 容错**：test/race/desktop/coverage jobs 加 `continue-on-error: true`
 
 ---
+
+### Fixed — 邮件功能死代码（阻断性 P0）
+
+- **`SetEmailConfig` 全仓库无调用者**（`email.go`）：boot.go 只调 `SetEmailAccounts`，从不调 `SetEmailConfig`，导致 `globalEmailConfig` 永远 nil → `SendPlainText` 和 `email_send` 工具 Execute 永远报 "email not configured"。**所有出站邮件功能此前完全失效**（email_send 工具、定时任务邮件投递都是死的）
+- **`SendPlainText` 改走 `accountByName`**（`email.go`）：取默认账户的 SMTP 配置，不再依赖永远为 nil 的 `globalEmailConfig`；新增 `resolveSMTP(account)` 统一解析（命名账户 → 默认账户 → legacy 单配 fallback）
+- **新增 `SendPlainTextAs(account, to, subject, body)`**（`email.go`）：按账户名发邮件，供 scheduler/calendar 复用同一套多账户 SMTP 配置
+- **`email_send` 工具加 `account` 字段**（`email.go` schema + Execute）：与 `email_read`/`email_search` 的入站账户选择对齐；Execute 改用 `resolveSMTP(p.Account)`
+- **`globalEmailConfig`/`SetEmailConfig` 标记 deprecated**：保留以避免破坏性，但注释标明 boot 不再调用
+
+### Added — 多邮箱账户前端管理
+
+- **Go model 层本就支持多账户**（`config.EmailAccount`/`EmailAccounts`/`DefaultEmailAccount`/`EmailAccountByName`/`normalizeEmailAccounts`），瓶颈只在 desktop view 层强制单账户命名 "primary"——本轮打通
+- **`CoWorkSettingsView.EmailAccounts []EmailAccountView`**（`cowork_settings.go`）：新增多账户列表字段，保留 smtp/imap 单对象做向后兼容镜像
+- **`EmailAccountView{Name, Default, SMTP, IMAP, Password, PasswordSet}`**（`cowork_settings.go`）：密码 write-only，PasswordSet 报告存储状态
+- **`SetCoWorkSettings` 全量覆盖路径**（`cowork_settings.go`）：当传入 `EmailAccounts` 非空时全量覆盖 `c.Cowork.EmailAccounts`，保证恰好一个 Default，删除账户时清理 secret store 旧密钥
+- **每账户独立 PasswordEnv**（`cowork_settings.go` `accountPasswordEnvs`）：默认账户复用 legacy `COWORK_SMTP_PASSWORD`/`COWORK_IMAP_PASSWORD`，命名账户用 `COWORK_SMTP_PASSWORD_<NAME>` 避免互相覆盖
+- **`ProbeMailAccount(name string)` 加参数**（`cowork_settings.go`）：按名探测，前端每张账户卡片独立状态点
+- **设置面板邮箱区重做**（`SettingsPanel.tsx`）：从"2 个输入框"重做为**账户列表卡片**——每条可命名、设为默认、删除、独立探测状态点；新建账户按钮；host/port/encryption 等此前隐藏的字段可编辑
+- **i18n**（`zh.ts`/`en.ts`）：新增 `cowork.mailMultiHint`/`mailEmpty`/`mailAccountName`/`mailAdd`/`mailDelete`/`mailDefault` 等多账户措辞
+
+### Added — IM 目标可视化选择
+
+- **gateway 维护近期会话环形表**（`gateway.go`）：`BotGateway` 加 `recentChats []RecentChat`（去重 key = platform+chatID，上限 100），`handleMessage` 入站时追加；新增 `recordRecentChat`/`RecentChats()` 方法
+- **`RecentChat` 类型**（`types.go`）：导出 `{Platform, ChatType, ChatID, UserName, LastSeen}`
+- **`ListRecentBotChats()` 桥接**（`bot_gateway_app.go`）：从 `a.botGW.Load()` 读，返回 `[]RecentChatView`
+- **前端 `RecentChatView` 类型 + `ListRecentBotChats()` 绑定**（`types.ts`/`bridge.ts`）：含浏览器 dev mock seed（飞书群/飞书私聊/QQ 群）
+- **TaskForm IM 目标选择器**（`TaskForm.tsx`）：outputMode="im" 时，把单文本框换成**平台下拉（feishu/qq/weixin）+ 会话下拉（从 ListRecentBotChats 按平台过滤）**，自动组装 dest 字符串；保留手动输入兜底；空列表时显示引导文案
+
+### Fixed — QQ 群推送走错 URL
+
+- **`gw.Push` 没传 ChatType**（`gateway.go`）：QQ 的 `qqSendURL` 按 ChatType 选发送 URL（dm/group/guild/direct），但定时推送构造 `OutboundMessage{ChatID, Text}` 时 ChatType 留空 → 落到 default（按 C2C 私聊发）→ QQ 群/频道推送收到 4xx
+- **dest 格式扩展为 3 段**（`gateway.go` `splitPushDest`）：支持 `platform:chatType:chatID`（如 `qq:group:xxx`），解析出的 chatType 填进 `OutboundMessage.ChatType`；两段格式（`feishu:oc_xxx`）保持兼容（飞书/微信按 ChatID 路由，不受影响）
+- **未知中间段容错**：3 段 dest 若中间段不是已知 chatType，把整个 tail 当 chatID（2 段语义），避免静默丢 dest
+
+### Added — 定时任务邮件选发件账户
+
+- **`ScheduledTask.OutputAccount` 字段**（`scheduler.go`）：选命名邮箱发件，空 = 默认账户
+- **`EmailSender` 接口加 account 参数**（`scheduler.go`）：`Send(ctx, account, to, subject, body)`，`deliverOutput` email 分支传 `t.OutputAccount`
+- **`schedulerEmailSender.Send` 调 `SendPlainTextAs`**（`scheduler_app.go`）：复用多账户 SMTP 配置
+- **`TaskView`/`TaskInput` 加 `OutputAccount`**（`scheduler_app.go`）：Create/Update/toTaskView 透传
+- **TaskForm email 模式加发件账户下拉**（`TaskForm.tsx`）：从 `Settings().cowork.emailAccounts` 读 Name 列表
+
+### Added — 日历事件提醒推送 IM/邮箱
+
+- **Event 数据模型加 3 字段**（`store.go`）：`OutputMode`/`OutputDest`/`OutputAccount`，仅明确配置的事件才推送（空 = 仅桌面 toast，维持原行为）
+- **SQLite 幂等迁移**（`store.go` `addColumnIfMissing`）：SQLite 无 `ADD COLUMN IF NOT EXISTS`，用 `PRAGMA table_info` 检测列是否存在、缺失才 `ALTER TABLE`——老库新库都覆盖，可重复执行
+- **6 处 SELECT + INSERT + UPDATE + 2 处 scan 同步**（`store.go`）：新字段插在 `tags` 之后、`reminded_at` 之前，保持列顺序稳定
+- **`EventInstance` 加 3 字段 + 两处字面量赋值**（`rrule.go`）：`ExpandRecurring` 非循环分支 + `expandRRULE` 循环体，确保重复事件展开后仍携带推送配置
+- **`ReminderEngine` 注入 IM/邮箱桥**（`reminder.go`）：新增 `ReminderIMPusher`/`ReminderEmailSender` 接口 + `SetIMPusher`/`SetEmailSender` setter
+- **`fire()` 多通道 fan-out**（`reminder.go`）：桌面 toast 永远先发（never-fail 兜底），然后按 `inst.OutputMode` 额外推 IM/email；推送失败仅 log，不阻断 toast 也不阻断去重标记
+- **`initCalendar` 注入桥**（`calendar_app.go`）：`calendarIMPusher` 指向 botGW（lazy 读取，bot 后启动也能用），`calendarEmailSender` 调 `SendPlainTextAs`
+- **agent `calendar` 工具支持配置推送**（`calendar.go`）：`calendarParams` 加 3 字段，schema 加 `output_mode`（enum `["","im","email"]`）/`output_dest`/`output_account`；`calendarCreate` 字面量赋值，`calendarUpdate` 加非空覆盖分支
+- **`CalendarEventView`/`CalendarEventInput` 加字段**（`calendar_app.go`）：eventToView/Create/Update 透传
+- **前端日历事件展示推送徽章**（`CalendarTaskPanel.tsx`）：列表视图标题旁显示 💬 IM / ✉️ 邮件 图标，hover 显示目标地址
+
+### 上一轮（同日先行提交）— 定时任务字段丢失与投递失败静默
+
+- **表单字段丢失 bug**：TaskForm 提交的 `color`/`location`/`outputDir` 此前被后端 `TaskInput` 静默丢弃（用户填的颜色/地点/输出目录刷新后消失）。`ScheduledTask` + `TaskView`/`TaskInput` 补字段，Create/Update/toTaskView 透传，`ListScheduledTasksAsEvents` 把 Color/Location 应用到日历网格
+- **投递失败静默 bug**：IM/邮件投递失败原先只写 `slog.Debug`，用户在 UI 完全看不到。`deliverOutput` 改为返回 `deliverResult`（ok/skipped/failed/none），失败时写 `LastDeliverErr` + RunRecord 状态（`deliver_failed`/`deliver_skipped`）并经 Notifier 弹 toast；TaskCard 显示琥珀色投递失败 banner，RunHistory 支持新状态色块
+
+---
+
 
 ## [0.5.2] — 2026-07-18
 

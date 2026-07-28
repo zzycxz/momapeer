@@ -488,6 +488,11 @@ func (a *App) RagRemovePath(collection, path string) error {
 	if err := a.ragStore.Delete(collection, path); err != nil {
 		return err
 	}
+	// 智能级联防线：如果当前分类下的文件已被彻底清空，自动触发实体关系大扫除
+	if len(a.ListRagTree(collection)) == 0 {
+		slog.Info("rag: collection empty after path removal, cascade clearing collection tree", "collection", collection)
+		_ = a.ragStore.DeleteCollectionTree(collection)
+	}
 	a.emitRagChanged()
 	return nil
 }

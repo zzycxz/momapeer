@@ -22,18 +22,24 @@ import {
   ChevronDown,
   ChevronRight,
   CircleDashed,
+  CornerDownRight,
   FileText,
   Folder,
   FolderPlus,
   Mail,
 
   RefreshCw,
+  Search,
   Trash2,
+  X,
   Zap,
+  Bot,
+  Sparkles,
 } from "lucide-react";
 
 import { app, onRagChanged, onRagProgress } from "../../lib/bridge";
 import { useToast } from "../../lib/toast";
+import { CustomSelect } from "./CustomSelect";
 
 // realApp mirrors bridge.ts's private helper: returns the Wails binding only
 // when window.go.main.App is present (i.e. we are inside the desktop shell).
@@ -55,6 +61,7 @@ import { EntityDetail } from "./EntityDetail";
 import { DocPreview } from "./DocPreview";
 import { TemplateSelect } from "./TemplateSelect";
 import { RagNode } from "./RagNode";
+import { ImportModal } from "./ImportModal";
 
 // PALETTE (Bp) is the fallback color list for calendar events without an
 // explicit color. The original bundle uses a small CSS-var palette; index 0 is
@@ -245,7 +252,8 @@ function TodayView() {
   const [inbox, setInbox] = useState<InboxItem[] | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(() => {
+    setLoading(true);
     const now = new Date();
     const since = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
       now.getDate(),
@@ -254,25 +262,33 @@ function TodayView() {
     const before = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(
       next.getDate(),
     ).padStart(2, "0")}`;
-    const [evs, tks, mb, inb] = await Promise.all([
+
+    // 1. 优先快加载：日程与任务（本地数据，几乎 0 延迟）
+    Promise.all([
       (app as unknown as { ListCalendarEvents: (s: string, b: string) => Promise<CalendarEventView[]> })
         .ListCalendarEvents(since, before)
         .catch(() => [] as CalendarEventView[]),
       (app as unknown as { ListScheduledTasks: () => Promise<TaskView[]> })
         .ListScheduledTasks()
         .catch(() => [] as TaskView[]),
+    ]).then(([evs, tks]) => {
+      setEvents(evs);
+      setTasks(tks);
+    });
+
+    // 2. 异步慢加载：邮件探针与 50 封邮件列表（远程请求）
+    Promise.all([
       (app as unknown as { ProbeMailAccount: () => Promise<MailProbeResult> })
         .ProbeMailAccount()
         .catch(() => ({ ok: false, status: "error", message: "" } as MailProbeResult)),
       (app as unknown as { InboxPreview?: (n: number) => Promise<InboxItem[]> })
         .InboxPreview?.(50)
         .catch(() => [] as InboxItem[]) ?? Promise.resolve([] as InboxItem[]),
-    ]);
-    setEvents(evs);
-    setTasks(tks);
-    setProbe(mb);
-    setInbox(inb);
-    setLoading(false);
+    ]).then(([mb, inb]) => {
+      setProbe(mb);
+      setInbox(inb);
+      setLoading(false); // 慢查询完成后关闭 loading 状态
+    });
   }, []);
 
   useEffect(() => {
@@ -283,9 +299,7 @@ function TodayView() {
     return () => window.clearInterval(h);
   }, [refresh]);
 
-  if (loading) {
-    return <div className="cowork-dock__loading">…</div>;
-  }
+  // 移除整页阻塞 loading，改为局部静默刷新，防止切换页卡卡顿
 
   const now = new Date();
   const todaysEvents = (events ?? []).filter((e) => {
@@ -310,8 +324,35 @@ function TodayView() {
   const unreadCount = inbox?.length ?? 0;
 
   return (
-    <div className="cowork-today">
-      <section className="cowork-today__section">
+    <div className="cowork-today" style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      <div style={{ flex: 1, overflowY: "auto", paddingBottom: "16px" }}>
+        {/* 1. 顶部简报卡片 */}
+        <div className="cowork-today__briefing">
+          <div className="cowork-today__briefing-head" style={{ display: "flex", alignItems: "center", justifyContent: "flex-start" }}>
+            <Sparkles size={14} style={{ color: "#f26522", marginRight: "4px" }} />
+            <span style={{ fontWeight: 600 }}>今日日程与任务</span>
+          </div>
+          <div className="cowork-today__briefing-body" style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            <div>1. <CalendarClock size={13} style={{ color: "#8b949e", margin: "0 2px", verticalAlign: "middle" }} />今日安排核心日程 {todaysEvents.length} 项。</div>
+            <div>2. <Mail size={13} style={{ color: "#58a6ff", margin: "0 2px", verticalAlign: "middle" }} />待处理未读件 {unreadCount} 封。</div>
+            <div>3. ☕ 当前时段暂无紧迫议程。</div>
+            <div>4. 🤖 建议点击下方按钮，唤起 AI 定制工作优先级。</div>
+          </div>
+          <div className="cowork-today__briefing-actions">
+            <button 
+              className="rag-toolbar__btn" 
+              style={{ background: "#f26522", color: "#fff", border: "none" }}
+              onClick={() => {
+                const prompt = `请帮我生成今日的行政决策早报及工作优先级指引。已知信息：今日安排核心日程 ${todaysEvents.length} 项，待处理未读件 ${unreadCount} 封。`;
+                window.dispatchEvent(new CustomEvent("cowork:insert-text", { detail: prompt }));
+              }}
+            >
+              <Sparkles size={13} /> 生成深度决策指引
+            </button>
+          </div>
+        </div>
+
+      <section className="cowork-today__section" style={{ marginTop: "20px" }}>
         <h4 className="cowork-today__heading">
           <CalendarClock size={13} />
           {t("coworkDock.todayEvents") || "今日日程"}
@@ -333,41 +374,13 @@ function TodayView() {
         )}
       </section>
 
-      <section className="cowork-today__section">
-        <h4 className="cowork-today__heading">
-          <Mail size={13} />
-          {t("coworkDock.mailbox") || "邮箱"}
-        </h4>
-        {mailUnconfigured ? (
-          <div className="cowork-today__hint">
-            {t("coworkDock.mailConfigureHint") || "请在「设置」-「办公」中配置邮箱"}
-          </div>
-        ) : (
-          <div className="cowork-today__mailrow">
-            <span className={"mail-status-dot mail-status-dot--" + (mailOk ? "ok" : "error")} />
-            <span className="cowork-today__mailtext">
-              {mailOk
-                ? t("coworkDock.mailConnected") || "已连接"
-                : probe?.message || t("coworkDock.mailError") || "连接失败"}
-            </span>
-            {mailOk && (
-              <span className="cowork-today__badge">
-                {unreadCount > 0
-                  ? t("coworkDock.unreadN").replace("{n}", String(unreadCount)) || `${unreadCount} 封未读`
-                  : t("coworkDock.noUnread") || "无未读"}
-              </span>
-            )}
-          </div>
-        )}
-      </section>
-
-      <section className="cowork-today__section">
+      <section className="cowork-today__section" style={{ marginTop: "24px", paddingBottom: "12px" }}>
         <h4 className="cowork-today__heading">
           <CircleDashed size={13} />
-          {t("coworkDock.upcoming") || "自动化"}
+          {t("coworkDock.upcoming") || "即将触发"}
         </h4>
         {upcoming.length === 0 ? (
-          <div className="cowork-today__empty">{t("coworkDock.noUpcoming") || "暂无定时任务"}</div>
+          <div className="cowork-today__empty">{t("coworkDock.noUpcoming") || "暂无待触发任务"}</div>
         ) : (
           <ul className="cowork-today__list">
             {upcoming.map(({ tk, ts }) => (
@@ -382,6 +395,76 @@ function TodayView() {
           </ul>
         )}
       </section>
+
+      </div> {/* End of scrollable area */}
+
+      {/* 4. 底部的统合状态控制卡片 (固定在底部) */}
+      <div style={{ 
+        margin: "0 16px 16px", 
+        background: "var(--bg-elev)", 
+        border: "1px solid var(--border-soft)", 
+        borderRadius: "12px", 
+        boxShadow: "0 2px 8px rgba(0,0,0,0.02)",
+        overflow: "hidden",
+        flexShrink: 0
+      }}>
+        {/* 上半区：状态列表 (纵向堆叠，解决横向空间不足) */}
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          {/* 邮箱行 */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid var(--border-soft)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <Mail size={14} style={{ color: "var(--fg-dim)" }} />
+              <span style={{ fontSize: "13px", fontWeight: 500 }}>邮箱</span>
+              <span className={"mail-status-dot mail-status-dot--" + (loading ? "warning" : (mailOk ? "ok" : "error"))} style={{ marginLeft: "4px" }} />
+              <span style={{ fontSize: "12px", color: "var(--fg-dim)", maxWidth: "80px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {loading ? "同步中..." : (mailOk ? "已连接" : (probe?.message || "连接失败"))}
+              </span>
+            </div>
+            <div>
+              {unreadCount > 0 ? (
+                <span style={{ color: "#e84e3c", fontWeight: 600, fontSize: "12px" }}>{unreadCount}封未读</span>
+              ) : (
+                <span style={{ color: "var(--fg-faint)", fontSize: "12px" }}>0封未读</span>
+              )}
+            </div>
+          </div>
+
+          {/* IM bot 行 */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <Bot size={14} style={{ color: "var(--fg-dim)" }} />
+              <span style={{ fontSize: "13px", fontWeight: 500 }}>IM bot</span>
+              <span className={"mail-status-dot mail-status-dot--" + (loading ? "warning" : "ok")} style={{ marginLeft: "4px" }} />
+              <span style={{ fontSize: "12px", color: "var(--fg-dim)" }}>{loading ? "同步中..." : "已连接"}</span>
+            </div>
+            <div>
+              <span style={{ color: "var(--fg-faint)", fontSize: "12px" }}>暂无新件</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 下半区：刷新操作条 */}
+        <div 
+          className="cowork-today__refresh-btn"
+          style={{ 
+            display: "flex", 
+            justifyContent: "center", 
+            alignItems: "center", 
+            gap: "6px",
+            padding: "8px", 
+            background: "rgba(0,0,0,0.02)", 
+            borderTop: "1px solid var(--border-soft)",
+            color: "var(--fg-dim)",
+            fontSize: "12px",
+            cursor: "pointer",
+            transition: "all 0.2s"
+          }}
+          onClick={refresh}
+        >
+          <RefreshCw size={12} className={loading ? "spin" : ""} />
+          刷新状态
+        </div>
+      </div>
     </div>
   );
 }
@@ -446,12 +529,10 @@ function MailView() {
         </div>
         <button
           className="cowork-mailtab__refresh"
-          onClick={() => {
-            refresh();
-          }}
+          onClick={() => refresh()}
           title={t("common.refresh") || "刷新"}
         >
-          <RefreshCw size={13} />
+          <RefreshCw size={13} className={loading ? "spin" : ""} />
         </button>
       </div>
 
@@ -503,6 +584,24 @@ function MailView() {
   );
 }
 
+// 递归过滤 RagNodeView 树结构，若子树有匹配项则保留并展示父级文件夹
+function filterRagTree(nodes: RagNodeView[], q: string): RagNodeView[] {
+  if (!q || !q.trim()) return nodes;
+  const lower = q.trim().toLowerCase();
+  const res: RagNodeView[] = [];
+  for (const node of nodes) {
+    const selfMatch = node.label.toLowerCase().includes(lower) || (node.path && node.path.toLowerCase().includes(lower));
+    const kidMatch = node.children ? filterRagTree(node.children, q) : undefined;
+    if (selfMatch || (kidMatch && kidMatch.length > 0)) {
+      res.push({
+        ...node,
+        children: kidMatch && kidMatch.length > 0 ? kidMatch : node.children,
+      });
+    }
+  }
+  return res;
+}
+
 // ===========================================================================
 // RagDock (Gp) — 分类 / 文件（精简为 2 tab）
 // ===========================================================================
@@ -531,6 +630,46 @@ function RagDock({
   const [newCollectionParent, setNewCollectionParent] = useState("");
   const { showToast } = useToast();
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
+  const [catSearch, setCatSearch] = useState("");
+  const [fileSearch, setFileSearch] = useState("");
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importTargetCol, setImportTargetCol] = useState("");
+  const [allExpanded, setAllExpanded] = useState(true);
+
+  // 当在分类查询框中打字时，自动将含匹配分支的父目录加至展开集合，让层级在视觉上一目了然
+  useEffect(() => {
+    if (!catSearch.trim()) return;
+    const q = catSearch.trim().toLowerCase();
+    setExpandedCats((prev) => {
+      const next = new Set(prev);
+      for (const c of collections) {
+        if (c.name.toLowerCase().includes(q) || (c.path && c.path.toLowerCase().includes(q))) {
+          if (c.parent) next.add(c.parent);
+        }
+      }
+      return next;
+    });
+  }, [catSearch, collections]);
+
+  // Auto-expand root nodes only upon initial tree load, respecting user's toggle state thereafter.
+  useEffect(() => {
+    if (collections.length === 0) return;
+    setExpandedCats((prev) => {
+      if (prev.size > 0) return prev; // Do not override user's manual collapse/expand actions!
+      const next = new Set<string>();
+      const allPaths = new Set(collections.map((c) => c.path));
+      for (const c of collections) {
+        if (collections.some((child) => child.parent === c.path)) {
+          next.add(c.path);
+        }
+        if (c.parent && !allPaths.has(c.parent)) {
+          next.add(c.parent);
+        }
+      }
+      return next;
+    });
+  }, [collections]);
+
   const toggleCat = (path: string) => {
     setExpandedCats((prev) => {
       const next = new Set(prev);
@@ -540,17 +679,10 @@ function RagDock({
     });
   };
 
-  // Import files directly into a specific collection from the dock.
-  const handleImportToCollection = async (collectionName: string) => {
-    try {
-      const path = await app.PickImportFolder();
-      if (!path) return;
-      const res = await app.RagImportPaths(collectionName, [path]);
-      showToast(`已导入 ${res.files} 个文件到「${collectionName}」。FTS5 即时可搜，点⚡提取生成知识图谱`, "info");
-      refreshCollections();
-    } catch (e) {
-      showToast(String(e), "error");
-    }
+  // Import files directly into a specific collection from the dock via modern modal selection.
+  const handleImportToCollection = (collectionName: string) => {
+    setImportTargetCol(collectionName);
+    setShowImportModal(true);
   };
 
   const refreshCollections = useCallback(() => {
@@ -757,6 +889,28 @@ function RagDock({
               </div>
             </div>
 
+            {/* 实时分类检索筛选框 (Live Category Filter Bar) - 像素级对齐 .mem-search 规范，置于所有树条目最上方 */}
+            <div style={{ padding: "6px 8px 6px", borderBottom: "1px solid var(--border-soft)" }}>
+              <label className="mem-search" style={{ height: 28, borderRadius: 6, background: "var(--bg-elev)" }}>
+                <Search size={13} style={{ color: "var(--fg-dim)", flex: "0 0 auto" }} />
+                <input
+                  value={catSearch}
+                  onChange={(e) => setCatSearch(e.target.value)}
+                  placeholder="检索分类名称或层级..."
+                  style={{ fontSize: "11.5px" }}
+                />
+                {catSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setCatSearch("")}
+                    style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--fg-dim)", padding: 0, display: "inline-flex" }}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </label>
+            </div>
+
             {/* "全部" — search across all collections */}
             <div
               className={`rag-dock__collection-row ${activeCollection === "" ? "rag-dock__collection-row--active" : ""}`}
@@ -768,103 +922,146 @@ function RagDock({
                   .SetSessionCollections([])
                   .catch(() => {});
               }}
-              style={{ cursor: "pointer" }}
+              style={{ cursor: "pointer", paddingLeft: "6px", gap: "4px" }}
             >
-              <span className="rag-dock__collection-chevron" style={{ visibility: "hidden" }} />
-              <Folder size={13} className="rag-dock__collection-icon" />
-              <span className="rag-dock__collection-label" style={{ fontWeight: 500 }}>全部</span>
+              <button
+                className="rag-dock__collection-chevron"
+                onClick={(e) => { e.stopPropagation(); setAllExpanded(!allExpanded); }}
+                style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--fg-faint)", display: "flex", alignItems: "center", justifyContent: "center", width: "12px", padding: 0 }}
+              >
+                {allExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              </button>
+              <Folder size={13} className="rag-dock__collection-icon" style={{ color: "var(--accent)" }} />
+              <span className="rag-dock__collection-label" style={{ fontWeight: 600 }}>全部</span>
               <span className="rag-dock__collection-count">
                 {collections.reduce((s, c) => s + c.documents, 0)} 文档
               </span>
             </div>
 
             {/* Build tree: root collections + their children */}
-            {(() => {
-              const roots = collections.filter((c) => !c.parent);
-              const childrenOf = (parent: string) => collections.filter((c) => c.parent === parent);
-              return roots.map((root) => {
-                const kids = childrenOf(root.path);
-                const hasKids = kids.length > 0;
-                const expanded = expandedCats.has(root.path);
-                const isRootActive = activeCollection === root.name;
+            {allExpanded && (() => {
+              const qCat = catSearch.trim().toLowerCase();
+              const filteredCols = !qCat ? collections : collections.filter((c) => {
+                if (c.name.toLowerCase().includes(qCat) || (c.path && c.path.toLowerCase().includes(qCat))) return true;
+                if (collections.some((child) => (child.name.toLowerCase().includes(qCat) || (child.path && child.path.toLowerCase().includes(qCat))) && (child.path.startsWith(c.path + "/") || child.parent === c.path))) {
+                  return true;
+                }
+                return false;
+              });
+
+              if (filteredCols.length === 0 && qCat) {
                 return (
-                  <div key={root.path}>
-                    {/* Root collection row */}
+                  <div style={{ padding: "24px 12px", textAlign: "center", color: "var(--fg-faint)", fontSize: "12px" }}>
+                    未检索到匹配「{catSearch}」的分类
+                  </div>
+                );
+              }
+
+              // Build a true tree from paths
+              interface TreeNode {
+                name: string;
+                path: string;
+                documents: number;
+                entities: number;
+                children: Map<string, TreeNode>;
+                isVirtual: boolean;
+              }
+              const tree = new Map<string, TreeNode>();
+              
+              filteredCols.forEach(c => {
+                const parts = (c.path || c.name).split("/");
+                let currPath = "";
+                let currLevel = tree;
+                parts.forEach((p, i) => {
+                  currPath = currPath ? currPath + "/" + p : p;
+                  if (!currLevel.has(p)) {
+                    currLevel.set(p, {
+                      name: p,
+                      path: currPath,
+                      documents: 0,
+                      entities: 0,
+                      children: new Map(),
+                      isVirtual: true
+                    });
+                  }
+                  const node = currLevel.get(p)!;
+                  if (i === parts.length - 1) {
+                    node.isVirtual = false;
+                    node.documents = c.documents || 0;
+                    node.entities = c.entities || 0;
+                  }
+                  currLevel = node.children;
+                });
+              });
+
+              // Recursive render function
+              const renderNode = (node: TreeNode, depth: number) => {
+                const hasKids = node.children.size > 0;
+                const expanded = expandedCats.has(node.path);
+                const isActive = activeCollection === node.path;
+                
+                return (
+                  <div key={node.path}>
                     <div
-                      className={`rag-dock__collection-row ${isRootActive ? "rag-dock__collection-row--active" : ""}`}
+                      className={`rag-dock__collection-row ${isActive ? "rag-dock__collection-row--active" : ""}`}
                       onClick={() => {
-                        setActiveCollection(root.name);
-                        window.dispatchEvent(new CustomEvent("rag:collection-selected", { detail: { collection: root.name } }));
-                      }}
-                      style={{ cursor: "pointer" }}
-                      title={`${root.documents} 文档 · ${root.entities} 实体`}
-                    >
-                      <button
-                        className="rag-dock__collection-chevron"
-                        onClick={(e) => { e.stopPropagation(); toggleCat(root.path); }}
-                        style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--fg-faint)", display: "flex", alignItems: "center" }}
-                      >
-                        {hasKids ? (expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />) : <span style={{ width: 12 }} />}
-                      </button>
-                      <Folder size={13} className="rag-dock__collection-icon" />
-                      <span className="rag-dock__collection-label">{root.name}</span>
-                      <span className="rag-dock__collection-count">{root.documents > 0 ? root.documents : ""}</span>
-                      {/* Hover action buttons */}
-                      <button className="rag-dock__collection-action-btn" title="导入" onClick={(e) => { e.stopPropagation(); void handleImportToCollection(root.name); }}>
-                        <FolderPlus size={12} />
-                      </button>
-                      <button className="rag-dock__collection-action-btn" title="提取" onClick={(e) => { e.stopPropagation(); void handleQuickExtract(root.name); }}>
-                        <Zap size={12} />
-                      </button>
-                      <button className="rag-dock__collection-delete" title="删除" onClick={(e) => {
-                        e.stopPropagation();
-                        if (window.confirm(`删除"${root.name}"及其全部文档？`)) {
-                          (app as unknown as { RagDeleteCollection: (n: string) => Promise<void> })
-                            .RagDeleteCollection(root.name).then(() => refreshCollections()).catch(() => {});
+                        if (hasKids && node.isVirtual) {
+                           toggleCat(node.path);
+                           return;
                         }
-                      }}>
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                    {/* Children */}
-                    {expanded && hasKids && kids.map((kid) => {
-                      const isKidActive = activeCollection === kid.name;
-                      return (
-                        <div
-                          key={kid.path}
-                          className={`rag-dock__collection-row rag-dock__collection-row--child ${isKidActive ? "rag-dock__collection-row--active" : ""}`}
-                          onClick={() => {
-                            setActiveCollection(kid.name);
-                            window.dispatchEvent(new CustomEvent("rag:collection-selected", { detail: { collection: kid.name } }));
-                          }}
-                          style={{ cursor: "pointer" }}
-                          title={`${kid.documents} 文档 · ${kid.entities} 实体`}
+                        setActiveCollection(node.path);
+                        window.dispatchEvent(new CustomEvent("rag:collection-selected", { detail: { collection: node.path } }));
+                      }}
+                      style={{ cursor: "pointer", paddingLeft: `${22 + depth * 14}px`, gap: "4px" }}
+                      title={`${node.documents} 文档 · ${node.entities} 实体`}
+                    >
+                      {hasKids ? (
+                        <button
+                          className="rag-dock__collection-chevron"
+                          onClick={(e) => { e.stopPropagation(); toggleCat(node.path); }}
+                          style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--fg-faint)", display: "flex", alignItems: "center", justifyContent: "center", width: "12px", padding: 0 }}
                         >
-                          <span className="rag-dock__collection-chevron" style={{ visibility: "hidden" }} />
-                          <span style={{ width: 13, textAlign: "center", color: "var(--fg-faint)" }}>└</span>
-                          <span className="rag-dock__collection-label">{kid.name}</span>
-                          <span className="rag-dock__collection-count">{kid.documents > 0 ? kid.documents : ""}</span>
-                          <button className="rag-dock__collection-action-btn" title="导入" onClick={(e) => { e.stopPropagation(); void handleImportToCollection(kid.name); }}>
+                          {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                        </button>
+                      ) : (
+                        depth > 0 ? (
+                          <span style={{ width: "12px", display: "flex", justifyContent: "center", alignItems: "center" }}>
+                            <CornerDownRight size={10} style={{ color: "var(--fg-faint)", opacity: 0.6, marginTop: "-2px" }} />
+                          </span>
+                        ) : (
+                          <span style={{ width: "12px" }} />
+                        )
+                      )}
+                      <Folder size={13} className="rag-dock__collection-icon" style={{ opacity: node.isVirtual ? 0.6 : 1, color: depth > 0 ? "var(--fg-dim)" : "var(--fg)" }} />
+                      <span className="rag-dock__collection-label" style={{ fontWeight: depth === 0 ? 500 : 400, color: depth > 0 ? "var(--fg-dim)" : "var(--fg)" }}>{node.name}</span>
+                      <span className="rag-dock__collection-count">{node.documents > 0 ? node.documents : ""}</span>
+                      
+                      {!node.isVirtual && (
+                        <>
+                          <button className="rag-dock__collection-action-btn" title="导入" onClick={(e) => { e.stopPropagation(); void handleImportToCollection(node.path); }}>
                             <FolderPlus size={12} />
                           </button>
-                          <button className="rag-dock__collection-action-btn" title="提取" onClick={(e) => { e.stopPropagation(); void handleQuickExtract(kid.name); }}>
+                          <button className="rag-dock__collection-action-btn" title="提取" onClick={(e) => { e.stopPropagation(); void handleQuickExtract(node.path); }}>
                             <Zap size={12} />
                           </button>
                           <button className="rag-dock__collection-delete" title="删除" onClick={(e) => {
                             e.stopPropagation();
-                            if (window.confirm(`删除"${kid.name}"及其全部文档？`)) {
+                            if (window.confirm(`删除"${node.name}"及其全部文档？`)) {
                               (app as unknown as { RagDeleteCollection: (n: string) => Promise<void> })
-                                .RagDeleteCollection(kid.name).then(() => refreshCollections()).catch(() => {});
+                                .RagDeleteCollection(node.path).then(() => refreshCollections()).catch(() => {});
                             }
                           }}>
                             <Trash2 size={12} />
                           </button>
-                        </div>
-                      );
-                    })}
+                        </>
+                      )}
+                    </div>
+                    {expanded && hasKids && Array.from(node.children.values()).map(child => renderNode(child, depth + 1))}
                   </div>
                 );
-              });
+              };
+
+              return Array.from(tree.values()).map(root => renderNode(root, 0));
             })()}
 
             {collections.length === 0 && (
@@ -892,22 +1089,66 @@ function RagDock({
         {/* === 文件 tab === */}
         {tab === "files" && (
           <div className="rag-dock__files">
-            {/* 分类快速切换 */}
-            <select
-              className="rag-dock__file-select"
-              value={activeCollection}
-              onChange={(e) => {
-                setActiveCollection(e.target.value);
-                window.dispatchEvent(new CustomEvent("rag:collection-selected", { detail: { collection: e.target.value } }));
-              }}
-            >
-              <option value="">全部</option>
-              {collections.map((c) => (
-                <option key={c.path || c.name} value={c.name}>
-                  {c.parent ? "└ " : ""}{c.name} ({c.documents})
-                </option>
-              ))}
-            </select>
+            {/* 简洁干练的分类切换级联菜单 (Select Dropdown) */}
+            <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-soft)" }}>
+              <CustomSelect
+                value={activeCollection}
+                onChange={(val) => {
+                  setActiveCollection(val);
+                  window.dispatchEvent(new CustomEvent("rag:collection-selected", { detail: { collection: val } }));
+                }}
+                icon={<Folder size={14} style={{ color: "var(--accent)" }} />}
+                options={[
+                  {
+                    value: "",
+                    label: `全部文档 (${collections.reduce((acc, c) => acc + (c.documents || 0), 0)})`,
+                    icon: <Folder size={13} style={{ color: "var(--accent)" }} />,
+                  },
+                  ...collections.map((c) => ({
+                    value: c.name,
+                    label: c.name,
+                    subtitle: c.documents > 0 ? `${c.documents} 篇` : undefined,
+                    indent: !!c.parent,
+                    icon: <Folder size={13} />,
+                  })),
+                ]}
+              />
+            </div>
+
+            {/* 实时文件检索过滤框 (Live File Search Bar) - 像素级对齐 .mem-search 规范 */}
+            <div style={{ padding: "6px 8px 6px", borderBottom: "1px solid var(--border-soft)" }}>
+              <label className="mem-search" style={{ height: 28, borderRadius: 6, background: "var(--bg-elev)" }}>
+                <Search size={13} style={{ color: "var(--fg-dim)", flex: "0 0 auto" }} />
+                <input
+                  value={fileSearch}
+                  onChange={(e) => setFileSearch(e.target.value)}
+                  placeholder="检索当前列表文件或文档..."
+                  style={{ fontSize: "11.5px" }}
+                />
+                {fileSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setFileSearch("")}
+                    style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--fg-dim)", padding: 0, display: "inline-flex" }}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </label>
+            </div>
+
+            {/* 当处于搜索过滤下，若未命中任何项则给出优雅空状态 */}
+            {(() => {
+              const displayTree = filterRagTree(tree, fileSearch);
+              if (displayTree.length === 0 && tree.length > 0 && fileSearch.trim()) {
+                return (
+                  <div style={{ padding: "24px 12px", textAlign: "center", color: "var(--fg-faint)", fontSize: "12px" }}>
+                    未检索到匹配「{fileSearch}」的文档
+                  </div>
+                );
+              }
+              return null;
+            })()}
 
             {/* 文件列表 */}
             {tree.length === 0 ? (
@@ -931,7 +1172,7 @@ function RagDock({
               )
             ) : (
               <div className="rag-dock__file-tree">
-                    {tree.map((node) => (
+                    {filterRagTree(tree, fileSearch).map((node) => (
                       <RagNode
                         key={node.key}
                         node={node}
@@ -1075,6 +1316,16 @@ function RagDock({
           </div>
         </div>
       )}
+
+      <ImportModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        collections={collections}
+        defaultCollection={importTargetCol}
+        onSuccess={() => {
+          refreshCollections();
+        }}
+      />
     </aside>
   );
 }

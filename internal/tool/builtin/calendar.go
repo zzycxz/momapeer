@@ -46,6 +46,13 @@ type calendarParams struct {
 	RecurrenceEnd string   `json:"recurrence_end"`
 	Reminders     []int    `json:"reminders"`
 	Tags          []string `json:"tags"`
+	// Output fields route reminders beyond the desktop toast. output_mode "im"
+	// pushes reminders to output_dest ("platform:chatID"); "email" sends via the
+	// named output_account ("" = default) to output_dest (recipient). Empty/"" =
+	// toast only. Only takes effect when reminders are set.
+	OutputMode    string   `json:"output_mode"`
+	OutputDest    string   `json:"output_dest"`
+	OutputAccount string   `json:"output_account"`
 	Since         string   `json:"since"`
 	Before        string   `json:"before"`
 	Q             string   `json:"q"`
@@ -80,6 +87,9 @@ func (calendarTool) Schema() json.RawMessage {
   "recurrence_end":{"type":"string","description":"Recurrence end date '2026-12-31' (default +1 year)"},
   "reminders":{"type":"array","items":{"type":"integer"},"description":"Reminder minutes before event, e.g. [15, 5]"},
   "tags":{"type":"array","items":{"type":"string"},"description":"Tags for categorization"},
+  "output_mode":{"type":"string","enum":["","im","email"],"description":"Route reminders beyond desktop toast: 'im' pushes to output_dest (platform:chatID), 'email' sends via output_account to output_dest (recipient). Empty = toast only. Only takes effect with reminders set."},
+  "output_dest":{"type":"string","description":"IM destination 'platform:chatID' (or 'platform:chatType:chatID' for QQ groups) when output_mode='im'; recipient email when output_mode='email'."},
+  "output_account":{"type":"string","description":"Named mailbox to send from when output_mode='email' (empty = default account)."},
   "since":{"type":"string","description":"List/search start boundary: '2026-07-07' or 'today' or 'this_week'"},
   "before":{"type":"string","description":"List/search end boundary"},
   "q":{"type":"string","description":"Search keyword (for search action)"},
@@ -153,18 +163,21 @@ func calendarCreate(p calendarParams) (string, error) {
 	}
 
 	e := &calendar.Event{
-		Title:       p.Title,
-		Description: p.Description,
-		Location:    p.Location,
-		StartTime:   start,
-		EndTime:     end,
-		AllDay:      p.AllDay,
-		Timezone:    tz,
-		Color:       p.Color,
-		Source:      "agent",
-		Recurrence:  p.Recurrence,
-		Reminders:   p.Reminders,
-		Tags:        p.Tags,
+		Title:         p.Title,
+		Description:   p.Description,
+		Location:      p.Location,
+		StartTime:     start,
+		EndTime:       end,
+		AllDay:        p.AllDay,
+		Timezone:      tz,
+		Color:         p.Color,
+		Source:        "agent",
+		Recurrence:    p.Recurrence,
+		Reminders:     p.Reminders,
+		Tags:          p.Tags,
+		OutputMode:    p.OutputMode,
+		OutputDest:    p.OutputDest,
+		OutputAccount: p.OutputAccount,
 	}
 
 	if p.RecurrenceEnd != "" {
@@ -281,6 +294,17 @@ func calendarUpdate(p calendarParams) (string, error) {
 	}
 	if len(p.Tags) > 0 {
 		e.Tags = p.Tags
+	}
+	// Output routing: non-empty values overwrite. To clear push routing an
+	// update must pass output_mode explicitly — see the tool schema.
+	if p.OutputMode != "" {
+		e.OutputMode = p.OutputMode
+	}
+	if p.OutputDest != "" {
+		e.OutputDest = p.OutputDest
+	}
+	if p.OutputAccount != "" {
+		e.OutputAccount = p.OutputAccount
 	}
 	if err := store.Update(e); err != nil {
 		return "", err

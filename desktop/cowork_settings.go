@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,6 +61,23 @@ type CoWorkSettingsView struct {
 	ScreenshotVLMModel string `json:"screenshotVlmModel"`
 	// EStopHotkey is the global emergency-stop combo for desktop automation.
 	EStopHotkey string `json:"estopHotkey"`
+	// EmailAccounts is the multi-mailbox list. When non-empty it is the source of
+	// truth on save (full overwrite); the legacy SMTP/IMAP single-pair fields
+	// above are kept as a backward-compat mirror of the Default account so older
+	// frontends and the legacy probe path still work.
+	EmailAccounts []EmailAccountView `json:"emailAccounts"`
+}
+
+// EmailAccountView is one mailbox in the multi-account list. Passwords are
+// write-only (Password holds a freshly-typed value on save; the stored secret
+// is never echoed back). PasswordSet reports whether a secret is stored.
+type EmailAccountView struct {
+	Name          string      `json:"name"`          // stable handle tools/scheduler address
+	Default       bool        `json:"default"`       // exactly one should be true
+	SMTP          SMTPSettings `json:"smtp"`
+	IMAP          IMAPSettings `json:"imap"`
+	Password      string      `json:"password"`      // SMTP/IMAP share one password (write-only)
+	PasswordSet   bool        `json:"passwordSet"`   // reports stored secret presence
 }
 
 // SMTPSettings mirrors config.SMTPConfig minus the password (which lives in
@@ -142,7 +160,58 @@ func coworkSettingsView(c config.CoworkConfig) CoWorkSettingsView {
 	if imap.PasswordEnv != "" {
 		v.IMAPPasswordSet = secretIsSet(imap.PasswordEnv, env)
 	}
+	// Project the multi-account list. Each account's password_env is derived
+	// from its name so accounts don't collide in the secret store. PasswordSet
+	// reflects whichever of SMTP/IMAP env has a stored secret.
+	if len(c.EmailAccounts) > 0 {
+		v.EmailAccounts = make([]EmailAccountView, 0, len(c.EmailAccounts))
+		for _, a := range c.EmailAccounts {
+			smtpEnv, imapEnv := accountPasswordEnvs(a.Name)
+			asmtp := a.SMTP
+			aimap := a.IMAP
+			if asmtp.PasswordEnv == "" {
+				asmtp.PasswordEnv = smtpEnv
+			}
+			if aimap.PasswordEnv == "" {
+				aimap.PasswordEnv = imapEnv
+			}
+			pwdSet := secretIsSet(asmtp.PasswordEnv, env) || secretIsSet(aimap.PasswordEnv, env)
+			v.EmailAccounts = append(v.EmailAccounts, EmailAccountView{
+				Name:    a.Name,
+				Default: a.Default,
+				SMTP: SMTPSettings{
+					Host:           asmtp.Host,
+					Port:           asmtp.Port,
+					From:           asmtp.From,
+					Username:       asmtp.Username,
+					PasswordEnv:    asmtp.PasswordEnv,
+					UseTLS:         asmtp.UseTLS,
+					EncryptionMode: asmtp.EncryptionMode,
+				},
+				IMAP: IMAPSettings{
+					Host:        aimap.Host,
+					Port:        aimap.Port,
+					Username:    aimap.Username,
+					PasswordEnv: aimap.PasswordEnv,
+				},
+				PasswordSet: pwdSet,
+			})
+		}
+	}
 	return v
+}
+
+// accountPasswordEnvs returns the stable SMTP/IMAP env-var names for a named
+// account. The default account ("primary" or empty-named) reuses the legacy
+// COWORK_SMTP_PASSWORD / COWORK_IMAP_PASSWORD names so existing secrets keep
+// working; named accounts get COWORK_SMTP_PASSWORD_<name> to avoid collisions.
+func accountPasswordEnvs(name string) (smtpEnv, imapEnv string) {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.EqualFold(name, "primary") {
+		return "COWORK_SMTP_PASSWORD", "COWORK_IMAP_PASSWORD"
+	}
+	upper := strings.ToUpper(strings.ReplaceAll(name, " ", "_"))
+	return "COWORK_SMTP_PASSWORD_" + upper, "COWORK_IMAP_PASSWORD_" + upper
 }
 
 // scanPPTXTemplates scans a directory for .pptx files and returns them as template views.
@@ -204,7 +273,26 @@ func (a *App) updatePPTSkillConfig(key, value string) error {
 // config.toml via the edit pipeline, secret fields (SMTP/IMAP passwords) to the
 // momapeer-managed .env. The password_env names are auto-assigned when empty so
 // the user doesn't have to invent env var names.
-func (a *App) SetCoWorkSettings(v CoWorkSettingsView) error {
+func (a *App) SetCoWorkSettings(v CoWorkSettingsView) (err error) {
+	// Recover from panic so a bug in the save path returns an error to the
+	// frontend instead of crashing the Wails backend (which kills the UI).
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("SetCoWorkSettings panic", "panic", r)
+			err = fmt.Errorf("保存设置时发生内部错误：%v", r)
+		}
+	}()
+	// Diagnostic log (Debug level — not emitted by default). Intentionally
+	// excludes the email address and password: those are personal data. Only
+	// structural facts (account count, server host, port, whether a password is
+	// set) are logged, enough to trace a save failure without leaking PII.
+	slog.Debug("SetCoWorkSettings", "emailAccounts", len(v.EmailAccounts))
+	for i, ac := range v.EmailAccounts {
+		slog.Debug("SetCoWorkSettings account", "idx", i, "name", ac.Name, "default", ac.Default,
+			"smtpHost", ac.SMTP.Host, "smtpPort", ac.SMTP.Port,
+			"imapHost", ac.IMAP.Host, "imapPort", ac.IMAP.Port,
+			"pwdSet", ac.PasswordSet, "encMode", ac.SMTP.EncryptionMode)
+	}
 	// Assign default password_env names when unset, so .env keys are stable.
 	if v.SMTP.PasswordEnv == "" {
 		v.SMTP.PasswordEnv = "COWORK_SMTP_PASSWORD"
@@ -219,6 +307,8 @@ func (a *App) SetCoWorkSettings(v CoWorkSettingsView) error {
 	// so the change takes effect without an app restart — the tools read via
 	// os.Getenv(passwordEnv), which is the in-memory decrypted view.
 	store := secret.Default()
+	// Legacy single-pair password write (kept for backward compat with the
+	// collapsed SMTPPassword/IMAPPassword fields).
 	if pwd := strings.TrimSpace(v.SMTPPassword); pwd != "" {
 		if err := store.Set(v.SMTP.PasswordEnv, pwd); err != nil {
 			return fmt.Errorf("save smtp secret: %w", err)
@@ -230,6 +320,26 @@ func (a *App) SetCoWorkSettings(v CoWorkSettingsView) error {
 			return fmt.Errorf("save imap secret: %w", err)
 		}
 		os.Setenv(v.IMAP.PasswordEnv, pwd)
+	}
+	// Multi-account passwords. Each account writes to its own env name so
+	// accounts don't overwrite each other's secret.
+	for i := range v.EmailAccounts {
+		av := &v.EmailAccounts[i]
+		pwd := strings.TrimSpace(av.Password)
+		if pwd == "" {
+			continue // leave existing untouched
+		}
+		smtpEnv, imapEnv := accountPasswordEnvs(av.Name)
+		av.SMTP.PasswordEnv = smtpEnv
+		av.IMAP.PasswordEnv = imapEnv
+		if err := store.Set(smtpEnv, pwd); err != nil {
+			return fmt.Errorf("save smtp secret for %q: %w", av.Name, err)
+		}
+		if err := store.Set(imapEnv, pwd); err != nil {
+			return fmt.Errorf("save imap secret for %q: %w", av.Name, err)
+		}
+		os.Setenv(smtpEnv, pwd)
+		os.Setenv(imapEnv, pwd)
 	}
 
 	// Persist non-secret config via the standard edit pipeline.
@@ -259,9 +369,70 @@ func (a *App) SetCoWorkSettings(v CoWorkSettingsView) error {
 		}
 		c.Cowork.SMTP = smtp
 		c.Cowork.IMAP = imap
-		// Sync to EmailAccounts: update the default account (or create one)
-		// so the multi-account config stays in sync with the panel.
-		if len(c.Cowork.EmailAccounts) > 0 {
+		// Multi-account path: when the frontend submits a full account list,
+		// it becomes the source of truth. We first clean up secrets for any
+		// accounts that are being removed, then overwrite the slice. The legacy
+		// single-pair fields above are mirrored onto the Default account by
+		// normalizeEmailAccounts on the next Load.
+		if len(v.EmailAccounts) > 0 {
+			// Build the set of surviving account names; drop secrets for the
+			// rest so we don't leak stale credentials in the encrypted store.
+			surviving := make(map[string]bool, len(v.EmailAccounts))
+			next := make([]config.EmailAccount, 0, len(v.EmailAccounts))
+			for _, av := range v.EmailAccounts {
+				name := strings.TrimSpace(av.Name)
+				if name == "" {
+					name = "primary"
+				}
+				surviving[strings.ToLower(name)] = true
+				smtpEnv, imapEnv := accountPasswordEnvs(name)
+				next = append(next, config.EmailAccount{
+					Name:    name,
+					Default: av.Default,
+					SMTP: config.SMTPConfig{
+						Host:           strings.TrimSpace(av.SMTP.Host),
+						Port:           av.SMTP.Port,
+						From:           strings.TrimSpace(av.SMTP.From),
+						Username:       strings.TrimSpace(av.SMTP.Username),
+						PasswordEnv:    smtpEnv,
+						UseTLS:         av.SMTP.UseTLS,
+						EncryptionMode: strings.TrimSpace(av.SMTP.EncryptionMode),
+					},
+					IMAP: config.IMAPConfig{
+						Host:        strings.TrimSpace(av.IMAP.Host),
+						Port:        av.IMAP.Port,
+						Username:    strings.TrimSpace(av.IMAP.Username),
+						PasswordEnv: imapEnv,
+					},
+				})
+			}
+			// Ensure exactly one Default so EmailAccountByName("") resolves.
+			hasDefault := false
+			for i := range next {
+				if next[i].Default {
+					if hasDefault {
+						next[i].Default = false
+					}
+					hasDefault = true
+				}
+			}
+			if !hasDefault && len(next) > 0 {
+				next[0].Default = true
+			}
+			// Clean secrets of removed accounts (fire-and-forget; failure is
+			// non-fatal — a leftover secret is just unused, not a correctness
+			// issue).
+			for _, old := range c.Cowork.EmailAccounts {
+				if !surviving[strings.ToLower(strings.TrimSpace(old.Name))] {
+					smtpEnv, imapEnv := accountPasswordEnvs(old.Name)
+					_ = store.Delete(smtpEnv)
+					_ = store.Delete(imapEnv)
+				}
+			}
+			c.Cowork.EmailAccounts = next
+		} else if len(c.Cowork.EmailAccounts) > 0 {
+			// Legacy single-pair edit on an existing multi-account config:
+			// update the default account only (preserves other accounts).
 			for i := range c.Cowork.EmailAccounts {
 				if c.Cowork.EmailAccounts[i].Default {
 					c.Cowork.EmailAccounts[i].SMTP = smtp
@@ -286,6 +457,9 @@ func (a *App) SetCoWorkSettings(v CoWorkSettingsView) error {
 	// updated config without requiring a restart.
 	if freshCfg, err := config.Load(); err == nil {
 		builtin.SetEmailAccounts(freshCfg.Cowork.EmailAccounts)
+		slog.Info("SetCoWorkSettings done", "savedAccounts", len(freshCfg.Cowork.EmailAccounts))
+	} else {
+		slog.Warn("SetCoWorkSettings: reload config failed", "err", err)
 	}
 
 	// Also update template_config.json so the PPT skill reads the mode
@@ -293,7 +467,11 @@ func (a *App) SetCoWorkSettings(v CoWorkSettingsView) error {
 	if mode == "" {
 		mode = "fast"
 	}
-	return a.updatePPTSkillConfig("mode", mode)
+	if err := a.updatePPTSkillConfig("mode", mode); err != nil {
+		slog.Warn("SetCoWorkSettings: updatePPTSkillConfig failed", "err", err)
+	}
+	slog.Info("SetCoWorkSettings complete")
+	return nil
 }
 
 // MailProbeResult is the outcome of a mailbox connection probe, returned to the
@@ -307,22 +485,53 @@ type MailProbeResult struct {
 	Message string `json:"message"` // human hint, e.g. "IMAP 登录失败：检查授权码"
 }
 
-// ProbeMailAccount tests the saved mailbox's IMAP login by actually connecting.
+// ProbeMailAccount tests a saved mailbox's IMAP login by actually connecting.
 // It reloads config (so a just-saved mailbox is tested, not the stale boot-time
 // snapshot) and reuses the same go-imap wiring the email tools use. Powers the
-// green/red status dot on the mail card.
-func (a *App) ProbeMailAccount() (MailProbeResult, error) {
+// green/red status dot on each mail card. An empty name probes the Default
+// account (legacy single-pair path).
+func (a *App) ProbeMailAccount(name string) (result MailProbeResult, err error) {
+	// Recover from any panic so a bug in the probe path returns a friendly
+	// error instead of crashing the Wails backend (which would kill the UI —
+	// the "断了" symptom). The stack is logged for diagnosis.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("ProbeMailAccount panic", "name", name, "panic", r)
+			result = MailProbeResult{Status: "error", Message: fmt.Sprintf("内部错误：%v", r)}
+			err = nil
+		}
+	}()
+	slog.Debug("ProbeMailAccount", "name", name)
 	cfg, err := config.Load()
 	if err != nil {
+		slog.Warn("ProbeMailAccount: config.Load failed", "err", err)
 		return MailProbeResult{Status: "error", Message: "读取配置失败：" + err.Error()}, nil
 	}
 	// normalizeEmailAccounts folds the legacy [cowork.imap] single-pair into the
 	// default account, so reading the default account covers both old/new configs.
-	acct, ok := cfg.Cowork.DefaultEmailAccount()
-	if !ok || strings.TrimSpace(acct.IMAP.Host) == "" {
+	name = strings.TrimSpace(name)
+	var (
+		acct config.EmailAccount
+		ok   bool
+	)
+	if name == "" {
+		acct, ok = cfg.Cowork.DefaultEmailAccount()
+	} else {
+		acct, ok = cfg.Cowork.EmailAccountByName(name)
+	}
+	if !ok {
+		slog.Warn("ProbeMailAccount: account not found", "name", name, "availableAccounts", len(cfg.Cowork.EmailAccounts))
 		return MailProbeResult{Status: "unconfigured", Message: ""}, nil
 	}
+	if strings.TrimSpace(acct.IMAP.Host) == "" {
+		slog.Warn("ProbeMailAccount: IMAP host empty", "name", name)
+		return MailProbeResult{Status: "unconfigured", Message: ""}, nil
+	}
+	// Debug-level only; excludes the email address and password env name (PII).
+	// host/port are server config, not personal data, so they're safe to log.
+	slog.Debug("ProbeMailAccount connecting", "name", name, "host", acct.IMAP.Host, "port", acct.IMAP.Port)
 	if err := builtin.ProbeIMAPConfig(acct.IMAP); err != nil {
+		slog.Warn("ProbeMailAccount failed", "name", name, "err", err)
 		return MailProbeResult{Status: "error", Message: err.Error()}, nil
 	}
 	return MailProbeResult{OK: true, Status: "ok", Message: "连接正常"}, nil
@@ -462,6 +671,48 @@ func loadCoworkEnvAtStartup() {
 		if os.Getenv(key) == "" {
 			os.Setenv(key, val)
 		}
+	}
+	// Restore email account passwords from the encrypted store into the process
+	// env. Secrets are written to the store on save (SetCoWorkSettings) but only
+	// mirrored to os.Environ for the live session — without this restore, a
+	// restart would leave PasswordEnv unset, so IMAP/SMTP auth would fail until
+	// the user re-saved the mailbox. We read every account's PasswordEnv from
+	// config and pull each from the store.
+	restoreEmailSecretsToEnv()
+}
+
+// restoreEmailSecretsToEnv loads the multi-account config and copies each
+// account's stored secret (if any) from the encrypted store into the process
+// environment, so tools reading os.Getenv(PasswordEnv) find the password right
+// after startup. Skips env vars already set (user/system env wins). Best-effort:
+// a missing secret (not yet saved) is silently skipped.
+func restoreEmailSecretsToEnv() {
+	cfg, err := config.Load()
+	if err != nil {
+		return // non-fatal — tools will report "not configured" clearly
+	}
+	store := secret.Default()
+	restore := func(envName string) {
+		envName = strings.TrimSpace(envName)
+		if envName == "" || os.Getenv(envName) != "" {
+			return
+		}
+		if val, ok, err := store.Get(envName); err == nil && ok && strings.TrimSpace(val) != "" {
+			os.Setenv(envName, val)
+		}
+	}
+	// Legacy single-pair.
+	restore(cfg.Cowork.SMTP.PasswordEnv)
+	restore(cfg.Cowork.IMAP.PasswordEnv)
+	// Multi-account list — the source of truth when set.
+	for _, a := range cfg.Cowork.EmailAccounts {
+		restore(a.SMTP.PasswordEnv)
+		restore(a.IMAP.PasswordEnv)
+		// Also restore the derived env names (accountPasswordEnvs) in case the
+		// config predates the per-account naming and PasswordEnv is still empty.
+		smtpEnv, imapEnv := accountPasswordEnvs(a.Name)
+		restore(smtpEnv)
+		restore(imapEnv)
 	}
 }
 

@@ -8,7 +8,7 @@
 // lets the parent show toasts on completion.
 
 import { useState } from "react";
-import { Clock, Pause, Play, Pencil, Trash2, PlayCircle, History as HistoryIcon } from "lucide-react";
+import { Clock, Pause, Play, Pencil, Trash2, PlayCircle, History as HistoryIcon, AlertTriangle } from "lucide-react";
 
 import type { TaskView } from "../../lib/types";
 import { useT, type Translator } from "../../lib/i18n";
@@ -116,6 +116,20 @@ export function TaskCard({
           </span>
         )}
       </div>
+      {/* Delivery-failure banner: the agent ran but IM/email/file push didn't
+          reach its destination. Without this the user would believe a silent
+          drop was a success. Hidden when delivery succeeded or wasn't
+          configured (store-only mode). */}
+      {task.lastDeliverErr && (
+        <div
+          className="cowork-task-card__deliver-fail"
+          title={task.lastDeliverAt ? `${task.lastDeliverAt}: ${task.lastDeliverErr}` : task.lastDeliverErr}
+        >
+          <AlertTriangle size={13} />
+          <span>{t("cowork.automationDeliveryFailBanner")}：</span>
+          <span className="cowork-task-card__deliver-fail-reason">{task.lastDeliverErr}</span>
+        </div>
+      )}
       {showResult && task.lastResult && (
         <pre className="cowork-task-card__result">{task.lastResult}</pre>
       )}

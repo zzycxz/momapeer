@@ -1042,7 +1042,7 @@ export function useController(getProfile?: () => string) {
   }, [reconcileTabRuntime]);
 
   const openProjectTab = useCallback(async (workspaceRoot: string, topicId: string): Promise<TabMeta> => {
-    const meta = await app.OpenProjectTab(workspaceRoot, topicId, profile());
+    const meta = await app.OpenProjectTab3(workspaceRoot, topicId, profile());
     setActiveTabId(meta.id);
     await loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id));
     return meta;
@@ -1058,11 +1058,11 @@ export function useController(getProfile?: () => string) {
   // Ensure a blank tab exists for the given scope — reuses an existing one
   // or creates a new tab, then loads its session data.
   const ensureBlankTab = useCallback(async (scope: string, workspaceRoot: string, profile?: string): Promise<TabMeta> => {
-    const meta = await app.EnsureBlankTab(scope, workspaceRoot, profile ?? "");
+    const meta = await app.EnsureBlankTab(scope, workspaceRoot, profile ?? getProfile?.() ?? "");
     setActiveTabId(meta.id);
     await loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id));
     return meta;
-  }, [loadSessionDataForTab]);
+  }, [loadSessionDataForTab, getProfile]);
 
   const closeTab = useCallback(async (tabId: string) => {
     try {

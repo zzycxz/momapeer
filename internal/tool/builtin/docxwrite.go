@@ -15,8 +15,10 @@ package builtin
 import (
 	"archive/zip"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +28,7 @@ import (
 // shared Style applies to text runs within the section where relevant.
 type DocSection struct {
 	Type    string     `json:"type"`    // "heading"|"paragraph"|"list"|"table"
-	Level   int        `json:"level"`   // heading level (1-3, default 1)
+	Level   int        `json:"level"`   // heading level (1-6, default 1)
 	Text    string     `json:"text"`    // heading/paragraph text; list single item (when Items empty)
 	Items   []string   `json:"items"`   // list items (type=list)
 	Ordered bool       `json:"ordered"` // list ordered? (type=list)
@@ -76,13 +78,22 @@ func writeDOCX(in DocInput) error {
 		// Read existing document.xml and insert new sections before </w:body>.
 		existing, err := readDocxPart(in.Path, "word/document.xml")
 		if err != nil {
-			return fmt.Errorf("append: read existing docx: %w", err)
-		}
-		newFragments := buildSectionsXML(in)
-		xmlBody = strings.Replace(existing, "</w:body>", newFragments+"</w:body>", 1)
-		styles, _ = readDocxPart(in.Path, "word/styles.xml")
-		if styles == "" {
+			// Append to a non-existent file degrades to a full write — the
+			// common "first chapter" case where the agent starts with
+			// append:true and no file exists yet. Any other read error (corrupt
+			// zip, permission) still surfaces as an error.
+			if !errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("append: read existing docx: %w", err)
+			}
+			xmlBody = buildDocumentXML(in)
 			styles = defaultStylesXML()
+		} else {
+			newFragments := buildSectionsXML(in)
+			xmlBody = strings.Replace(existing, "</w:body>", newFragments+"</w:body>", 1)
+			styles, _ = readDocxPart(in.Path, "word/styles.xml")
+			if styles == "" {
+				styles = defaultStylesXML()
+			}
 		}
 	} else {
 		xmlBody = buildDocumentXML(in)
@@ -192,12 +203,15 @@ func renderSection(s DocSection) string {
 		if lvl < 1 {
 			lvl = 1
 		}
-		if lvl > 3 {
-			lvl = 3
+		if lvl > 6 {
+			lvl = 6 // Word defines Heading1-6; 公文 needs up to H4 ("（1）每周例会")
 		}
-		st := s.Style
-		st.Bold = true // headings are bold by convention
-		return renderHeading(s.Text, lvl, st)
+		// Headings are bold by default (the Heading1-6 styles carry <w:b/>), but
+		// we do NOT force Bold=true on the run: 公文 headings use SimHei/KaiTi
+		// fonts (already visually heavy) and explicitly pass Bold:false, which
+		// must be honored at the run level. The style-level <w:b/> still gives
+		// plain users bold headings.
+		return renderHeading(s.Text, lvl, s.Style)
 	case "paragraph", "para", "text", "":
 		return renderParagraph(s.Text, s.Style)
 	case "list", "ul", "ol":
@@ -213,31 +227,43 @@ func renderSection(s DocSection) string {
 	}
 }
 
-// renderHeading maps level → a built-in heading style (Heading1-3) defined in
+// renderHeading maps level → a built-in heading style (Heading1-6) defined in
 // styles.xml. The style carries the size/bold; per-run style overrides color/font.
 func renderHeading(text string, level int, st DocStyle) string {
 	pStyle := fmt.Sprintf("Heading%d", level)
-	return fmt.Sprintf(`<w:p><w:pPr><w:pStyle w:val="%s"/>%s%s</w:pPr>%s</w:p>`,
-		pStyle, pPropsXML(st), pAlignXML(st.Align), runXML(text, st))
+	return fmt.Sprintf(`<w:p>%s%s</w:p>`, pPrXML(pStyle, st), runXML(text, st))
 }
 
 // renderParagraph emits a body paragraph with run styling + alignment.
 func renderParagraph(text string, st DocStyle) string {
-	return fmt.Sprintf(`<w:p>%s%s%s</w:p>`, pPropsXML(st), pAlignXML(st.Align), runXML(text, st))
+	return fmt.Sprintf(`<w:p>%s%s</w:p>`, pPrXML("", st), runXML(text, st))
 }
 
-// pPropsXML builds paragraph-level properties (line spacing, first-line indent).
-func pPropsXML(st DocStyle) string {
+// pPrXML builds the full <w:pPr>…</w:pPr> for a paragraph: an optional heading
+// pStyle, then line spacing / first-line indent, then alignment. All properties
+// sit INSIDE one pPr block — a bare <w:jc> outside pPr is silently ignored by
+// Word (the bug behind "title not centered"), so we never emit one.
+func pPrXML(pStyle string, st DocStyle) string {
 	var parts []string
+	if pStyle != "" {
+		parts = append(parts, fmt.Sprintf(`<w:pStyle w:val="%s"/>`, pStyle))
+	}
 	if st.LineSpacing > 0 {
 		// OOXML line spacing: 240 = single, 360 = 1.5×, 480 = double.
 		val := int(st.LineSpacing * 240)
 		parts = append(parts, fmt.Sprintf(`<w:spacing w:line="%d" w:lineRule="auto"/>`, val))
 	}
 	if st.Indent > 0 {
-		// First-line indent in twips (1 char ≈ 240 twips at default font).
-		val := st.Indent * 240
-		parts = append(parts, fmt.Sprintf(`<w:ind w:firstLine="%d"/>`, val))
+		// First-line indent in CHARACTER units (公文 standard): each char =
+		// 100 hundredths-of-a-char (firstLineChars). Indent:2 → "200" = 2 chars,
+		// which Word renders at the font's actual char width regardless of font
+		// size — the property Chinese official documents require. (The earlier
+		// firstLine twips value drifted with font size, breaking 公文 layout.)
+		val := st.Indent * 100
+		parts = append(parts, fmt.Sprintf(`<w:ind w:firstLineChars="%d"/>`, val))
+	}
+	if jc := pAlignXML(st.Align); jc != "" {
+		parts = append(parts, jc)
 	}
 	if len(parts) == 0 {
 		return ""
@@ -406,9 +432,10 @@ const numberingXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:num w:numId="0"><w:abstractNumId w:val="0"/></w:num>
 </w:numbering>`
 
-// defaultStylesXML defines Normal + Heading1-3 styles. Heading sizes:
-// H1=32 half-pts (16pt), H2=28 (14pt), H3=24 (12pt). Numbering lives in
-// numbering.xml (not here).
+// defaultStylesXML defines Normal + Heading1-6 styles. Heading sizes:
+// H1=32 half-pts (16pt), H2=28 (14pt), H3=24 (12pt), H4=24 (12pt), H5=22 (11pt),
+// H6=22 (11pt). H4+ exist for 公文 ("（1）每周例会") and deep document outlines.
+// Numbering lives in numbering.xml (not here).
 func defaultStylesXML() string {
 	return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -417,5 +444,8 @@ func defaultStylesXML() string {
 <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="160" w:after="80"/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="160" w:after="80"/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="140" w:after="80"/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="140" w:after="80"/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:style>
 </w:styles>`
 }

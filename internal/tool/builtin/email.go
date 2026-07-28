@@ -33,19 +33,50 @@ import (
 
 var globalEmailConfig *config.SMTPConfig
 
-// SetEmailConfig injects the SMTP settings the tool uses. Called from boot.go
-// when the cowork profile activates; nil disables email_send.
+// SetEmailConfig injects the legacy single-account SMTP settings.
+//
+// Deprecated: boot.go no longer calls this — it injects the multi-account
+// slice via SetEmailAccounts instead, and accountByName is now the source of
+// truth. globalEmailConfig is kept only as a fallback for configs that haven't
+// migrated to [[cowork.email_accounts]]; new code should call SendPlainTextAs.
 func SetEmailConfig(c *config.SMTPConfig) { globalEmailConfig = c }
 
-// SendPlainText delivers a plain-text email using the currently configured SMTP
+// resolveSMTP picks the SMTP config for an outbound send. A named account
+// (non-empty) resolves via accountByName; empty resolves to the Default
+// account. Falls back to the legacy globalEmailConfig when no accounts are
+// configured, so older configs that haven't migrated to
+// [[cowork.email_accounts]] still work. Returns a clear error when neither
+// source is configured (the common "email not configured" message).
+func resolveSMTP(account string) (config.SMTPConfig, error) {
+	if a, ok := accountByName(account); ok && strings.TrimSpace(a.SMTP.Host) != "" {
+		return a.SMTP, nil
+	}
+	if globalEmailConfig != nil && globalEmailConfig.Host != "" {
+		return *globalEmailConfig, nil
+	}
+	return config.SMTPConfig{}, fmt.Errorf("email not configured: set [[cowork.email_accounts]] (or legacy [cowork.smtp]) host/port/from/username/password_env in config")
+}
+
+// SendPlainText delivers a plain-text email using the Default account's SMTP
 // settings. Exposed so non-tool callers (the scheduler's email delivery bridge)
 // can reuse the same SMTP wiring without duplicating it. Returns an error if
-// SMTP isn't configured.
+// no account is configured.
 func SendPlainText(to, subject, body string) error {
-	if globalEmailConfig == nil || globalEmailConfig.Host == "" {
-		return fmt.Errorf("email not configured: set [cowork.smtp] in config")
+	return SendPlainTextAs("", to, subject, body)
+}
+
+// SendPlainTextAs delivers a plain-text email using the named account's SMTP
+// settings. An empty account selects the Default account. Used by the scheduler
+// and calendar reminder engine to send via a user-chosen mailbox rather than
+// always the default.
+func SendPlainTextAs(account, to, subject, body string) error {
+	cfg, err := resolveSMTP(account)
+	if err != nil {
+		return err
 	}
-	cfg := *globalEmailConfig
+	if cfg.From == "" {
+		return fmt.Errorf("email account %q has no from address", account)
+	}
 	msg := buildPlainTextMessage(cfg.From, []string{to}, subject, body)
 	return sendSMTP(cfg, []string{to}, nil, nil, msg)
 }
@@ -163,7 +194,8 @@ func (emailSend) Schema() json.RawMessage {
   "format":{"type":"string","enum":["text","html"],"description":"Body format (default text)"},
   "cc":{"description":"Optional CC, same format as to"},
   "bcc":{"description":"Optional BCC, same format as to"},
-  "attachments":{"type":"array","items":{"type":"string"},"description":"Optional list of file paths to attach"}
+  "attachments":{"type":"array","items":{"type":"string"},"description":"Optional list of file paths to attach"},
+  "account":{"type":"string","description":"Optional named mailbox to send from (from [[cowork.email_accounts]]). Empty = the default account."}
 },
 "required":["to","subject","body"]
 }`)
@@ -180,6 +212,7 @@ func (emailSend) Execute(ctx context.Context, args json.RawMessage) (string, err
 		CC          json.RawMessage `json:"cc"`
 		BCC         json.RawMessage `json:"bcc"`
 		Attachments []string        `json:"attachments"`
+		Account     string          `json:"account"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
@@ -193,12 +226,12 @@ func (emailSend) Execute(ctx context.Context, args json.RawMessage) (string, err
 	}
 	cc, _ := resolveAddrs(p.CC)
 	bcc, _ := resolveAddrs(p.BCC)
-	if globalEmailConfig == nil || globalEmailConfig.Host == "" {
-		return "", errors.New("email not configured — set [cowork.smtp] host/port/from/username/password_env in config to enable email_send")
+	cfg, err := resolveSMTP(p.Account)
+	if err != nil {
+		return "", err
 	}
-	cfg := *globalEmailConfig
 	if cfg.From == "" {
-		return "", errors.New("[cowork.smtp] from is required")
+		return "", errors.New("email account has no from address — set 'from' in [[cowork.email_accounts]]")
 	}
 	format := strings.ToLower(strings.TrimSpace(p.Format))
 	if format == "" {

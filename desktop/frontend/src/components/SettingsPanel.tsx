@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { Check, CheckCircle2, ChevronDown, Loader2, QrCode, RefreshCw } from "lucide-react";
+import { Check, CheckCircle2, ChevronDown, Loader2, QrCode, RefreshCw, Trash2 } from "lucide-react";
 import { asArray } from "../lib/array";
 import { useDeferredClose } from "../lib/useMountTransition";
 import { app } from "../lib/bridge";
@@ -4271,75 +4271,111 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
     const mailConfigured = !!(base.smtp?.host);
     return {
       ...base,
+      // Legacy single-account fields default to BLANK (not 139) — the multi-
+      // account list is the real UI now, and hardcoding a provider here would
+      // mislead users adding non-139 mailboxes. These fields only mirror the
+      // Default account from the backend, so empty is the correct neutral seed.
       smtp: mailConfigured && base.smtp
         ? base.smtp
-        : { host: "smtp.139.com", port: 465, from: "", username: "", passwordEnv: "COWORK_SMTP_PASSWORD", useTLS: true, encryptionMode: "tls" },
+        : { host: "", port: 0, from: "", username: "", passwordEnv: "COWORK_SMTP_PASSWORD", useTLS: false, encryptionMode: "" },
       imap: mailConfigured && base.imap
         ? base.imap
-        : { host: "imap.139.com", port: 993, username: "", passwordEnv: "COWORK_IMAP_PASSWORD" },
+        : { host: "", port: 0, username: "", passwordEnv: "COWORK_IMAP_PASSWORD" },
+      // Multi-account list drives the mail UI when present. Mirrored onto
+      // smtp/imap by the backend for legacy paths.
+      emailAccounts: base.emailAccounts ?? [],
     };
   });
   
   const [browserDetecting, setBrowserDetecting] = useState(false);
   const [recordingHotkey, setRecordingHotkey] = useState(false);
   const [recordingEStopHotkey, setRecordingEStopHotkey] = useState(false);
-  // Mail connection status: probed after the user saves the mailbox config.
+  // draftRef mirrors the latest draft so async commit handlers (onBlur firing
+  // right after a setDraft) read the post-update value, not the stale render
+  // closure. Without this, typing into the password field then blurring could
+  // commit a draft that predates the keystroke — the password never persisted.
+  const draftRef = useRef(draft);
+  useEffect(() => { draftRef.current = draft; }, [draft]);
+  // dirtyRef tracks unsaved edits. Replaces the fragile JSON.stringify(draft)
+  // vs JSON.stringify(s.cowork) comparison, which broke for mail because the
+  // password field is write-only (present in draft, absent in the loaded view),
+  // so the two never stringified equal and saves were either skipped or fired
+  // with stale data. Mutations set it true; it's cleared right before a save
+  // dispatch (not on apply completion, since the user may edit again while the
+  // save is in flight and we must not lose that edit's dirty bit).
+  const dirtyRef = useRef(false);
+  // Mail connection status per account, probed after the user saves. Keyed by
+  // account name; legacy single-account path uses "" (the Default account).
   // "idle" = not yet probed; "checking" = probe in flight; "ok" = IMAP login
   // succeeded; "error" = connection/auth failed. Drives the green/red dot on
-  // the mail card title. Not polled — one probe per save.
-  const [mailStatus, setMailStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
-  const [mailMessage, setMailMessage] = useState("");
+  // each mail card. Not polled — one probe per save.
+  const [mailStatus, setMailStatus] = useState<Record<string, "idle" | "checking" | "ok" | "error">>({});
+  const [mailMessage, setMailMessage] = useState<Record<string, string>>({});
 
-  // commitDraft persists the current draft to the backend, but only when it
-  // actually changed — so a blur with no edits is a no-op (no needless writes,
-  // no spinner flicker). This replaces the old bottom "保存" button: every
-  // control now saves on its own natural event (toggle/blur/enter), so there's
-  // no global submit step.
+  // commitDraft persists the given draft snapshot. Callers passing an explicit
+  // `next` have already decided to save, so we don't gate on dirtyRef. dirtyRef
+  // is cleared before the dispatch so that an edit made during the in-flight
+  // save re-marks it (and triggers another save on the next blur). The old
+  // JSON.stringify equality check was removed because the mail password is
+  // write-only — present in draft, absent in the loaded view — so the two never
+  // stringified equal and saves were skipped.
   const commitDraft = (next: typeof draft) => {
-    if (JSON.stringify(next) === JSON.stringify(s.cowork ?? {})) return;
+    dirtyRef.current = false;
     void apply(() => app.SetCoWorkSettings(next));
   };
-  // commitCurrent is the convenience form for input onBlur/onEnter handlers
-  // that just flush whatever is in draft right now.
-  const commitCurrent = () => commitDraft(draft);
+  // commitCurrent flushes the latest draft, but only if something actually
+  // changed since the last save (dirtyRef). The ref read ensures an onBlur
+  // firing right after a setDraft sees the updated value, not the closure's.
+  const commitCurrent = () => {
+    if (!dirtyRef.current) return;
+    commitDraft(draftRef.current);
+  };
 
-  // probeMail tests the saved mailbox's IMAP login and updates the status dot.
-  // Called after the user saves the mail account/auth-code (the only moment the
-  // connection could have changed). Skips when no mailbox is configured (e.g.
-  // the user just toggled mail off) so we don't probe a non-existent account.
-  const probeMail = async () => {
-    if (!draft.smtp?.username && !draft.imap?.host) {
-      setMailStatus("idle");
+  // probeMail tests a saved mailbox's IMAP login and updates that account's
+  // status dot. `skey` is the status-map key (the account's list index, stable
+  // across renames); `name` is what the backend resolves (empty = Default).
+  // Skips when no mailbox is configured so we don't probe a non-existent
+  // account. Called both after a save and from the explicit "测试连接" button.
+  const probeMail = async (skey: string, name: string) => {
+    const d = draftRef.current;
+    const acct = (d.emailAccounts ?? []).find(a => a.name === name);
+    if (name === "" ? (!d.smtp?.username && !d.imap?.host)
+                    : (!acct?.smtp?.host && !acct?.imap?.host)) {
+      setMailStatus(m => ({ ...m, [skey]: "idle" }));
       return;
     }
-    setMailStatus("checking");
+    setMailStatus(m => ({ ...m, [skey]: "checking" }));
     try {
-      const r: MailProbeResult = await app.ProbeMailAccount();
+      const r: MailProbeResult = await app.ProbeMailAccount(name);
       if (r.status === "unconfigured") {
-        setMailStatus("idle");
+        setMailStatus(m => ({ ...m, [skey]: "idle" }));
       } else if (r.ok) {
-        setMailStatus("ok");
-        setMailMessage(r.message || "连接正常");
+        setMailStatus(m => ({ ...m, [skey]: "ok" }));
+        setMailMessage(m => ({ ...m, [skey]: r.message || "连接正常" }));
       } else {
-        setMailStatus("error");
-        setMailMessage(r.message || "连接失败");
+        setMailStatus(m => ({ ...m, [skey]: "error" }));
+        setMailMessage(m => ({ ...m, [skey]: r.message || "连接失败" }));
       }
     } catch {
       // ProbeMailAccount resolves rather than rejects on failure, but defend
       // against a transport error so the dot doesn't get stuck on "checking".
-      setMailStatus("error");
-      setMailMessage("检测请求失败");
+      setMailStatus(m => ({ ...m, [skey]: "error" }));
+      setMailMessage(m => ({ ...m, [skey]: "检测请求失败" }));
     }
   };
-  // commitMailThenProbe: flush the draft to the backend (awaiting persistence),
-  // THEN probe — so the probe reads the just-saved config, not a stale one.
-  // Used by the mail account/auth-code onBlur so the green/red dot reflects the
-  // value the user actually committed.
-  const commitMailThenProbe = async () => {
-    const next = draft;
-    if (JSON.stringify(next) === JSON.stringify(s.cowork ?? {})) return;
-    await apply(() => app.SetCoWorkSettings(next));
-    void probeMail();
+  // commitMailThenProbe: flush the latest draft (via ref — an onBlur right after
+  // a setDraft must see the typed value), THEN probe so the status dot reflects
+  // what was actually saved. Awaits the write so the probe reads the just-
+  // persisted config. When nothing changed we still probe on demand so the
+  // "测试连接" button works without an edit. `i` is the account index (status
+  // key); `name` is the backend lookup name.
+  const commitMailThenProbe = async (i: number, name: string) => {
+    if (dirtyRef.current) {
+      const next = draftRef.current;
+      dirtyRef.current = false;
+      await apply(() => app.SetCoWorkSettings(next));
+    }
+    void probeMail(String(i), name);
   };
 
   const checkBrowser = async () => {
@@ -4372,10 +4408,10 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
   // Derive enabled state from draft values — empty = disabled.
   const browserOn = !!(draft.detectedBrowser || draft.browserPath);
   const pptOn = !!draft.pptActiveTemplate;
-  // Mail is a single card covering both SMTP (send) and IMAP (read) — for 139
-  // they're one mailbox with one account + one auth code, so a single switch
-  // controls both. Either side configured = mail on.
-  const mailOn = !!(draft.smtp?.host) || !!(draft.imap?.host);
+  // Mail is "on" when at least one account is configured (multi-account path)
+  // or the legacy single-pair SMTP/IMAP has a host.
+  const mailOn = (draft.emailAccounts?.some(a => a.smtp?.host || a.imap?.host))
+    || !!(draft.smtp?.host) || !!(draft.imap?.host);
   const ragOn = !!draft.embeddingModel;
 
   // Toggle helpers: disabling clears related fields so the backend treats them
@@ -4387,7 +4423,10 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
   const togglePpt = (on: boolean) => {
     if (!on) setDraft(d => { const n = { ...d, pptActiveTemplate: "" }; commitDraft(n); return n; });
   };
-  // Disabling mail clears BOTH sides (SMTP + IMAP) since they're one mailbox.
+  // Disabling mail clears all accounts AND the legacy single-pair fields.
+  // Enabling when the list is empty seeds a 139-preset account so the user has
+  // a card to fill in immediately (matches the pre-multiaccount UX where opening
+  // mail revealed a 139-prefilled username/auth-code pair).
   const toggleMail = (on: boolean) => {
     if (!on) setDraft(d => {
       const n = {
@@ -4395,7 +4434,70 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
         smtp: { ...d.smtp, host: "", port: 0, from: "", username: "" },
         imap: { ...d.imap, host: "", port: 0, username: "" },
         smtpPassword: "", imapPassword: "",
+        emailAccounts: [],
       };
+      dirtyRef.current = true;
+      commitDraft(n);
+      return n;
+    });
+    if (on && (draftRef.current.emailAccounts ?? []).length === 0) {
+      newAccount();
+    }
+  };
+
+  // --- Multi-account helpers. Each mutates draft.emailAccounts and persists. ---
+  // newAccount inserts a blank account template. The server host/port are left
+  // EMPTY (not pre-filled with 139) so the user can configure ANY mailbox — 139,
+  // chinamobile.com enterprise, QQ, Gmail, etc. Names must be unique — backend
+  // dedups by name; the user fills in a friendly handle.
+  const newAccount = () => {
+    setDraft(d => {
+      const acct = {
+        name: "",
+        default: (d.emailAccounts ?? []).length === 0,
+        smtp: { host: "", port: 0, from: "", username: "", passwordEnv: "", useTLS: false, encryptionMode: "" },
+        imap: { host: "", port: 0, username: "", passwordEnv: "" },
+        password: "",
+        passwordSet: false,
+      };
+      const n = { ...d, emailAccounts: [...(d.emailAccounts ?? []), acct] };
+      dirtyRef.current = true;
+      commitDraft(n);
+      return n;
+    });
+  };
+  // patchAccount updates one account by index with a partial update. Marks the
+  // draft dirty so the next blur/commit actually persists (the password field
+  // is write-only, so a JSON-equality check can't detect this change).
+  const patchAccount = (i: number, patch: Partial<typeof draft.emailAccounts[number]>) => {
+    setDraft(d => {
+      const list = [...(d.emailAccounts ?? [])];
+      list[i] = { ...list[i], ...patch };
+      const n = { ...d, emailAccounts: list };
+      dirtyRef.current = true;
+      return n; // don't commit yet — onBlur handles persistence so we don't
+               // fire a save per keystroke while the user is still typing.
+    });
+  };
+  // removeAccount drops one account and reassigns Default to the first survivor.
+  const removeAccount = (i: number) => {
+    setDraft(d => {
+      const list = [...(d.emailAccounts ?? [])];
+      const removedDefault = list[i]?.default;
+      list.splice(i, 1);
+      if (removedDefault && list.length > 0) list[0] = { ...list[0], default: true };
+      const n = { ...d, emailAccounts: list };
+      dirtyRef.current = true;
+      commitDraft(n);
+      return n;
+    });
+  };
+  // setAccountDefault makes one account the sole Default.
+  const setAccountDefault = (i: number) => {
+    setDraft(d => {
+      const list = (d.emailAccounts ?? []).map((a, idx) => ({ ...a, default: idx === i }));
+      const n = { ...d, emailAccounts: list };
+      dirtyRef.current = true;
       commitDraft(n);
       return n;
     });
@@ -4475,7 +4577,7 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
           </div>
         </OptionalModule>
 
-        {/* ── 邮箱（139 收发一体）── */}
+        {/* ── 邮箱（多账户）── */}
         <OptionalModule
           title={t("cowork.mail")}
           description={t("cowork.mailModDesc")}
@@ -4483,35 +4585,253 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
           onToggle={toggleMail}
           statusDot={mailOn ? (
             <span
-              className={"mail-status-dot mail-status-dot--" + mailStatus}
-              title={mailStatus === "error" ? mailMessage : (mailStatus === "ok" ? "连接正常" : "")}
+              className={"mail-status-dot mail-status-dot--" + (mailStatus["__default__"] ?? "idle")}
+              title={(mailStatus["__default__"] === "error" ? mailMessage["__default__"] : (mailStatus["__default__"] === "ok" ? "连接正常" : "")) || ""}
             />
           ) : undefined}
         >
           <div className="optional-module__controls">
-            {/* 139 is the only provider and is pre-filled by default, so there's
-                no provider picker and no separate hint — the auth-code pointer
-                lives in the description above. Host/port/encryption are fixed in
-                draft (never surfaced), matching the sibling cards' simplicity. */}
-            <div style={{ display: "flex", gap: "8px" }}>
-              <input
-                className="mem-input set-grow"
-                placeholder={t("cowork.mailAccount")}
-                value={draft.smtp?.username || ""}
-                onChange={e => setDraft({ ...draft, smtp: { ...draft.smtp!, username: e.target.value, from: e.target.value }, imap: { ...draft.imap!, username: e.target.value } })}
-                onBlur={() => void commitMailThenProbe()}
-                onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-              />
-              <input
-                className="mem-input set-grow"
-                type="password"
-                placeholder={draft.smtpPasswordSet ? t("cowork.secretSet") : t("cowork.mailAuthCode")}
-                value={draft.smtpPassword || ""}
-                onChange={e => setDraft({ ...draft, smtpPassword: e.target.value, imapPassword: e.target.value })}
-                onBlur={() => void commitMailThenProbe()}
-                onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-              />
+            {/* Onboarding hint: most users don't know what an "auth code" is or
+                that the server is auto-filled. This banner sits above the
+                account list so first-time setup is self-explanatory. */}
+            <div className="cowork-mail-guide">
+              <div className="cowork-mail-guide__step">
+                <strong>{t("cowork.mailGuideStep1Title")}</strong>
+                <span>{t("cowork.mailGuideStep1")}</span>
+              </div>
+              <div className="cowork-mail-guide__step">
+                <strong>{t("cowork.mailGuideStep2Title")}</strong>
+                <span>{t("cowork.mailGuideStep2")}</span>
+              </div>
+              <div className="cowork-mail-guide__step">
+                <strong>{t("cowork.mailGuideStep3Title")}</strong>
+                <span>{t("cowork.mailGuideStep3")}</span>
+              </div>
             </div>
+            {(draft.emailAccounts ?? []).length === 0 ? (
+              <div className="mem-hint cowork-mail-empty">
+                {t("cowork.mailEmpty")}
+              </div>
+            ) : (
+              <div className="cowork-mail-accounts">
+                {(draft.emailAccounts ?? []).map((acct, i) => {
+                  // Status is keyed by index, not account name: the user can
+                  // rename an account, and a name-based key would lose the
+                  // status dot the moment they edit the name field.
+                  const skey = String(i);
+                  const st = mailStatus[skey] ?? "idle";
+                  const probing = st === "checking";
+                  return (
+                    <div className="cowork-mail-account" key={i}>
+                      {/* Single-row layout: account name + email + auth code +
+                          default radio + delete, all on one line so the whole
+                          account fits at a glance. The test-connection row sits
+                          below it. */}
+                      <div className="cowork-mail-account__row">
+                        <label className="cowork-mail-account__field">
+                          <span className="cowork-mail-account__field-label">{t("cowork.mailAccountName")}</span>
+                          <input
+                            className="mem-input cowork-mail-account__name"
+                            placeholder={t("cowork.mailAccountNameHint")}
+                            value={acct.name}
+                            onChange={e => patchAccount(i, { name: e.target.value })}
+                            onBlur={() => void commitMailThenProbe(i, acct.name)}
+                            onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                          />
+                        </label>
+                        <label className="cowork-mail-account__field cowork-mail-account__field--grow">
+                          <span className="cowork-mail-account__field-label">{t("cowork.mailAccount")}</span>
+                          <input
+                            className="mem-input"
+                            placeholder={t("cowork.mailAccountHint")}
+                            value={acct.smtp.username || ""}
+                            onChange={e => {
+                            const email = e.target.value;
+                            // Auto-infer SMTP/IMAP servers from the email domain
+                            // (imap.<domain> / smtp.<domain>) ONLY when the user
+                            // hasn't manually set them. This handles the China
+                            // Mobile family (50+ subdomains like bj.chinamobile.com,
+                            // cmtt.chinamobile.com) and most standard providers,
+                            // without forcing the user to open Advanced settings.
+                            const domain = email.split("@")[1]?.trim().toLowerCase() ?? "";
+                            const smtpHost = acct.smtp.host || (domain ? `smtp.${domain}` : "");
+                            const imapHost = acct.imap.host || (domain ? `imap.${domain}` : "");
+                            patchAccount(i, {
+                              smtp: {
+                                ...acct.smtp,
+                                username: email,
+                                from: email,
+                                host: smtpHost,
+                                // Default to implicit TLS (465/993) — the common
+                                // case for chinamobile.com and 139.com. The user
+                                // can override in Advanced if their server uses
+                                // STARTTLS (587) or plain (25).
+                                port: acct.smtp.port || (domain ? 465 : acct.smtp.port),
+                                encryptionMode: acct.smtp.encryptionMode || (domain ? "tls" : acct.smtp.encryptionMode),
+                                useTLS: acct.smtp.encryptionMode ? acct.smtp.useTLS : (domain ? true : acct.smtp.useTLS),
+                              },
+                              imap: {
+                                ...acct.imap,
+                                username: email,
+                                host: imapHost,
+                                port: acct.imap.port || (domain ? 993 : acct.imap.port),
+                              },
+                            });
+                          }}
+                          onBlur={() => void commitMailThenProbe(i, acct.name)}
+                          onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                        />
+                        <input
+                          className="mem-input set-grow"
+                          type="password"
+                          placeholder={acct.passwordSet ? t("cowork.secretSet") : t("cowork.mailAuthCode")}
+                          value={acct.password}
+                          onChange={e => patchAccount(i, { password: e.target.value })}
+                          onBlur={() => void commitMailThenProbe(i, acct.name)}
+                          onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                        />
+                        </label>
+                        <label className="cowork-mail-account__field cowork-mail-account__field--grow">
+                          <span className="cowork-mail-account__field-label">{t("cowork.mailAuthCode")}</span>
+                          <input
+                            className="mem-input"
+                            type="password"
+                            placeholder={acct.passwordSet ? t("cowork.secretSet") : t("cowork.mailAuthCodeHint")}
+                            value={acct.password}
+                            onChange={e => patchAccount(i, { password: e.target.value })}
+                            onBlur={() => void commitMailThenProbe(i, acct.name)}
+                            onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                          />
+                        </label>
+                        <div className="cowork-mail-account__actions">
+                          <label className="cowork-mail-account__default" title={t("cowork.mailDefault")}>
+                          <input
+                            type="radio"
+                            name="mail-default"
+                            checked={!!acct.default}
+                            onChange={() => setAccountDefault(i)}
+                          />
+                          {t("cowork.mailDefault")}
+                        </label>
+                        <button
+                          className="cowork-task-card__btn cowork-task-card__btn--danger"
+                          title={t("cowork.mailDelete")}
+                          onClick={() => removeAccount(i)}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                        </div>
+                      </div>
+                      {/* Advanced server settings (collapsible). The first row
+                          covers the common fields (name/email/auth-code); this
+                          section exposes SMTP/IMAP host+port+encryption so the
+                          user can configure a NON-139 mailbox (e.g. chinamobile
+                          enterprise, QQ, Gmail). Defaults to collapsed since
+                          139 users never need it. */}
+                      <details className="cowork-mail-account__advanced">
+                        <summary>{t("cowork.mailAdvanced")}</summary>
+                        <div className="cowork-mail-account__server-row">
+                          <label className="cowork-mail-account__server-label">
+                            <span>SMTP {t("cowork.mailServer")}</span>
+                            <input
+                              className="mem-input"
+                              placeholder="smtp.example.com"
+                              value={acct.smtp.host}
+                              onChange={e => patchAccount(i, { smtp: { ...acct.smtp, host: e.target.value } })}
+                              onBlur={() => void commitMailThenProbe(i, acct.name)}
+                              onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                            />
+                          </label>
+                          <label className="cowork-mail-account__server-label cowork-mail-account__server-label--port">
+                            <span>SMTP {t("cowork.mailPort")}</span>
+                            <input
+                              className="mem-input"
+                              type="number"
+                              placeholder="465"
+                              value={acct.smtp.port || ""}
+                              onChange={e => patchAccount(i, { smtp: { ...acct.smtp, port: Number(e.target.value) || 0 } })}
+                              onBlur={() => void commitMailThenProbe(i, acct.name)}
+                            />
+                          </label>
+                          <label className="cowork-mail-account__server-label">
+                            <span>{t("cowork.mailEncryption")}</span>
+                            <select
+                              className="mem-input"
+                              value={acct.smtp.encryptionMode || "tls"}
+                              onChange={e => patchAccount(i, { smtp: { ...acct.smtp, encryptionMode: e.target.value, useTLS: e.target.value === "tls" } })}
+                              onBlur={() => void commitMailThenProbe(i, acct.name)}
+                            >
+                              <option value="tls">{t("cowork.mailEncTLS")}</option>
+                              <option value="starttls">{t("cowork.mailEncSTARTTLS")}</option>
+                              <option value="none">{t("cowork.mailEncNone")}</option>
+                            </select>
+                          </label>
+                        </div>
+                        <div className="cowork-mail-account__server-row">
+                          <label className="cowork-mail-account__server-label">
+                            <span>IMAP {t("cowork.mailServer")}</span>
+                            <input
+                              className="mem-input"
+                              placeholder="imap.example.com"
+                              value={acct.imap.host}
+                              onChange={e => patchAccount(i, { imap: { ...acct.imap, host: e.target.value } })}
+                              onBlur={() => void commitMailThenProbe(i, acct.name)}
+                              onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                            />
+                          </label>
+                          <label className="cowork-mail-account__server-label cowork-mail-account__server-label--port">
+                            <span>IMAP {t("cowork.mailPort")}</span>
+                            <input
+                              className="mem-input"
+                              type="number"
+                              placeholder="993"
+                              value={acct.imap.port || ""}
+                              onChange={e => patchAccount(i, { imap: { ...acct.imap, port: Number(e.target.value) || 0 } })}
+                              onBlur={() => void commitMailThenProbe(i, acct.name)}
+                            />
+                          </label>
+                        </div>
+                      </details>
+                      {/* Test-connection row: an explicit button so the user can
+                          verify connectivity on demand (not only after a save),
+                          plus a status label next to the dot so ok/error is
+                          readable without hovering. */}
+                      <div className="cowork-mail-account__test">
+                        <button
+                          className="btn btn--small cowork-mail-account__test-btn"
+                          onClick={() => void commitMailThenProbe(i, acct.name)}
+                          disabled={probing || busy}
+                          title={t("cowork.mailTest")}
+                        >
+                          {probing ? <Loader2 className="spinner" size={13} /> : <RefreshCw size={13} />}
+                          {t("cowork.mailTest")}
+                        </button>
+                        <span
+                          className={"mail-status-dot mail-status-dot--" + st}
+                          title={st === "error" ? (mailMessage[skey] || "") : (st === "ok" ? (mailMessage[skey] || "连接正常") : "")}
+                        />
+                        <span className={"cowork-mail-account__status-label cowork-mail-account__status-label--" + st}>
+                          {st === "ok" ? t("cowork.mailStatusOk")
+                           : st === "error" ? t("cowork.mailStatusError")
+                           : st === "checking" ? t("cowork.mailStatusChecking")
+                           : ""}
+                        </span>
+                        {st === "error" && mailMessage[skey] && (
+                          <span className="cowork-mail-account__status-msg" title={mailMessage[skey]}>{mailMessage[skey]}</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <button
+              className="btn btn--small cowork-mail-add"
+              onClick={newAccount}
+              disabled={busy}
+            >
+              {t("cowork.mailAdd")}
+            </button>
           </div>
         </OptionalModule>
 

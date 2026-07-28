@@ -62,6 +62,65 @@ type BotGateway struct {
 	groupAllowlist map[Platform]map[string]bool
 
 	logger *slog.Logger
+
+	// recentMu guards recentChats — a bounded ring of recently-seen chats,
+	// surfaced to the UI so the user can pick an IM destination without
+	// hand-typing a chatID. Separate from mu to avoid contending the hot
+	// controller map on every inbound message.
+	recentMu    sync.Mutex
+	recentChats []RecentChat
+}
+
+// recentChatsMax bounds the ring buffer so a busy bot doesn't grow it forever.
+const recentChatsMax = 100
+
+// recordRecentChat remembers an inbound chat so the UI can offer it as a push
+// destination. Dedups by platform+chatID (promoting the entry to most-recent
+// and refreshing LastSeen/UserName). Called on every inbound message — cheap
+// (cap-bound slice, short lock hold).
+func (gw *BotGateway) recordRecentChat(msg InboundMessage) {
+	if strings.TrimSpace(msg.ChatID) == "" {
+		return
+	}
+	entry := RecentChat{
+		Platform: msg.Platform,
+		ChatType: msg.ChatType,
+		ChatID:   msg.ChatID,
+		UserName: msg.UserName,
+		LastSeen: time.Now().Unix(),
+	}
+	dedup := strings.ToLower(string(msg.Platform)) + ":" + msg.ChatID
+
+	gw.recentMu.Lock()
+	defer gw.recentMu.Unlock()
+	// Promote existing entry (update its fields + move to end).
+	for i, c := range gw.recentChats {
+		if strings.ToLower(string(c.Platform))+":"+c.ChatID == dedup {
+			gw.recentChats[i] = entry
+			// move-to-back: swap with last then slice-extend isn't needed since
+			// we keep newest-last ordering by appending; simplest is remove+append.
+			gw.recentChats = append(gw.recentChats[:i], gw.recentChats[i+1:]...)
+			gw.recentChats = append(gw.recentChats, entry)
+			return
+		}
+	}
+	gw.recentChats = append(gw.recentChats, entry)
+	if len(gw.recentChats) > recentChatsMax {
+		gw.recentChats = gw.recentChats[len(gw.recentChats)-recentChatsMax:]
+	}
+}
+
+// RecentChats returns a snapshot of recently-seen chats, newest first. Used by
+// the desktop layer to populate the IM-target picker in the task form.
+func (gw *BotGateway) RecentChats() []RecentChat {
+	gw.recentMu.Lock()
+	defer gw.recentMu.Unlock()
+	out := make([]RecentChat, len(gw.recentChats))
+	// Copy in reverse so newest is first (ring is newest-last internally).
+	for i, c := range gw.recentChats {
+		out[len(gw.recentChats)-1-i] = c
+	}
+	return out
 }
 
 type sessionState struct {
@@ -264,34 +323,70 @@ func (gw *BotGateway) Stop() {
 }
 
 // Push sends a text message to a specific chat on a given platform, independent
-// of the inbound-message flow. Used by the scheduler to deliver scheduled-task
-// results to IM (OutputMode="im", OutputDest="<platform>:<chatID>"). dest is
-// "platform:chatID" (e.g. "feishu:oc_xxx", "qq:123456"). No-op (returns nil) if
-// the platform adapter isn't connected — a scheduled push shouldn't fail the
-// task run just because IM is offline.
+// of the inbound-message flow. Used by the scheduler and calendar reminder
+// engine to deliver results to IM (OutputMode="im").
+//
+// dest formats:
+//   - "platform:chatID"            — e.g. "feishu:oc_xxx", "weixin:wxid_xxx".
+//     ChatType is left empty; feishu/weixin route by ChatID alone.
+//   - "platform:chatType:chatID"   — e.g. "qq:group:xxxx". Needed for QQ,
+//     whose send URL is chosen by ChatType (dm/group/guild/direct). Omitting
+//     chatType for QQ defaults to dm, which fails for group/channel IDs.
+//
+// No-op (returns nil) if the platform adapter isn't connected — a scheduled
+// push shouldn't fail the task run just because IM is offline.
 func (gw *BotGateway) Push(ctx context.Context, dest, text string) error {
-	plat, chatID := splitPushDest(dest)
+	plat, chatType, chatID := splitPushDest(dest)
 	if plat == "" || chatID == "" {
-		return fmt.Errorf("invalid IM dest %q (want \"platform:chatID\")", dest)
+		return fmt.Errorf("invalid IM dest %q (want \"platform:chatID\" or \"platform:chatType:chatID\")", dest)
 	}
 	adapter, ok := gw.adapters[plat]
 	if !ok {
 		gw.logger.Warn("push: platform adapter not connected", "platform", plat)
 		return nil
 	}
-	_, err := adapter.Send(ctx, OutboundMessage{ChatID: chatID, Text: text})
+	out := OutboundMessage{ChatID: chatID, Text: text}
+	if chatType != "" {
+		out.ChatType = chatType
+	}
+	_, err := adapter.Send(ctx, out)
 	return err
 }
 
-// splitPushDest parses "platform:chatID" into its parts. Returns "", "" if the
-// shape is wrong.
-func splitPushDest(dest string) (Platform, string) {
+// splitPushDest parses a push dest into platform, optional chatType, and
+// chatID. Supports two shapes:
+//   - "platform:chatID"            → (plat, "", chatID)
+//   - "platform:chatType:chatID"   → (plat, chatType, chatID)
+//
+// Returns ("", "", "") if the shape is wrong. platform is lower-cased; chatType
+// is matched against the ChatType constants (dm/group/guild/direct/thread) and
+// returned as-is when recognized, else "" (so an unknown middle segment isn't
+// mistaken for a chatType and the dest is treated as 2-segment with the middle
+// folded into chatID only when it can't be a chatType — but we keep it strict:
+// a 3-segment dest with an unrecognized middle is rejected upstream to avoid
+// silent misdelivery).
+func splitPushDest(dest string) (Platform, ChatType, string) {
 	dest = strings.TrimSpace(dest)
-	idx := strings.Index(dest, ":")
-	if idx <= 0 {
-		return "", ""
+	parts := strings.SplitN(dest, ":", 3)
+	if len(parts) < 2 {
+		return "", "", ""
 	}
-	return Platform(strings.ToLower(strings.TrimSpace(dest[:idx]))), strings.TrimSpace(dest[idx+1:])
+	plat := Platform(strings.ToLower(strings.TrimSpace(parts[0])))
+	if len(parts) == 2 {
+		return plat, "", strings.TrimSpace(parts[1])
+	}
+	// 3-segment: validate the middle is a known chatType; if not, the user
+	// likely meant a 2-segment dest whose chatID contains a colon (rare but
+	// possible) — treat parts[1]+parts[2] as the chatID to stay permissive.
+	mid := strings.ToLower(strings.TrimSpace(parts[1]))
+	switch mid {
+	case "dm", "group", "guild", "direct", "thread":
+		return plat, ChatType(mid), strings.TrimSpace(parts[2])
+	default:
+		// Unknown middle segment: treat the whole tail as chatID (2-segment
+		// semantics) so we never silently drop a dest.
+		return plat, "", parts[1] + ":" + parts[2]
+	}
 }
 
 func (gw *BotGateway) dispatchLoop(ctx context.Context, plat Platform, adapter Adapter) {
@@ -311,6 +406,10 @@ func (gw *BotGateway) dispatchLoop(ctx context.Context, plat Platform, adapter A
 
 func (gw *BotGateway) handleMessage(ctx context.Context, plat Platform, adapter Adapter, msg InboundMessage) {
 	msg.Platform = plat
+	// Remember this chat so the UI can offer it as a push destination for
+	// scheduled tasks / calendar reminders. Recorded before allowlist so even
+	// pending (review-mode) chats appear in the picker once approved.
+	gw.recordRecentChat(msg)
 
 	// allowlist 检查
 	if !gw.checkAllowlist(plat, msg) {

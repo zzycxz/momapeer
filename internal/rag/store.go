@@ -827,7 +827,10 @@ func (s *Store) List(name string) ([]CollectionInfo, error) {
 	name = normalizeCollection(name)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	q := `SELECT collection, count(DISTINCT path), count(*), coalesce(sum(length(body)),0)
+	q := `SELECT collection,
+	             count(DISTINCT CASE WHEN path NOT LIKE 'placeholder://%' AND path NOT LIKE 'virtual://%' THEN path END),
+	             count(CASE WHEN path NOT LIKE 'placeholder://%' AND path NOT LIKE 'virtual://%' THEN 1 END),
+	             coalesce(sum(CASE WHEN path NOT LIKE 'placeholder://%' AND path NOT LIKE 'virtual://%' THEN length(body) ELSE 0 END), 0)
 	      FROM rag_fts`
 	var rows *sql.Rows
 	var err error

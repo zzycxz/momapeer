@@ -3,11 +3,18 @@ package builtin
 import (
 	"strings"
 	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // fuzzyMatch tries to find old in content using progressively looser strategies.
 // Returns (matchedRegion, found, unique). If found but not unique, the caller
 // should report "not unique" rather than "not found".
+//
+// Level 0: Unicode-normalize match — when old and content differ only by
+// Unicode presentation (smart quotes, em-dash, NBSP, NFC vs NFD, full-width
+// vs half-width), match on NFKC-normalized lines and return the original
+// (un-normalized) line region.
 //
 // Level 1: Exact substring (current behavior).
 // Level 2: Line-trim match — trim each line of old, compare against trimmed
@@ -24,6 +31,11 @@ import (
 func fuzzyMatch(content, old string) (string, bool, bool) {
 	if old == "" {
 		return "", false, false
+	}
+
+	// Level 0: Unicode-normalize match.
+	if region, ok, unique := unicodeNormMatch(content, old); ok {
+		return region, ok, unique
 	}
 
 	// Level 1: Exact match.
@@ -50,6 +62,170 @@ func fuzzyMatch(content, old string) (string, bool, bool) {
 		return region, ok, unique
 	}
 
+	return "", false, false
+}
+
+// normalizeForFuzzyMatch mirrors pi's edit-diff.ts normalizeForFuzzyMatch: NFKC
+// fold (handles NFC/NFD and full-width→half-width), then ASCII substitution of
+// the LLM's most common Unicode drift (smart quotes, dashes, special spaces),
+// then per-line right-trim. It is used only inside the matching space — the
+// returned region always comes from the original content, never this output.
+func normalizeForFuzzyMatch(s string) string {
+	// NFKC first: composes compatibility equivalents (full-width Ａ→A) and
+	// canonical decomposition+composition (NFD café → NFC café).
+	n := norm.NFKC.String(s)
+
+	// Smart single quotes → '
+	n = strings.NewReplacer(
+		"\u2018", "'", // ‘
+		"\u2019", "'", // ’
+		"\u201A", "'", // ‚
+		"\u201B", "'", // ‛
+	).Replace(n)
+
+	// Smart double quotes → "
+	n = strings.NewReplacer(
+		"\u201C", "\"", // “
+		"\u201D", "\"", // ”
+		"\u201E", "\"", // „
+		"\u201F", "\"", // ‟
+	).Replace(n)
+
+	// Dashes/hyphens → -
+	n = strings.NewReplacer(
+		"\u2010", "-", // ‐ hyphen
+		"\u2011", "-", // ‑ non-breaking hyphen
+		"\u2012", "-", // ‒ figure dash
+		"\u2013", "-", // – en dash
+		"\u2014", "-", // — em dash
+		"\u2015", "-", // ― horizontal bar
+		"\u2212", "-", // − minus sign
+	).Replace(n)
+
+	// Special spaces → regular space.
+	n = strings.Map(func(r rune) rune {
+		switch r {
+		case '\u00A0', // NBSP
+			'\u2002', '\u2003', '\u2004', '\u2005', '\u2006', // en/em/... spaces
+			'\u2007', '\u2008', '\u2009', '\u200A', // figure/punctuation/thin/hair spaces
+			'\u202F', // narrow no-break space
+			'\u205F', // medium mathematical space
+			'\u3000': // ideographic space
+			return ' '
+		}
+		return r
+	}, n)
+
+	// Per-line right-trim, matching pi's normalizeForFuzzyMatch.
+	lines := strings.Split(n, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " \t\r")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// unicodeNormMatch implements fuzzyMatch's Level 0: it runs only when old and
+// content differ in Unicode presentation (otherwise it short-circuits to "no
+// match" so Level 1 can take over). Matching is line-granular: both sides are
+// split on "\n", each line is run through normalizeForFuzzyMatch AND TrimSpace
+// (so this level also closes the "smart quotes + lost indentation" gap that
+// neither Level 1 nor Level 2 alone covers), and the normalized+trimmed old is
+// searched for as a contiguous run of normalized+trimmed content lines. The
+// returned region is the corresponding ORIGINAL (un-normalized, un-trimmed)
+// lines joined with "\n", which is always a verbatim substring of content (so
+// editfile.go's strings.Contains guard and strings.Replace both work).
+//
+// We deliberately do NOT attempt within-line substring mapping: NFKC/NFC change
+// byte/rune counts, so a normalized-space offset cannot be projected back to
+// the original bytes without a per-rune offset table. Whole-line matching keeps
+// the region a clean original substring at the cost of replacing the whole line
+// (same trade-off Level 2 line-trim already makes).
+func unicodeNormMatch(content, old string) (region string, found, unique bool) {
+	// Fast path: if neither side has a Unicode-presentation difference, defer
+	// to the exact/structural levels. This keeps Level 0 a pure superset for
+	// genuinely-Unicode-divergent inputs and avoids shadowing Level 1.
+	normContent := normalizeForFuzzyMatch(content)
+	normOld := normalizeForFuzzyMatch(old)
+	if normContent == content && normOld == old {
+		return "", false, false
+	}
+	// If exact match already works on the original strings, Level 1 owns it.
+	if strings.Count(content, old) > 0 {
+		return "", false, false
+	}
+
+	origLines := strings.Split(content, "\n")
+	normContentLines := strings.Split(normContent, "\n")
+	normOldLines := strings.Split(normOld, "\n")
+
+	// Empty old (or all-blank after normalization) is the caller's job; skip.
+	if len(normOldLines) == 0 || strings.TrimSpace(normOld) == "" {
+		return "", false, false
+	}
+	// Defensive: line counts must line up (normalizeForFuzzyMatch preserves "\n"
+	// structure, only mutating within-line runes).
+	if len(normContentLines) != len(origLines) {
+		return "", false, false
+	}
+
+	// Compare on the trimmed+normalized form of each line (closes the
+	// "Unicode drift + indentation drift" gap).
+	trimNormContent := make([]string, len(normContentLines))
+	for i, l := range normContentLines {
+		trimNormContent[i] = strings.TrimSpace(l)
+	}
+
+	// Single-line old: search each trimmed+normalized content line.
+	if len(normOldLines) == 1 {
+		needle := strings.TrimSpace(normOldLines[0])
+		if needle == "" {
+			return "", false, false
+		}
+		matchCount := 0
+		var matchRegion string
+		for i, nl := range trimNormContent {
+			if nl == needle {
+				matchCount++
+				matchRegion = origLines[i] // original un-trimmed line
+			}
+		}
+		if matchCount == 1 {
+			return matchRegion, true, true
+		}
+		if matchCount > 1 {
+			return matchRegion, true, false
+		}
+		return "", false, false
+	}
+
+	// Multi-line old: find contiguous runs of trimmed+normalized content lines
+	// equal to the trimmed+normalized old lines. The region is the
+	// corresponding original-line slice — always a verbatim substring.
+	needle := make([]string, len(normOldLines))
+	for i, l := range normOldLines {
+		needle[i] = strings.TrimSpace(l)
+	}
+	matchCount := 0
+	var matchRegion string
+	for i := 0; i+len(needle) <= len(trimNormContent); i++ {
+		equal := true
+		for j := range needle {
+			if trimNormContent[i+j] != needle[j] {
+				equal = false
+				break
+			}
+		}
+		if equal {
+			matchCount++
+			matchRegion = strings.Join(origLines[i:i+len(needle)], "\n")
+		}
+	}
+	if matchCount == 1 {
+		return matchRegion, true, true
+	}
+	if matchCount > 1 {
+		return matchRegion, true, false
+	}
 	return "", false, false
 }
 

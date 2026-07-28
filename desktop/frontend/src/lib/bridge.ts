@@ -79,6 +79,7 @@ import type {
   InboxItem,
   RagExtractResultView,
   ExpertRunView,
+  RecentChatView,
 } from "./types";
 
 const GLOBAL_PROJECT_ORDER_KEY = "__global__";
@@ -174,6 +175,7 @@ export interface AppBindings {
   ListWorkspaces(): Promise<WorkspaceView[]>;
   PickWorkspace(): Promise<string>;
   PickImportFolder(): Promise<string>;
+  PickImportFiles(): Promise<string[]>;
   SwitchWorkspace(path: string): Promise<string>;
   RemoveWorkspace(path: string): Promise<void>;
   ContextUsage(): Promise<ContextInfo>;
@@ -270,11 +272,12 @@ export interface AppBindings {
   // button; OpenPPTTemplateDir opens the templates folder so the user can add
   // JSON templates.
   SetCoWorkSettings(v: CoWorkSettingsView): Promise<void>;
-  // ProbeMailAccount tests the saved mailbox's IMAP login by actually
-  // connecting. Returns ok/error/unconfigured so the mail card can show a
+  // ProbeMailAccount tests a saved mailbox's IMAP login by actually connecting.
+  // An empty name probes the Default account; a non-empty name probes that
+  // named account. Returns ok/error/unconfigured so the mail card can show a
   // green/red status dot after the user saves. Always resolves (a connection
   // failure comes back as status="error", not a rejection).
-  ProbeMailAccount(): Promise<MailProbeResult>;
+  ProbeMailAccount(name: string): Promise<MailProbeResult>;
   // InboxPreview reads the most recent unread messages (up to limit) from the
   // default mailbox INBOX, for the cowork dock's "邮件" tab. Returns [] when
   // no mailbox is configured or no unread mail. Rejects only on unexpected
@@ -295,6 +298,8 @@ export interface AppBindings {
   PollBotConnectionInstall(installID: string): Promise<BotInstallPollResult>;
   DiagnoseBotConnection(id: string): Promise<BotConnectionDiagnostic>;
   TestBotConnection(id: string, target?: string): Promise<BotConnectionDiagnostic>;
+  // ListRecentBotChats returns recently-seen IM chats for the task-form picker.
+  ListRecentBotChats(): Promise<RecentChatView[]>;
   SetCloseBehavior(mode: string): Promise<void>;
   SetDisplayMode(mode: string): Promise<void>;
   SetDesktopLanguage(lang: string): Promise<void>;
@@ -323,6 +328,7 @@ export interface AppBindings {
   // profile ("dev"|"cowork"|"" for default) scopes the topic/tab to a product
   // profile; it comes from the active tab's profile in the frontend.
   OpenProjectTab(workspaceRoot: string, topicID: string, profile: string): Promise<TabMeta>;
+  OpenProjectTab3(workspaceRoot: string, topicID: string, profile: string): Promise<TabMeta>;
   OpenGlobalTab(topicID: string, profile: string): Promise<TabMeta>;
   EnsureBlankTab(scope: string, workspaceRoot: string, profile: string): Promise<TabMeta>;
   OpenExpertSessionTab(teamId: string, teamName: string): Promise<TabMeta>;
@@ -834,6 +840,9 @@ function makeMockApp(): AppBindings {
       humanSchedule: "工作日 18:00",
       source: "manual",
       calendarEventId: "",
+      outputAccount: "",
+      lastDeliverErr: "",
+      lastDeliverAt: "",
     },
   ];
   const cloneTask = (t: TaskView): TaskView => JSON.parse(JSON.stringify(t)) as TaskView;
@@ -1061,6 +1070,7 @@ function makeMockApp(): AppBindings {
       screenshotHotkey: "Ctrl+Shift+S",
       screenshotVlmModel: "qwen/qwen3.6-27b",
       estopHotkey: "Ctrl+Shift+Pause",
+      emailAccounts: [],
     },
     bot: {
       enabled: !freshMock,
@@ -2043,6 +2053,9 @@ function makeMockApp(): AppBindings {
     async PickImportFolder() {
       return "~/Documents/my-import-folder";
     },
+    async PickImportFiles() {
+      return ["~/Documents/sample-report.pdf", "~/Documents/summary-data.xlsx"];
+    },
     async SwitchWorkspace(path: string) {
       return mockSwitchWorkspace(path);
     },
@@ -2775,6 +2788,9 @@ function makeMockApp(): AppBindings {
           if (target?.trim()) return { ...diag, message: `Mock test sent to ${target.trim()}`, messageId: "mock-message-id" };
           return diag;
         },
+        async ListRecentBotChats() {
+          return [];
+        },
         async SetCloseBehavior(mode: string) {
           settings.closeBehavior = mode === "quit" ? "quit" : "background";
         },
@@ -2897,6 +2913,9 @@ function makeMockApp(): AppBindings {
       };
       mockTabs = [...mockTabs.map((item) => ({ ...item, active: false })), tab];
       return { ...tab };
+    },
+    async OpenProjectTab3(workspaceRoot: string, topicID: string, profile: string) {
+      return this.OpenProjectTab(workspaceRoot, topicID, profile);
     },
     async OpenGlobalTab(_topicID: string, profile?: string) {
       const existing = mockTabs.find((tab) => tab.scope === "global" && tab.topicId === _topicID);
@@ -3087,7 +3106,10 @@ function makeMockApp(): AppBindings {
         lastResult: "",
         outputMode: input.outputMode ?? "",
         outputDest: input.outputDest ?? "",
+        outputAccount: input.outputAccount ?? "",
         outputDir: input.outputDir ?? "",
+        lastDeliverErr: "",
+        lastDeliverAt: "",
         humanSchedule: input.expression,
         source: "manual",
         calendarEventId: "",
@@ -3105,7 +3127,10 @@ function makeMockApp(): AppBindings {
         prompt: input.prompt,
         outputMode: input.outputMode ?? "",
         outputDest: input.outputDest ?? "",
+        outputAccount: input.outputAccount ?? "",
         outputDir: input.outputDir ?? "",
+        lastDeliverErr: "",
+        lastDeliverAt: "",
         humanSchedule: input.expression,
       };
       return cloneTask(mockSchedulerTasks[idx]);
@@ -3161,18 +3186,18 @@ function makeMockApp(): AppBindings {
       const m = now.getMonth();
       const d = now.getDate();
       return [
-        { id: "evt_mock_1", title: "周会", description: "讨论本周进展", location: "会议室A", start: `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}T10:00`, end: `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}T11:00`, allDay: false, timezone: "Asia/Shanghai", color: "#FF4444", status: "confirmed", source: "manual", recurrence: "FREQ=WEEKLY;BYDAY=MO", recurrenceEnd: "", reminders: [15], taskId: "", tags: ["工作", "例会"], createdAt: "2026-07-01 10:00" },
-        { id: "evt_mock_2", title: "代码review", description: "", location: "线上", start: `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}T14:00`, end: `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}T15:00`, allDay: false, timezone: "Asia/Shanghai", color: "#4488FF", status: "confirmed", source: "manual", recurrence: "", recurrenceEnd: "", reminders: [5], taskId: "", tags: ["工作"], createdAt: "2026-07-01 10:00" },
+        { id: "evt_mock_1", title: "周会", description: "讨论本周进展", location: "会议室A", start: `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}T10:00`, end: `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}T11:00`, allDay: false, timezone: "Asia/Shanghai", color: "#FF4444", status: "confirmed", source: "manual", recurrence: "FREQ=WEEKLY;BYDAY=MO", recurrenceEnd: "", reminders: [15], taskId: "", tags: ["工作", "例会"], createdAt: "2026-07-01 10:00", outputMode: "", outputDest: "", outputAccount: "" },
+        { id: "evt_mock_2", title: "代码review", description: "", location: "线上", start: `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}T14:00`, end: `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}T15:00`, allDay: false, timezone: "Asia/Shanghai", color: "#4488FF", status: "confirmed", source: "manual", recurrence: "", recurrenceEnd: "", reminders: [5], taskId: "", tags: ["工作"], createdAt: "2026-07-01 10:00", outputMode: "", outputDest: "", outputAccount: "" },
       ];
     },
     async ListScheduledTasksAsEvents(_since: string, _before: string): Promise<CalendarEventView[]> {
       return [];
     },
     async CreateCalendarEvent(input: CalendarEventInput): Promise<CalendarEventView> {
-      return { ...input, id: `evt_mock_${Date.now()}`, status: "confirmed", source: "manual", taskId: "", createdAt: new Date().toISOString().slice(0,16).replace("T"," ") };
+      return { ...input, outputMode: input.outputMode ?? "", outputDest: input.outputDest ?? "", outputAccount: input.outputAccount ?? "", id: `evt_mock_${Date.now()}`, status: "confirmed", source: "manual", taskId: "", createdAt: new Date().toISOString().slice(0,16).replace("T"," ") };
     },
     async UpdateCalendarEvent(input: CalendarEventInput): Promise<CalendarEventView> {
-      return { ...input, status: "confirmed", source: "manual", taskId: "", createdAt: "2026-07-01 10:00" };
+      return { ...input, outputMode: input.outputMode ?? "", outputDest: input.outputDest ?? "", outputAccount: input.outputAccount ?? "", status: "confirmed", source: "manual", taskId: "", createdAt: "2026-07-01 10:00" };
     },
     async DeleteCalendarEvent(_id: string): Promise<void> {},
     async SearchCalendarEvents(_q: string, _limit: number): Promise<CalendarEventView[]> {
@@ -3355,7 +3380,7 @@ function makeMockApp(): AppBindings {
     async StartEStopHotkey() {},
     async StopEStopHotkey() {},
     async SetCoWorkSettings(v: any) { settings.cowork = { ...v, detectedBrowser: settings.cowork.detectedBrowser }; },
-    async ProbeMailAccount() { return { ok: true, status: "unconfigured", message: "" } as MailProbeResult; },
+    async ProbeMailAccount(_name: string) { return { ok: true, status: "unconfigured", message: "" } as MailProbeResult; },
     async InboxPreview(_limit: number) { return [] as InboxItem[]; },
     async HooksSettings(scope: string) {
       const key = scope === "project" ? "project" : "global";

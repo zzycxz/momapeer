@@ -15,15 +15,18 @@ func ExpandRecurring(events []Event, since, before time.Time) []EventInstance {
 			// Non-recurring: include if overlaps range
 			if e.EndTime.After(since) && e.StartTime.Before(before) {
 				out = append(out, EventInstance{
-					EventID:   e.ID,
-					Title:     e.Title,
-					StartTime: e.StartTime,
-					EndTime:   e.EndTime,
-					AllDay:    e.AllDay,
-					Color:     e.Color,
-					Location:  e.Location,
-					TaskID:    e.TaskID,
-					Reminders: e.Reminders,
+					EventID:       e.ID,
+					Title:         e.Title,
+					StartTime:     e.StartTime,
+					EndTime:       e.EndTime,
+					AllDay:        e.AllDay,
+					Color:         e.Color,
+					Location:      e.Location,
+					TaskID:        e.TaskID,
+					Reminders:     e.Reminders,
+					OutputMode:    e.OutputMode,
+					OutputDest:    e.OutputDest,
+					OutputAccount: e.OutputAccount,
 				})
 			}
 			continue
@@ -40,15 +43,20 @@ func ExpandRecurring(events []Event, since, before time.Time) []EventInstance {
 // offsets (minutes before start) so the reminder engine can compute a per-
 // instance remind time without re-reading the original Event.
 type EventInstance struct {
-	EventID   string
-	Title     string
-	StartTime time.Time
-	EndTime   time.Time
-	AllDay    bool
-	Color     string
-	Location  string
-	TaskID    string
-	Reminders []int
+	EventID       string
+	Title         string
+	StartTime     time.Time
+	EndTime       time.Time
+	AllDay        bool
+	Color         string
+	Location      string
+	TaskID        string
+	Reminders     []int
+	// Output fields are copied from the parent Event so the reminder engine can
+	// route each instance's push without re-reading the Event.
+	OutputMode    string
+	OutputDest    string
+	OutputAccount string
 }
 
 // expandRRULE generates instances of a recurring event within [since, before).
@@ -76,15 +84,18 @@ func expandRRULE(e Event, since, before time.Time) []EventInstance {
 		instanceEnd := current.Add(duration)
 		if instanceEnd.After(since) && current.Before(before) {
 			out = append(out, EventInstance{
-				EventID:   e.ID,
-				Title:     e.Title,
-				StartTime: current,
-				EndTime:   instanceEnd,
-				AllDay:    e.AllDay,
-				Color:     e.Color,
-				Location:  e.Location,
-				TaskID:    e.TaskID,
-				Reminders: e.Reminders,
+				EventID:       e.ID,
+				Title:         e.Title,
+				StartTime:     current,
+				EndTime:       instanceEnd,
+				AllDay:        e.AllDay,
+				Color:         e.Color,
+				Location:      e.Location,
+				TaskID:        e.TaskID,
+				Reminders:     e.Reminders,
+				OutputMode:    e.OutputMode,
+				OutputDest:    e.OutputDest,
+				OutputAccount: e.OutputAccount,
 			})
 		}
 

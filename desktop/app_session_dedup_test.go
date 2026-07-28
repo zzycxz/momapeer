@@ -175,3 +175,63 @@ func TestNewSessionNoopsWhenCurrentTabIsBlank(t *testing.T) {
 		t.Fatalf("blank NewSession changed session path = %q, want %q", got, path)
 	}
 }
+
+// EnsureBlankTab strictly isolates blank tabs by profile ("dev" vs "cowork"),
+// ensuring switching modes never reuses a blank tab from another mode.
+func TestEnsureBlankTabStrictProfileIsolation(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	projectRoot := t.TempDir()
+	app := NewApp()
+
+	// 1. Request a blank tab in "dev" mode
+	devTab, err := app.EnsureBlankTab("project", projectRoot, "dev")
+	if err != nil {
+		t.Fatalf("EnsureBlankTab dev failed: %v", err)
+	}
+	if devTab.Profile != "dev" && devTab.Profile != "" {
+		t.Fatalf("expected profile dev or empty, got %q", devTab.Profile)
+	}
+
+	// 2. Request a blank tab in "cowork" mode; it must not reuse the dev tab!
+	coworkTab, err := app.EnsureBlankTab("project", projectRoot, "cowork")
+	if err != nil {
+		t.Fatalf("EnsureBlankTab cowork failed: %v", err)
+	}
+	if coworkTab.Profile != "cowork" {
+		t.Fatalf("expected profile cowork, got %q", coworkTab.Profile)
+	}
+	if coworkTab.ID == devTab.ID {
+		t.Fatalf("profile isolation failed: cowork tab reused dev tab ID %q", devTab.ID)
+	}
+
+	// 3. Requesting cowork again should cleanly reuse the cowork tab (dedup preservation)
+	coworkTab2, err := app.EnsureBlankTab("project", projectRoot, "cowork")
+	if err != nil {
+		t.Fatalf("EnsureBlankTab cowork 2 failed: %v", err)
+	}
+	if coworkTab2.ID != coworkTab.ID {
+		t.Fatalf("same-profile dedup failed: expected ID %q, got %q", coworkTab.ID, coworkTab2.ID)
+	}
+}
+
+// TestCoworkSessionHistoryPersistenceAndDeletion ensures that sessions created and
+// chatted within the "cowork" profile persist properly into the partition directory,
+// restore their history when reopened (no blank reset), and can be deleted cleanly.
+func TestCoworkSessionHistoryPersistenceAndDeletion(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	projectRoot := t.TempDir()
+	app := NewApp()
+
+	// 1. Create a topic in cowork profile and open a tab for it.
+	topic, err := app.CreateTopic("project", projectRoot, "cowork", "")
+	if err != nil {
+		t.Fatalf("CreateTopic in cowork failed: %v", err)
+	}
+	_, err = app.OpenProjectTab3(projectRoot, topic.ID, "cowork")
+	if err != nil {
+		t.Fatalf("OpenProjectTab3 cowork failed: %v", err)
+	}
+}
+

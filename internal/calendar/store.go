@@ -34,6 +34,14 @@ type Event struct {
 	Reminders     []int     `json:"reminders"` // minutes before
 	TaskID        string    `json:"task_id"`
 	Tags          []string  `json:"tags"`
+	// OutputMode/OutputDest/OutputAccount route the reminder push beyond the
+	// desktop toast: "im" pushes to OutputDest (platform:chatID), "email" sends
+	// via the named OutputAccount ("" = default). Empty/"" = toast only (the
+	// pre-existing behavior). Only events explicitly configured push — see the
+	// reminder engine's fire() fan-out.
+	OutputMode    string    `json:"output_mode,omitempty"`
+	OutputDest    string    `json:"output_dest,omitempty"`
+	OutputAccount string    `json:"output_account,omitempty"`
 	RemindedAt    time.Time `json:"reminded_at"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
@@ -74,7 +82,9 @@ func Open(dbPath string) (*Store, error) {
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
 
-// migrate creates tables if they don't exist.
+// migrate creates tables if they don't exist, and adds columns added in later
+// versions via idempotent ALTER TABLE (SQLite has no IF NOT EXISTS for ADD
+// COLUMN, so we check PRAGMA table_info first).
 func (s *Store) migrate() error {
 	_, err := s.db.Exec(`
 CREATE TABLE IF NOT EXISTS events (
@@ -94,6 +104,9 @@ CREATE TABLE IF NOT EXISTS events (
     reminders TEXT DEFAULT '[]',
     task_id TEXT DEFAULT '',
     tags TEXT DEFAULT '[]',
+    output_mode TEXT DEFAULT '',
+    output_dest TEXT DEFAULT '',
+    output_account TEXT DEFAULT '',
     reminded_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -111,6 +124,48 @@ CREATE TABLE IF NOT EXISTS event_exceptions (
 );
 CREATE INDEX IF NOT EXISTS idx_exceptions_event ON event_exceptions(event_id);
 `)
+	if err != nil {
+		return err
+	}
+	// Add output_mode/output_dest/output_account to databases created before
+	// these columns existed. Idempotent: each call no-ops when the column is
+	// already present. All three ship together, so add them in sequence.
+	for _, c := range []struct{ name, decl string }{
+		{"output_mode", "TEXT DEFAULT ''"},
+		{"output_dest", "TEXT DEFAULT ''"},
+		{"output_account", "TEXT DEFAULT ''"},
+	} {
+		if err := s.addColumnIfMissing("events", c.name, c.decl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// addColumnIfMissing adds a column when it isn't already on the table. SQLite
+// lacks "ALTER TABLE ... ADD COLUMN IF NOT EXISTS", so we probe table_info.
+func (s *Store) addColumnIfMissing(table, column, decl string) error {
+	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return fmt.Errorf("calendar migrate: probe %s.%s: %w", table, column, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil // already present
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = s.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, decl))
 	return err
 }
 
@@ -136,13 +191,14 @@ func (s *Store) Create(e *Event) error {
 	tagsJSON, _ := json.Marshal(e.Tags)
 
 	_, err := s.db.Exec(`INSERT INTO events
-(id, title, description, location, start_time, end_time, all_day, timezone, color, status, source, recurrence, recurrence_end, reminders, task_id, tags, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+(id, title, description, location, start_time, end_time, all_day, timezone, color, status, source, recurrence, recurrence_end, reminders, task_id, tags, output_mode, output_dest, output_account, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.Title, e.Description, e.Location,
 		e.StartTime.UTC(), e.EndTime.UTC(), boolToInt(e.AllDay),
 		e.Timezone, e.Color, e.Status, e.Source,
 		e.Recurrence, nullTime(e.RecurrenceEnd),
 		string(remindersJSON), e.TaskID, string(tagsJSON),
+		e.OutputMode, e.OutputDest, e.OutputAccount,
 		e.CreatedAt, e.UpdatedAt,
 	)
 	return err
@@ -150,7 +206,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 
 // Get returns a single event by ID.
 func (s *Store) Get(id string) (*Event, error) {
-	row := s.db.QueryRow(`SELECT id, title, description, location, start_time, end_time, all_day, timezone, color, status, source, recurrence, recurrence_end, reminders, task_id, tags, reminded_at, created_at, updated_at FROM events WHERE id = ?`, id)
+	row := s.db.QueryRow(`SELECT id, title, description, location, start_time, end_time, all_day, timezone, color, status, source, recurrence, recurrence_end, reminders, task_id, tags, output_mode, output_dest, output_account, reminded_at, created_at, updated_at FROM events WHERE id = ?`, id)
 	return scanEvent(row)
 }
 
@@ -161,13 +217,14 @@ func (s *Store) Update(e *Event) error {
 	tagsJSON, _ := json.Marshal(e.Tags)
 
 	_, err := s.db.Exec(`UPDATE events SET
-title=?, description=?, location=?, start_time=?, end_time=?, all_day=?, timezone=?, color=?, status=?, source=?, recurrence=?, recurrence_end=?, reminders=?, task_id=?, tags=?, updated_at=?
+title=?, description=?, location=?, start_time=?, end_time=?, all_day=?, timezone=?, color=?, status=?, source=?, recurrence=?, recurrence_end=?, reminders=?, task_id=?, tags=?, output_mode=?, output_dest=?, output_account=?, updated_at=?
 WHERE id=?`,
 		e.Title, e.Description, e.Location,
 		e.StartTime.UTC(), e.EndTime.UTC(), boolToInt(e.AllDay),
 		e.Timezone, e.Color, e.Status, e.Source,
 		e.Recurrence, nullTime(e.RecurrenceEnd),
 		string(remindersJSON), e.TaskID, string(tagsJSON),
+		e.OutputMode, e.OutputDest, e.OutputAccount,
 		e.UpdatedAt, e.ID,
 	)
 	return err
@@ -186,7 +243,7 @@ func (s *Store) Delete(id string) error {
 // List returns events whose time range overlaps [since, before).
 // For recurring events, the original event is returned (caller must expand).
 func (s *Store) List(since, before time.Time) ([]Event, error) {
-	rows, err := s.db.Query(`SELECT id, title, description, location, start_time, end_time, all_day, timezone, color, status, source, recurrence, recurrence_end, reminders, task_id, tags, reminded_at, created_at, updated_at FROM events WHERE end_time > ? AND start_time < ? ORDER BY start_time`, since.UTC(), before.UTC())
+	rows, err := s.db.Query(`SELECT id, title, description, location, start_time, end_time, all_day, timezone, color, status, source, recurrence, recurrence_end, reminders, task_id, tags, output_mode, output_dest, output_account, reminded_at, created_at, updated_at FROM events WHERE end_time > ? AND start_time < ? ORDER BY start_time`, since.UTC(), before.UTC())
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +253,7 @@ func (s *Store) List(since, before time.Time) ([]Event, error) {
 
 // ListAll returns all events (for export).
 func (s *Store) ListAll() ([]Event, error) {
-	rows, err := s.db.Query(`SELECT id, title, description, location, start_time, end_time, all_day, timezone, color, status, source, recurrence, recurrence_end, reminders, task_id, tags, reminded_at, created_at, updated_at FROM events ORDER BY start_time`)
+	rows, err := s.db.Query(`SELECT id, title, description, location, start_time, end_time, all_day, timezone, color, status, source, recurrence, recurrence_end, reminders, task_id, tags, output_mode, output_dest, output_account, reminded_at, created_at, updated_at FROM events ORDER BY start_time`)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +266,7 @@ func (s *Store) Search(q string, limit int) ([]Event, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := s.db.Query(`SELECT id, title, description, location, start_time, end_time, all_day, timezone, color, status, source, recurrence, recurrence_end, reminders, task_id, tags, reminded_at, created_at, updated_at FROM events WHERE title LIKE ? OR description LIKE ? ORDER BY start_time LIMIT ?`,
+	rows, err := s.db.Query(`SELECT id, title, description, location, start_time, end_time, all_day, timezone, color, status, source, recurrence, recurrence_end, reminders, task_id, tags, output_mode, output_dest, output_account, reminded_at, created_at, updated_at FROM events WHERE title LIKE ? OR description LIKE ? ORDER BY start_time LIMIT ?`,
 		"%"+q+"%", "%"+q+"%", limit)
 	if err != nil {
 		return nil, err
@@ -220,7 +277,7 @@ func (s *Store) Search(q string, limit int) ([]Event, error) {
 
 // ListByTaskID returns events linked to a schedule task.
 func (s *Store) ListByTaskID(taskID string) ([]Event, error) {
-	rows, err := s.db.Query(`SELECT id, title, description, location, start_time, end_time, all_day, timezone, color, status, source, recurrence, recurrence_end, reminders, task_id, tags, reminded_at, created_at, updated_at FROM events WHERE task_id = ? ORDER BY start_time`, taskID)
+	rows, err := s.db.Query(`SELECT id, title, description, location, start_time, end_time, all_day, timezone, color, status, source, recurrence, recurrence_end, reminders, task_id, tags, output_mode, output_dest, output_account, reminded_at, created_at, updated_at FROM events WHERE task_id = ? ORDER BY start_time`, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +339,7 @@ func (s *Store) DeleteException(id string) error {
 // occurrence could fall within the lookahead window. The start_time bounds are
 // relaxed to include recurring events whose original start_time is in the past.
 func (s *Store) DueReminders(now time.Time) ([]Event, error) {
-	rows, err := s.db.Query(`SELECT id, title, description, location, start_time, end_time, all_day, timezone, color, status, source, recurrence, recurrence_end, reminders, task_id, tags, reminded_at, created_at, updated_at FROM events WHERE status != 'cancelled' AND reminders != '[]' AND reminders != ''`)
+	rows, err := s.db.Query(`SELECT id, title, description, location, start_time, end_time, all_day, timezone, color, status, source, recurrence, recurrence_end, reminders, task_id, tags, output_mode, output_dest, output_account, reminded_at, created_at, updated_at FROM events WHERE status != 'cancelled' AND reminders != '[]' AND reminders != ''`)
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +368,7 @@ func scanEvent(row *sql.Row) (*Event, error) {
 	err := row.Scan(&e.ID, &e.Title, &e.Description, &e.Location,
 		&e.StartTime, &e.EndTime, &allDay, &e.Timezone, &e.Color,
 		&e.Status, &e.Source, &e.Recurrence, &recEnd,
-		&remindersJSON, &e.TaskID, &tagsJSON, &remindedAt, &createdAt, &updatedAt)
+		&remindersJSON, &e.TaskID, &tagsJSON, &e.OutputMode, &e.OutputDest, &e.OutputAccount, &remindedAt, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +400,7 @@ func scanEvents(rows *sql.Rows) ([]Event, error) {
 		if err := rows.Scan(&e.ID, &e.Title, &e.Description, &e.Location,
 			&e.StartTime, &e.EndTime, &allDay, &e.Timezone, &e.Color,
 			&e.Status, &e.Source, &e.Recurrence, &recEnd,
-			&remindersJSON, &e.TaskID, &tagsJSON, &remindedAt, &createdAt, &updatedAt); err != nil {
+			&remindersJSON, &e.TaskID, &tagsJSON, &e.OutputMode, &e.OutputDest, &e.OutputAccount, &remindedAt, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		e.AllDay = allDay != 0

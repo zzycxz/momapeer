@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +20,8 @@ import (
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/client"
 	"github.com/emersion/go-message/mail"
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
 
 	"github.com/zzycxz/momapeer/internal/config"
 )
@@ -162,15 +166,124 @@ func isTLSError(err error) bool {
 }
 
 // decodeRFC2047 decodes RFC 2047 encoded words (e.g. =?gbk?b?...?=) in header
-// values. Falls back to the original string if decoding fails. Handles GBK and
-// other charsets that go-imap's default decoder misses.
+// values. The standard mime.WordDecoder handles UTF-8/Latin-1 but does NOT know
+// GBK/GB2312/GB18030 — the charsets 139.com (China Mobile) and many Chinese
+// mailers use. We first try the standard decoder (for UTF-8 etc.), then fall
+// back to a manual pass that handles the GBK family via golang.org/x/text, so
+// Chinese subjects/senders render correctly instead of showing the raw
+// "=?gb2312?B?...?=" blob.
 func decodeRFC2047(s string) string {
+	// Fast path: standard library handles utf-8/iso-8859-* and already-decoded
+	// text. If it returns something with no remaining encoded-words, we're done.
 	dec := &mime.WordDecoder{}
-	decoded, err := dec.DecodeHeader(s)
-	if err != nil {
-		return s // fallback to raw string
+	if d, err := dec.DecodeHeader(s); err == nil && !encodedWordRe.MatchString(d) {
+		return d
 	}
-	return decoded
+	// Slow path: manually decode encoded-words, supporting GBK/GB2312/GB18030/
+	// Big5 that the stdlib's mime package omits.
+	return decodeRFC2047Manual(s)
+}
+
+// encodedWordRe matches a single RFC 2047 encoded-word token =?charset?enc?text?
+var encodedWordRe = regexp.MustCompile(`=\?([^?]+)\?([BbQq])\?([^?]*)\?=`)
+
+// decodeRFC2047Manual walks the string, decoding each encoded-word with a
+// charset resolver that covers the GBK family. Non-encoded runs are copied
+// verbatim. Unknown charsets fall back to the stdlib decoder (utf-8/latin1).
+func decodeRFC2047Manual(s string) string {
+	var b strings.Builder
+	lastEnd := 0
+	for _, m := range encodedWordRe.FindAllStringSubmatchIndex(s, -1) {
+		start, end := m[0], m[1]
+		charset := s[m[2]:m[3]]
+		enc := strings.ToUpper(s[m[4]:m[5]])
+		encoded := s[m[6]:m[7]]
+		// Copy the literal run before this token.
+		b.WriteString(s[lastEnd:start])
+		if decoded, ok := decodeEncodedWord(charset, enc, encoded); ok {
+			b.WriteString(decoded)
+		} else {
+			b.WriteString(s[start:end]) // leave untouched on failure
+		}
+		lastEnd = end
+	}
+	b.WriteString(s[lastEnd:])
+	return b.String()
+}
+
+// decodeEncodedWord decodes one =?charset?enc?text? token. Returns ok=false
+// when the charset/encoding is unrecognized so the caller keeps the raw token.
+func decodeEncodedWord(charset, enc, encoded string) (string, bool) {
+	// Step 1: undo the transfer encoding (B = base64, Q = quoted-printable).
+	var raw []byte
+	switch enc {
+	case "B":
+		b, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return "", false
+		}
+		raw = b
+	case "Q":
+		// RFC 2047 Q-encoding: '_' means space, '=' is the QP escape.
+		q := strings.ReplaceAll(encoded, "_", " ")
+		b, err := qprintableDecode(q)
+		if err != nil {
+			return "", false
+		}
+		raw = b
+	default:
+		return "", false
+	}
+	// Step 2: decode the charset to UTF-8.
+	dec := charsetToDecoder(charset)
+	if dec == nil {
+		return "", false // unknown charset — leave raw
+	}
+	utf8, _, err := transform.String(dec, string(raw))
+	if err != nil {
+		return "", false
+	}
+	return utf8, true
+}
+
+// qprintableDecode decodes a (loose) quoted-printable string. The stdlib
+// mime/quotedprintable reader is stricter than RFC 2047's Q-variant needs.
+func qprintableDecode(s string) ([]byte, error) {
+	var out strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '=' {
+			if i+2 >= len(s) {
+				return nil, fmt.Errorf("truncated QP escape")
+			}
+			hexVal, err := strconv.ParseUint(s[i+1:i+3], 16, 8)
+			if err != nil {
+				return nil, err
+			}
+			out.WriteByte(byte(hexVal))
+			i += 2
+		} else {
+			out.WriteByte(c)
+		}
+	}
+	return []byte(out.String()), nil
+}
+
+// charsetToDecoder returns an x/text decoder (a transform.Transformer) for the
+// GBK family + Big5, which the standard mime package omits. GB18030 is a
+// superset of GBK/GB2312, so it decodes all three. Returns nil for charsets the
+// stdlib already handles (utf-8, iso-8859-*), so the caller can fall back.
+func charsetToDecoder(charset string) transform.Transformer {
+	switch strings.ToLower(strings.TrimSpace(charset)) {
+	case "gbk", "gb18030", "csgb2312":
+		// GB18030 is a superset of GBK and GB2312.
+		return simplifiedchinese.GB18030.NewDecoder()
+	case "gb2312":
+		// Pure GB2312 maps best to GBK (a strict superset of GB2312); GB18030
+		// also works but GBK is the conventional choice for legacy GB2312 mail.
+		return simplifiedchinese.GBK.NewDecoder()
+	}
+	return nil
 }
 
 func imapPassword(cfg config.IMAPConfig) string {
@@ -535,6 +648,7 @@ func formatAddresses(addrs []*imap.Address) string {
 	var parts []string
 	for _, a := range addrs {
 		name := strings.TrimSpace(strings.Trim(a.PersonalName, "\""))
+		name = decodeRFC2047(name)
 		mailbox := a.MailboxName
 		host := a.HostName
 		if mailbox == "" {

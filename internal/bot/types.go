@@ -106,6 +106,19 @@ type SendResult struct {
 	Err       error  `json:"err,omitempty"`
 }
 
+// RecentChat is one entry in the gateway's "recently seen chats" ring buffer,
+// surfaced to the frontend so the user can pick an IM destination for scheduled
+// tasks and calendar reminders without hand-typing a chatID. UserName is the
+// best available display name (private chat = the user's name; group chat may
+// be empty when the platform doesn't expose group names).
+type RecentChat struct {
+	Platform Platform `json:"platform"`
+	ChatType ChatType `json:"chatType"`
+	ChatID   string   `json:"chatId"`
+	UserName string   `json:"userName"`
+	LastSeen int64    `json:"lastSeen"` // unix seconds
+}
+
 // Adapter 是平台适配器接口，每个平台实现一个。
 type Adapter interface {
 	// Platform 返回平台标识。

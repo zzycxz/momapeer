@@ -113,6 +113,38 @@ func (a *App) restartBotGateway() {
 	a.startBotGateway(cfg)
 }
 
+// RecentChatView is the JSON-friendly projection of bot.RecentChat for the IM-
+// target picker in the task form. Mirrors bot.RecentChat with json tags.
+type RecentChatView struct {
+	Platform string `json:"platform"`
+	ChatType string `json:"chatType"`
+	ChatID   string `json:"chatId"`
+	UserName string `json:"userName"`
+	LastSeen int64  `json:"lastSeen"`
+}
+
+// ListRecentBotChats returns recently-seen IM chats (newest first), so the task
+// form can offer them as push destinations instead of forcing the user to
+// hand-type a chatID. Returns [] when the bot isn't running (no chats seen yet).
+func (a *App) ListRecentBotChats() []RecentChatView {
+	gw := a.botGW.Load()
+	if gw == nil {
+		return []RecentChatView{}
+	}
+	src := gw.RecentChats()
+	out := make([]RecentChatView, 0, len(src))
+	for _, c := range src {
+		out = append(out, RecentChatView{
+			Platform: string(c.Platform),
+			ChatType: string(c.ChatType),
+			ChatID:   c.ChatID,
+			UserName: c.UserName,
+			LastSeen: c.LastSeen,
+		})
+	}
+	return out
+}
+
 // botChannelConfigsFromConnections 从 connections 配置中提取每个平台的覆盖参数。
 func botChannelConfigsFromConnections(connections []config.BotConnectionConfig) map[bot.Platform]bot.ChannelConfig {
 	if len(connections) == 0 {

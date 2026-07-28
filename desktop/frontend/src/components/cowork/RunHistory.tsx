@@ -60,6 +60,10 @@ export function RunHistory({
 
 function RunHistoryRow({ r, t }: { r: RunRecordView; t: Translator }) {
   const [open, setOpen] = useState(false);
+  // Map the run status to a CSS modifier. deliver_failed / deliver_skipped are
+  // delivery outcomes (the agent ran fine but IM/email/file push didn't reach
+  // its destination) — rendered with their own colors so they stand out from a
+  // pure run error.
   const statusCls = `cowork-history-row__status cowork-history-row__status--${r.status}`;
   const statusLabel = (() => {
     switch (r.status) {
@@ -67,6 +71,10 @@ function RunHistoryRow({ r, t }: { r: RunRecordView; t: Translator }) {
         return t("cowork.automationHistoryStatusOk");
       case "error":
         return t("cowork.automationHistoryStatusError");
+      case "deliver_failed":
+        return t("cowork.automationHistoryStatusDeliverFailed");
+      case "deliver_skipped":
+        return t("cowork.automationHistoryStatusDeliverSkipped");
       default:
         return t("cowork.automationHistoryStatusSkipped");
     }

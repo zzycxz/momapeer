@@ -3,7 +3,8 @@
 // CoworkDock when the user clicks "深度提取".
 
 import { useEffect, useRef, useState } from "react";
-import { Zap, Clock, RefreshCw, ArrowRight, Eye, Trash2 } from "lucide-react";
+import { Zap, Clock, RefreshCw, ArrowRight, Eye, Trash2, Folder, Sparkles, CornerDownRight } from "lucide-react";
+import { CustomSelect, type CustomSelectOption } from "./CustomSelect";
 
 import { app } from "../../lib/bridge";
 import { asArray } from "../../lib/array";
@@ -41,7 +42,7 @@ interface ExtractJob {
 
 export interface TemplateSelectProps {
   collection: string;
-  collections?: Array<{ name: string; path: string; parent: string }>;
+  collections?: Array<{ name: string; path: string; parent: string; documents?: number }>;
   onCollectionChange?: (name: string) => void;
   onBack: () => void;
   onViewGraph?: () => void;
@@ -150,7 +151,7 @@ export function TemplateSelect({ collection, collections, onCollectionChange, on
               path: n.path || n.label,
               template: selectedTemplate,
               status: n.status === "error" ? "failed" : n.status === "enriched" ? "done" : n.status,
-              progress: n.totalChunks > 0 ? Math.round((n.doneChunks / n.totalChunks) * 100) : 0,
+              progress: n.totalChunks > 0 ? Math.min(100, Math.round((n.doneChunks / n.totalChunks) * 100)) : 0,
               error: n.errorMsg ?? "",
               entities: n.entityCount ?? 0,
               relations: 0,
@@ -226,7 +227,7 @@ export function TemplateSelect({ collection, collections, onCollectionChange, on
               path: n.path || n.label,
               template: selectedTemplate,
               status: n.status === "error" ? "failed" : n.status === "enriched" ? "done" : n.status,
-              progress: n.totalChunks > 0 ? Math.round((n.doneChunks / n.totalChunks) * 100) : 0,
+              progress: n.totalChunks > 0 ? Math.min(100, Math.round((n.doneChunks / n.totalChunks) * 100)) : 0,
               error: n.errorMsg ?? "",
               entities: n.entityCount ?? 0,
               relations: 0,
@@ -243,13 +244,17 @@ export function TemplateSelect({ collection, collections, onCollectionChange, on
           if (allDone || ticks >= MAX_POLL_TICKS) {
             stopPolling();
             setLoading(false);
-            // Show error summary if some chunks failed.
             const errorCount = mapped.filter((j) => j.status === "failed").length;
             if (errorCount > 0) {
               showToast(`提取完成，但有 ${errorCount} 个文件失败（可能是 API 限流或内容不合规）`, "warn");
+            } else {
+              showToast(`提取完成！已生成 ${extractResult.entityCount} 个实体、${extractResult.relationCount} 条关系`, "info");
             }
             if (extractResult.hasData) {
-              setShowResult(true);
+              // Auto-switch to graph view — the user just watched extraction,
+              // they want to see the results, not stay on a progress screen.
+              onBack();
+              window.dispatchEvent(new CustomEvent("rag:fit-view"));
             }
           }
         }).catch(() => {
@@ -284,66 +289,100 @@ export function TemplateSelect({ collection, collections, onCollectionChange, on
         <span className="rag-template__title">深度提取</span>
       </div>
 
-      {/* Collection — dropdown selector */}
+      {/* Collection — clean dropdown selector */}
       <div className="rag-template__section">
-        <span className="rag-template__label">集合</span>
+        <span className="rag-template__label">知识库分类集合</span>
         {collections && onCollectionChange ? (
-          <select
-            className="rag-template__select"
+          <CustomSelect
             value={collection}
-            onChange={(e) => onCollectionChange(e.target.value)}
-          >
-            <option value="">全部</option>
-            {collections.map((c) => (
-              <option key={c.path || c.name} value={c.name}>
-                {c.parent ? "└ " : ""}{c.name}
-              </option>
-            ))}
-          </select>
+            onChange={onCollectionChange}
+            icon={<Folder size={14} style={{ color: "var(--accent)" }} />}
+            options={(() => {
+              const opts: CustomSelectOption[] = [{
+                value: "",
+                label: `全部文档 (${collections.reduce((s, c) => s + (c.documents ?? 0), 0)})`,
+                icon: <Folder size={13} style={{ color: "var(--accent)" }} />,
+              }];
+              
+              const sorted = [...collections].sort((a, b) => a.name.localeCompare(b.name));
+              sorted.forEach(c => {
+                const parts = c.name.split("/");
+                const depth = parts.length - 1;
+                const displayName = parts[parts.length - 1];
+                
+                opts.push({
+                  value: c.name,
+                  label: (
+                    <span style={{ 
+                      display: "flex", 
+                      justifyContent: "space-between", 
+                      width: "100%", 
+                      alignItems: "center",
+                      paddingLeft: depth > 0 ? `${depth * 14}px` : "0px",
+                    }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: "6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                        {depth > 0 && <CornerDownRight size={12} style={{ color: "var(--fg-faint)", opacity: 0.7, marginTop: "-2px" }} />}
+                        <Folder size={13} style={{ color: "var(--fg-faint)", opacity: 0.7 }} />
+                        <span title={c.name} style={{ fontWeight: depth === 0 ? 500 : 400 }}>{displayName}</span>
+                      </span>
+                      <span style={{ fontSize: "10px", color: "var(--fg-faint)", marginLeft: "6px", flexShrink: 0 }}>
+                        {c.documents} 篇
+                      </span>
+                    </span>
+                  )
+                });
+              });
+              return opts;
+            })()}
+          />
         ) : (
           <span className="rag-template__value">{collection || "全部"}</span>
         )}
       </div>
 
-      {/* HE service status */}
-      {heReady !== null && (
-        <div className="rag-template__section">
-          <span className="rag-template__label">提取引擎</span>
-          <span className={`rag-template__status ${heReady ? "rag-template__status--ok" : "rag-template__status--info"}`}>
-            {heReady
-              ? "Hyper-Extract 就绪（模板抽取可用）"
-              : "内置九天提取引擎（Hyper-Extract 模板未启用）"}
-          </span>
-        </div>
-      )}
+      {/* Engine Status */}
+      <div className="rag-template__section">
+        <span className="rag-template__label">提取引擎</span>
+        <span className="rag-template__status rag-template__status--ok">
+          {heReady
+            ? "全领域知识图谱引擎就绪 (自研内置架构 + HE 增强协同)"
+            : "全领域知识图谱引擎就绪 (自适应两阶段全链路专业提取)"}
+        </span>
+      </div>
 
-      {/* Template selection — dropdown */}
+      {/* Template selection — clean dropdown + single active preview card */}
       <div className="rag-template__section">
         <span className="rag-template__label">提取模板</span>
         {templates.length > 0 ? (
           <>
-            <select
-              className="rag-template__select"
+            <CustomSelect
               value={selectedTemplate}
-              onChange={(e) => setSelectedTemplate(e.target.value)}
-            >
-              {templates.map((t) => (
-                <option key={t.name} value={t.name}>
-                  {t.displayName}{t.templateType ? ` · ${t.templateType}` : ""}
-                </option>
-              ))}
-            </select>
-            {/* Show selected template description + fields */}
+              onChange={setSelectedTemplate}
+              icon={<Zap size={14} style={{ color: "var(--accent)" }} />}
+              options={templates.map((t) => ({
+                value: t.name,
+                label: t.displayName || t.name,
+                subtitle: t.templateType || undefined,
+                icon: <Zap size={13} />,
+              }))}
+            />
+            {/* Single Selected Template Description Card */}
             {(() => {
               const sel = templates.find((t) => t.name === selectedTemplate);
               if (!sel) return null;
               const entityFields = asArray(sel.entityFields);
               const relationFields = asArray(sel.relationFields);
               return (
-                <div className="rag-template__desc-card">
-                  <span className="rag-template__desc-text">{sel.description}</span>
+                <div className="rag-template__card rag-template__card--active" style={{ marginTop: 10, cursor: "default" }}>
+                  <div className="rag-template__card-title">
+                    <span>{sel.displayName || sel.name}</span>
+                    {sel.templateType && <span className="rag-template__card-type">{sel.templateType}</span>}
+                  </div>
+                  {sel.description && (
+                    <div className="rag-template__desc-text" style={{ marginTop: 4 }}>{sel.description}</div>
+                  )}
                   {(entityFields.length > 0 || relationFields.length > 0) && (
-                    <div className="rag-template__fields">
+                    <div className="rag-template__fields" style={{ marginTop: 8 }}>
                       {entityFields.length > 0 && (
                         <span className="rag-template__field-group">
                           <span className="rag-template__field-label">实体</span>
@@ -367,50 +406,89 @@ export function TemplateSelect({ collection, collections, onCollectionChange, on
             })()}
           </>
         ) : (
-          <div className="rag-template__empty">暂无可用模板</div>
+          <div
+            className="cowork-dock__empty-state"
+            style={{
+              margin: "24px 12px",
+              padding: "36px 20px",
+              border: "1px dashed var(--border-soft)",
+              borderRadius: 12,
+              background: "var(--bg-elev)",
+              textAlign: "center",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <div
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: "50%",
+                background: "var(--bg-soft)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                marginBottom: 4,
+                border: "1px solid var(--border-soft)",
+                color: "var(--accent)",
+              }}
+            >
+              <Sparkles size={22} style={{ opacity: 0.9 }} />
+            </div>
+            <p style={{ fontWeight: 600, color: "var(--fg)", fontSize: 13, margin: 0 }}>暂无自定义专项提取模板</p>
+            <p style={{ fontSize: 11.5, color: "var(--fg-faint)", margin: 0, lineHeight: 1.5, maxWidth: 260 }}>
+              系统内置大语言模型深度推理与图谱挖掘，即便无需模版也可在下方直接开启全量智能理解。
+            </p>
+          </div>
         )}
       </div>
 
-      {/* Action buttons */}
+      {/* Action buttons — Primary High-Impact Button with Secondary Sub-row */}
       <div className="rag-template__actions">
         {loading ? (
-          // While extracting: show a cancel/unlock button so the user isn't stuck
           <button
             className="btn rag-template__btn"
             onClick={handleCancel}
-            style={{ color: "var(--fg-dim)", borderColor: "var(--border)" }}
+            style={{ color: "var(--fg-dim)", borderColor: "var(--border)", width: "100%" }}
           >
             <RefreshCw size={14} />
-            <span>停止监听</span>
+            <span>停止监听 (不中断后台作业)</span>
           </button>
         ) : (
           <>
             <button
-              className="btn btn--primary rag-template__btn"
+              className="rag-template__btn rag-template__btn--primary"
               onClick={() => void handleImmediateExtract()}
               disabled={loading}
+              style={{ width: "100%" }}
             >
-              <Zap size={14} />
-              <span>增量理解</span>
+              <Zap size={15} />
+              <span>智能增量理解 (构建知识图谱)</span>
             </button>
-            <button
-              className="btn rag-template__btn"
-              onClick={() => void handleFullExtract()}
-              disabled={loading}
-              title="清空已有实体，重新提取全部文档"
-            >
-              <RefreshCw size={14} />
-              <span>重新理解</span>
-            </button>
-            <button
-              className="btn rag-template__btn"
-              onClick={() => void handleSilentExtract()}
-              disabled={loading}
-              title="后台静默提取，不等待"
-            >
-              <Clock size={14} />
-              <span>静默理解</span>
-            </button>
+            <div className="rag-template__actions-sub">
+              <button
+                className="rag-template__btn"
+                onClick={() => void handleFullExtract()}
+                disabled={loading}
+                style={{ flex: 1 }}
+                title="清空已有图谱实体，重新对分类下全部文档进行提取"
+              >
+                <RefreshCw size={13} />
+                <span>全量重建</span>
+              </button>
+              <button
+                className="rag-template__btn"
+                onClick={() => void handleSilentExtract()}
+                disabled={loading}
+                style={{ flex: 1 }}
+                title="进入后台静默任务排队，不阻塞现有界面"
+              >
+                <Clock size={13} />
+                <span>静默理解</span>
+              </button>
+            </div>
           </>
         )}
       </div>
@@ -430,18 +508,44 @@ export function TemplateSelect({ collection, collections, onCollectionChange, on
       {/* Progress */}
       {jobs.length > 0 && (
         <div className="rag-template__progress">
-          <span className="rag-template__progress-title">提取进度</span>
+          {/* Overall progress summary */}
+          {(() => {
+            const total = jobs.length;
+            const doneCount = jobs.filter(j => j.status === "done").length;
+            const failedCount = jobs.filter(j => j.status === "failed").length;
+            const pendingCount = jobs.filter(j => j.status === "queued" || j.status === "pending").length;
+            const currentFile = jobs.find(j => j.status === "extracting" || j.status === "running");
+            return (
+              <div className="rag-template__progress-summary">
+                <div className="rag-template__progress-bar-wrap">
+                  <div className="rag-template__progress-bar"
+                    style={{ width: `${total > 0 ? Math.round((doneCount + failedCount) / total * 100) : 0}%` }} />
+                </div>
+                <span className="rag-template__progress-text">
+                  {loading ? (
+                    currentFile ? `正在理解：${currentFile.path.split(/[/\\]/).pop()}（${currentFile.progress}%）` :
+                    pendingCount > 0 ? `等待中...（${doneCount}/${total} 完成）` :
+                    `${doneCount}/${total} 完成`
+                  ) : (
+                    `${doneCount}/${total} 完成` + (failedCount > 0 ? `，${failedCount} 失败` : "")
+                  )}
+                </span>
+              </div>
+            );
+          })()}
+          {/* Per-file detail */}
           {jobs.map((j) => (
             <div key={j.id} className={`rag-template__job rag-template__job--${j.status}`}>
               <span className="rag-template__job-path">{j.path.split(/[/\\]/).pop()}</span>
               <span className="rag-template__job-status">
-                {j.status === "done" ? `✓ ${j.entities}实体` :
-                 j.status === "running" || j.status === "extracting" ? `... ${j.progress}%` :
-                 j.status === "failed" ? `! ${j.error}` :
+                {j.status === "done" ? `✓ ${j.entities} 实体` :
+                 j.status === "running" || j.status === "extracting" ? `${j.progress}%` :
+                 j.status === "failed" ? `✗ 失败` :
+                 j.status === "queued" || j.status === "pending" ? "等待中" :
                  j.status}
               </span>
               {j.status === "failed" && (
-                <button className="rag-template__retry" onClick={() => void handleImmediateExtract()}>
+                <button className="rag-template__retry" title={j.error} onClick={() => void handleImmediateExtract()}>
                   <RefreshCw size={12} />
                 </button>
               )}
@@ -450,21 +554,92 @@ export function TemplateSelect({ collection, collections, onCollectionChange, on
         </div>
       )}
 
-      {/* Existing result hint */}
+      {/* Existing result hint - Layered Asset Card Design */}
       {!loading && result && result.hasData && !showResult && (
-        <div className="rag-template__hint">
-          <span>已有 {result.entityCount} 个实体、{result.relationCount} 条关系</span>
-          <button className="btn btn--link" onClick={() => setShowResult(true)}>
-            <Eye size={13} /> 查看结果
-          </button>
-          <button className="btn btn--link btn--danger-link" onClick={async () => {
-            if (window.confirm("确认清理所有提取的知识？文档不会被删除，可重新提取。")) {
-              await app.RagCleanCollection(collection);
-              setResult(null);
-            }
-          }}>
-            <Trash2 size={13} /> 清理知识
-          </button>
+        <div
+          className="cowork-dock__existing-card"
+          style={{
+            margin: "4px 12px 14px",
+            padding: "12px 14px",
+            background: "var(--bg-elev)",
+            border: "1px solid var(--border-soft)",
+            borderRadius: 10,
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            boxShadow: "0 2px 6px rgba(0,0,0,0.03)",
+          }}
+        >
+          {/* 上层：图谱资产标题与双色数字胶囊 */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 600, color: "var(--fg)" }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent)" }} />
+              <span>已提取知识</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11 }}>
+              <span style={{ padding: "2px 7px", borderRadius: 10, background: "rgba(59, 130, 246, 0.12)", color: "#3b82f6", fontWeight: 500 }}>
+                {result.entityCount} 实体
+              </span>
+              <span style={{ padding: "2px 7px", borderRadius: 10, background: "rgba(168, 85, 247, 0.12)", color: "#a855f7", fontWeight: 500 }}>
+                {result.relationCount} 关系
+              </span>
+            </div>
+          </div>
+
+          {/* 下层：主次清晰的操作按钮区分 */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 6, borderTop: "1px dashed var(--border-soft)" }}>
+            <button
+              type="button"
+              onClick={() => setShowResult(true)}
+              style={{
+                flex: 1,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 5,
+                height: 28,
+                padding: "0 10px",
+                borderRadius: 6,
+                background: "var(--accent)",
+                color: "#fff",
+                border: "none",
+                fontSize: 11.5,
+                fontWeight: 500,
+                cursor: "pointer",
+                boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+              }}
+            >
+              <Eye size={13} />
+              <span>查看详情</span>
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                if (window.confirm("确认清理所有提取的知识？文档不会被删除，可重新提取。")) {
+                  await app.RagCleanCollection(collection);
+                  setResult(null);
+                }
+              }}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 4,
+                height: 28,
+                padding: "0 10px",
+                borderRadius: 6,
+                background: "transparent",
+                color: "var(--fg-dim)",
+                border: "1px solid var(--border-soft)",
+                fontSize: 11.5,
+                cursor: "pointer",
+              }}
+              title="清理已提取的图谱知识"
+            >
+              <Trash2 size={13} />
+              <span>清理</span>
+            </button>
+          </div>
         </div>
       )}
     </div>

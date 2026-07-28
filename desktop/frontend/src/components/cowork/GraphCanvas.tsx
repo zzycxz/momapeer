@@ -182,6 +182,7 @@ function GraphCanvasInner({
   const [loading, setLoading] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [extractProgress, setExtractProgress] = useState<{ done: number; total: number } | null>(null);
+  const [docCount, setDocCount] = useState<number>(-1);
   // Smoothly-animated display percentage (with 2 decimal places) that interpolates
   // toward the real percentage between polling updates, so the number looks alive.
   const displayPctRef = useRef(0);
@@ -302,8 +303,13 @@ function GraphCanvasInner({
           }
         });
         
-        // Only update from tree if HE isn't currently broadcasting its own progress
-        if (!heBusy) {
+        const fileCount = flat.filter((n) => n.kind === "file").length;
+        setDocCount(fileCount);
+        // 如果文件总数为 0 且此时正好图谱为空，确保其处于干净的非等待提取状态
+        if (fileCount === 0) {
+          setExtracting(false);
+          setExtractProgress(null);
+        } else if (!heBusy) {
           setExtracting(isBusy);
           setExtractProgress(isBusy && total > 0 ? { done, total } : null);
         }
@@ -512,8 +518,8 @@ function GraphCanvasInner({
     );
   }
 
-  if (!graphData || !graphData.nodes || graphData.nodes.length === 0) {
-    if (extracting) {
+  if (docCount === 0 || !graphData || !graphData.nodes || graphData.nodes.length === 0) {
+    if (extracting && docCount !== 0) {
       // displayPct is the smoothly-animated value (2 decimal places); it interpolates
       // between backend polling updates so the counter always looks alive.
       const pctStr = displayPct > 0 ? `${displayPct.toFixed(2)}%` : "";
@@ -581,9 +587,13 @@ function GraphCanvasInner({
 
 
     return (
-      <div className="rag-graph__empty">
-        <span>{t("cowork.ragGraphEmpty")}</span>
-        <span className="rag-graph__empty-hint">{t("cowork.ragGraphEmptyHint")}</span>
+      <div className="rag-graph__empty" style={{ padding: "40px", textAlign: "center" }}>
+        <span style={{ fontSize: "16px", fontWeight: 600, color: "var(--fg)" }}>{t("cowork.ragGraphEmpty")}</span>
+        <span className="rag-graph__empty-hint" style={{ marginTop: "12px", maxWidth: "420px", lineHeight: 1.5, color: "var(--fg-dim)" }}>
+          {docCount === 0 
+            ? "当前集合中暂无文件文档，请先通过左侧【导入】添加对应格式文件后，点击【深度提取】即可自研构建知识图谱。" 
+            : t("cowork.ragGraphEmptyHint")}
+        </span>
       </div>
     );
   }

@@ -320,7 +320,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	fmt.Fprintf(&b, "distill_interval = %d   # Distill 运行周期（天）；0 = 默认 %d\n", c.Dream.DistillIntervalDays(), DefaultDistillInterval)
 	b.WriteString("\n")
 
-	// [cowork] section: PPT template and mode settings.
+	// [cowork] section: PPT, mail (SMTP/IMAP/email_accounts), screenshot, RAG.
 	b.WriteString("[cowork]\n")
 	if c.Cowork.PPTActiveTemplate != "" {
 		fmt.Fprintf(&b, "ppt_active_template = %q   # id of the PPT template to build decks from\n", c.Cowork.PPTActiveTemplate)
@@ -331,6 +331,49 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		fmt.Fprintf(&b, "ppt_mode = %q   # fast (one-shot) or validate (generate + check + rework)\n", c.Cowork.PPTMode)
 	} else {
 		b.WriteString("# ppt_mode = \"fast\"   # fast (one-shot) or validate (generate + check + rework)\n")
+	}
+	if c.Cowork.BrowserPath != "" {
+		fmt.Fprintf(&b, "browser_path = %q   # Chromium-based browser exe; empty = auto-detect\n", c.Cowork.BrowserPath)
+	}
+	if c.Cowork.EmbeddingModel != "" {
+		fmt.Fprintf(&b, "embedding_model = %q   # enables semantic RAG reranking; empty = FTS5-only\n", c.Cowork.EmbeddingModel)
+	}
+	if c.Cowork.ScreenshotEnabled {
+		fmt.Fprintf(&b, "screenshot_enabled = %v\n", c.Cowork.ScreenshotEnabled)
+	}
+	if c.Cowork.ScreenshotHotkey != "" {
+		fmt.Fprintf(&b, "screenshot_hotkey = %q\n", c.Cowork.ScreenshotHotkey)
+	}
+	if c.Cowork.ScreenshotVLMModel != "" {
+		fmt.Fprintf(&b, "screenshot_vlm_model = %q\n", c.Cowork.ScreenshotVLMModel)
+	}
+	if c.Cowork.EStopHotkey != "" {
+		fmt.Fprintf(&b, "estop_hotkey = %q   # emergency-stop hotkey; \"off\" disables\n", c.Cowork.EStopHotkey)
+	}
+
+	// Mail config. When EmailAccounts is set, it's the source of truth and we
+	// render it as [[cowork.email_accounts]] array-of-tables. The legacy single
+	// [cowork.smtp]/[cowork.imap] pair is rendered only when there are no
+	// named accounts (single-account backward-compat). This is the fix for the
+	// long-standing bug where the cowork renderer omitted mail entirely, so
+	// SetCoWorkSettings wrote config that config.Load then couldn't read back —
+	// every mailbox "save" silently vanished.
+	if len(c.Cowork.EmailAccounts) > 0 {
+		for _, a := range c.Cowork.EmailAccounts {
+			b.WriteString("\n[[cowork.email_accounts]]\n")
+			fmt.Fprintf(&b, "name = %q   # stable handle tools/scheduler address\n", a.Name)
+			fmt.Fprintf(&b, "default = %v\n", a.Default)
+			b.WriteString("[cowork.email_accounts.smtp]\n")
+			renderSMTPFields(&b, a.SMTP)
+			b.WriteString("[cowork.email_accounts.imap]\n")
+			renderIMAPFields(&b, a.IMAP)
+		}
+	} else {
+		// Legacy single-pair form.
+		b.WriteString("\n[cowork.smtp]\n")
+		renderSMTPFields(&b, c.Cowork.SMTP)
+		b.WriteString("[cowork.imap]\n")
+		renderIMAPFields(&b, c.Cowork.IMAP)
 	}
 	b.WriteString("\n")
 
@@ -630,6 +673,53 @@ func renderStringArray(ss []string) string {
 	}
 	b.WriteByte(']')
 	return b.String()
+}
+
+// renderSMTPFields writes the SMTP config fields into a TOML table that the
+// caller has already opened (e.g. "[cowork.smtp]" or
+// "[cowork.email_accounts.smtp]"). password_env holds the env var NAME only —
+// the secret itself lives in the encrypted store, never in config.toml.
+func renderSMTPFields(b *strings.Builder, s SMTPConfig) {
+	if s.Host != "" {
+		fmt.Fprintf(b, "host = %q\n", s.Host)
+	}
+	if s.Port != 0 {
+		fmt.Fprintf(b, "port = %d   # 465 implicit TLS, 587 STARTTLS, 25 plain\n", s.Port)
+	}
+	if s.From != "" {
+		fmt.Fprintf(b, "from = %q   # sender address\n", s.From)
+	}
+	if s.Username != "" {
+		fmt.Fprintf(b, "username = %q\n", s.Username)
+	}
+	if s.PasswordEnv != "" {
+		fmt.Fprintf(b, "password_env = %q   # env var name holding the password (not the password itself)\n", s.PasswordEnv)
+	}
+	if s.EncryptionMode != "" {
+		fmt.Fprintf(b, "encryption_mode = %q   # tls | starttls | none\n", s.EncryptionMode)
+	} else if s.UseTLS {
+		b.WriteString("use_tls = true   # deprecated: prefer encryption_mode\n")
+	}
+}
+
+// renderIMAPFields writes the IMAP config fields into an already-opened TOML
+// table. Like SMTP, only the password_env name is persisted.
+func renderIMAPFields(b *strings.Builder, m IMAPConfig) {
+	if m.Host != "" {
+		fmt.Fprintf(b, "host = %q\n", m.Host)
+	}
+	if m.Port != 0 {
+		fmt.Fprintf(b, "port = %d   # 993 implicit TLS, 143 STARTTLS/plain\n", m.Port)
+	}
+	if m.Username != "" {
+		fmt.Fprintf(b, "username = %q\n", m.Username)
+	}
+	if m.PasswordEnv != "" {
+		fmt.Fprintf(b, "password_env = %q   # env var name holding the password\n", m.PasswordEnv)
+	}
+	if m.SkipTLSVerify {
+		fmt.Fprintf(b, "skip_tls_verify = %v   # skip cert verification (self-signed/corporate CAs)\n", m.SkipTLSVerify)
+	}
 }
 
 // renderStringMap renders a map[string]string as a TOML inline table with keys

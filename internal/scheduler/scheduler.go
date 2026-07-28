@@ -60,6 +60,20 @@ type ScheduledTask struct {
 	LastResult string    `json:"last_result,omitempty"` // truncated run output / error
 	OutputMode string    `json:"output_mode,omitempty"` // "" | "im" | "file" | "email" | "notify"
 	OutputDest string    `json:"output_dest,omitempty"` // IM channel / file path / email "to" / (notify: unused)
+	// OutputAccount selects the named mailbox used for "email" delivery (empty
+	// = the default account). Lets one task send from a work mailbox and another
+	// from a personal one.
+	OutputAccount string `json:"output_account,omitempty"`
+	// UI-facing display attributes. OutputDir is an optional folder that
+	// concentrates a task's file artifacts (CSV/report/docs) instead of the
+	// shared workspace root; the agent prompt may reference it. Color/Location
+	// render the task on the calendar grid. These were previously sent by the
+	// UI form but dropped because they had no backing struct field.
+	OutputDir       string `json:"output_dir,omitempty"`
+	Color           string `json:"color,omitempty"`
+	Location        string `json:"location,omitempty"`
+	LastDeliverErr  string `json:"last_deliver_err,omitempty"`  // "" if last delivery succeeded / was skipped
+	LastDeliverAt   time.Time `json:"last_deliver_at,omitempty"` // when the most recent delivery was attempted
 }
 
 // Runner is the bridge to a controller: the scheduler calls Run with the task's
@@ -76,12 +90,13 @@ type IMPusher interface {
 	Push(ctx context.Context, dest, text string) error
 }
 
-// EmailSender delivers a scheduled-task result via SMTP. OutputDest is the
-// recipient address (or "to;subject" to override the subject). The desktop app
-// supplies one backed by the same SMTP config as the email_send tool; nil means
-// email output mode degrades to store-only.
+// EmailSender delivers a scheduled-task result via SMTP. account selects the
+// named mailbox to send from (empty = default); to is the recipient (or
+// "to;subject"); the desktop app supplies one backed by the same multi-account
+// SMTP config as the email_send tool. nil means email output mode degrades to
+// store-only.
 type EmailSender interface {
-	Send(ctx context.Context, to, subject, body string) error
+	Send(ctx context.Context, account, to, subject, body string) error
 }
 
 // Notifier surfaces a run result to the user in-app (desktop toast / event).
@@ -152,11 +167,12 @@ type Scheduler struct {
 	mu          sync.Mutex
 	tasks       []ScheduledTask
 	history     []RunRecord // newest last; capped at historyMax
-	runner      Runner
-	imPusher    IMPusher
-	emailer     EmailSender
-	notifier    Notifier
-	stopCh      chan struct{}
+	runner        Runner
+	imPusher      IMPusher
+	emailer       EmailSender
+	notifier      Notifier
+	accountProber AccountProber
+	stopCh        chan struct{}
 	logf        func(format string, args ...any)
 }
 
@@ -213,14 +229,24 @@ func (s *Scheduler) SetNotifier(n Notifier) {
 	s.mu.Unlock()
 }
 
-// AccountProber probes the connectivity of an IMAP/SMTP account.
+// AccountProber probes the connectivity of a named mail account before a
+// scheduled task spends tokens trying to send through it. The account name is
+// the same string a task carries in OutputAccount (resolved by the prober
+// implementation to its IMAP/SMTP credentials). Returning nil means "good to
+// go"; a non-nil error skips the delivery with a friendly reason instead of
+// burning a half-token agent run on an expired credential (the 139 90-day
+// authorization-code case this exists for).
 type AccountProber interface {
-	Probe(addr, user, password string) error
+	Probe(account string) error
 }
 
-// SetAccountProber binds the account connectivity prober.
+// SetAccountProber binds the account connectivity prober used before email
+// delivery. Safe to call before Start; nil (the default) skips probing and
+// preserves the prior fire-and-let-SMTP-fail behavior.
 func (s *Scheduler) SetAccountProber(p AccountProber) {
-	// Future: store and use for scheduled health checks.
+	s.mu.Lock()
+	s.accountProber = p
+	s.mu.Unlock()
 }
 
 // Load reads persisted tasks. Called by New-equivalent flows; also re-read after
@@ -315,6 +341,7 @@ func (s *Scheduler) fireDue(now time.Time) {
 	pusher := s.imPusher
 	emailer := s.emailer
 	notifier := s.notifier
+	prober := s.accountProber
 	s.mu.Unlock()
 
 	for _, idx := range due {
@@ -322,10 +349,18 @@ func (s *Scheduler) fireDue(now time.Time) {
 		t := s.tasks[idx]
 		s.mu.Unlock()
 		result := s.runOne(runner, t)
+		runErr := strings.HasPrefix(result, "error:") || strings.HasPrefix(result, "skipped:")
 		// Deliver to the configured output channel. Best-effort: a delivery
 		// failure doesn't fail the run (the result is stored on the task
-		// regardless).
-		s.deliverOutput(pusher, emailer, notifier, t, result)
+		// regardless), but we capture the outcome so the UI can surface it.
+		deliver := s.deliverOutput(pusher, emailer, notifier, prober, t, result)
+		// A failed delivery shouldn't be invisible — raise an in-app toast so the
+		// user knows their IM/email didn't go through (e.g. bot offline, SMTP
+		// misconfigured). notify mode already toasted via the notifier; don't
+		// double-fire for it.
+		if !deliver.ok() && notifier != nil && !runErr {
+			notifier.Notify(t.Name+" · 投递失败", deliver.reason)
+		}
 		s.mu.Lock()
 		// Re-validate under the lock: a task may have been deleted, swapped, or
 		// — critically — updated while runOne was executing (runs can take up to
@@ -340,6 +375,12 @@ func (s *Scheduler) fireDue(now time.Time) {
 			s.tasks[idx].LastRun = now
 			s.tasks[idx].RunCount++
 			s.tasks[idx].LastResult = truncate(result, 500)
+			s.tasks[idx].LastDeliverAt = now
+			if deliver.ok() {
+				s.tasks[idx].LastDeliverErr = ""
+			} else {
+				s.tasks[idx].LastDeliverErr = deliver.reason
+			}
 			// One-shot tasks auto-disable after their single fire and stay in
 			// the list (preserved for history). Their NextRun is zeroed.
 			if currentOneShot {
@@ -352,25 +393,13 @@ func (s *Scheduler) fireDue(now time.Time) {
 				TaskID:     t.ID,
 				Name:       t.Name,
 				At:         now,
-				Status:     runStatus(result),
+				Status:     deliver.forHistory(runErr),
 				Result:     truncate(result, 500),
 				OutputMode: t.OutputMode,
 			})
 			_ = s.store.save(s.tasks)
 		}
 		s.mu.Unlock()
-	}
-}
-
-// runStatus classifies a run result string into "ok"/"error"/"skipped".
-func runStatus(result string) string {
-	switch {
-	case strings.HasPrefix(result, "error:"):
-		return "error"
-	case strings.HasPrefix(result, "skipped:"):
-		return "skipped"
-	default:
-		return "ok"
 	}
 }
 
@@ -412,22 +441,45 @@ func (s *Scheduler) runOne(runner Runner, t ScheduledTask) string {
 //   - "" (default): result stored on the task only (visible via schedule_list).
 //
 // Delivery never fails the run — the task's LastResult always reflects what the
-// agent produced, even if the push didn't reach its destination.
-func (s *Scheduler) deliverOutput(pusher IMPusher, emailer EmailSender, notifier Notifier, t ScheduledTask, result string) {
+// agent produced, even if the push didn't reach its destination. The returned
+// deliverResult captures whether delivery actually happened so the caller can
+// surface a failure (the run itself is still "ok"); the in-app Notifier is used
+// to raise a visible toast on failure so the user isn't left believing a silent
+// drop was a success.
+func (s *Scheduler) deliverOutput(pusher IMPusher, emailer EmailSender, notifier Notifier, prober AccountProber, t ScheduledTask, result string) deliverResult {
 	switch strings.ToLower(strings.TrimSpace(t.OutputMode)) {
 	case "im":
-		if pusher == nil || strings.TrimSpace(t.OutputDest) == "" {
-			return
+		if pusher == nil {
+			return deliverResult{status: deliverSkipped, reason: "IM 网关未连接（bot 未启动）"}
+		}
+		if strings.TrimSpace(t.OutputDest) == "" {
+			return deliverResult{status: deliverSkipped, reason: "未填写 IM 目标"}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		text := fmt.Sprintf("[%s] %s\n\n%s", t.Name, t.Expression, result)
 		if err := pusher.Push(ctx, t.OutputDest, text); err != nil {
 			s.logf("scheduler: IM push to %s failed: %v", t.OutputDest, err)
+			return deliverResult{status: deliverFailed, reason: "IM 推送失败：" + err.Error()}
 		}
+		return deliverResult{status: deliverOK}
 	case "email":
-		if emailer == nil || strings.TrimSpace(t.OutputDest) == "" {
-			return
+		if emailer == nil {
+			return deliverResult{status: deliverSkipped, reason: "邮件发送器未注入"}
+		}
+		if strings.TrimSpace(t.OutputDest) == "" {
+			return deliverResult{status: deliverSkipped, reason: "未填写收件人"}
+		}
+		// Probe the sending account BEFORE composing/sending, so an expired
+		// credential (e.g. 139's 90-day auth code) skips the run with a clear
+		// reason instead of letting SMTP fail mid-send after the agent already
+		// burned tokens generating the output. Best-effort: a nil prober or a
+		// send-only account (no IMAP host) falls through to the send path.
+		if prober != nil {
+			if err := prober.Probe(t.OutputAccount); err != nil {
+				s.logf("scheduler: account %q pre-send probe failed: %v", t.OutputAccount, err)
+				return deliverResult{status: deliverSkipped, reason: "邮箱账号不可用（可能授权过期）：" + err.Error()}
+			}
 		}
 		to, subject := splitEmailDest(t.OutputDest)
 		if subject == "" {
@@ -436,20 +488,68 @@ func (s *Scheduler) deliverOutput(pusher IMPusher, emailer EmailSender, notifier
 		body := fmt.Sprintf("任务：%s\n计划：%s\n\n%s", t.Name, t.Expression, result)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := emailer.Send(ctx, to, subject, body); err != nil {
+		if err := emailer.Send(ctx, t.OutputAccount, to, subject, body); err != nil {
 			s.logf("scheduler: email to %s failed: %v", to, err)
+			return deliverResult{status: deliverFailed, reason: "邮件发送失败：" + err.Error()}
 		}
+		return deliverResult{status: deliverOK}
 	case "notify":
 		if notifier == nil {
-			return
+			return deliverResult{status: deliverSkipped, reason: "通知器未注入"}
 		}
 		notifier.Notify(t.Name, result)
+		return deliverResult{status: deliverOK}
 	case "file":
 		if strings.TrimSpace(t.OutputDest) == "" {
-			return
+			return deliverResult{status: deliverSkipped, reason: "未填写文件路径"}
 		}
 		entry := fmt.Sprintf("[%s %s] %s\n", time.Now().Format(time.RFC3339), t.Name, result)
-		appendFile(t.OutputDest, entry) // best-effort; errors swallowed
+		if err := appendFileE(t.OutputDest, entry); err != nil {
+			s.logf("scheduler: file append to %s failed: %v", t.OutputDest, err)
+			return deliverResult{status: deliverFailed, reason: "文件写入失败：" + err.Error()}
+		}
+		return deliverResult{status: deliverOK}
+	default:
+		// store-only: no delivery configured — not a failure.
+		return deliverResult{status: deliverNone}
+	}
+}
+
+// deliverStatus classifies a single delivery attempt.
+type deliverStatus int
+
+const (
+	deliverNone   deliverStatus = iota // no delivery configured (store-only)
+	deliverOK                          // delivered successfully
+	deliverSkipped                     // bridge missing / dest empty (config issue)
+	deliverFailed                      // attempted but errored
+)
+
+// deliverResult is what deliverOutput reports back so the caller can record
+// delivery outcome on the task and in run history (a failed delivery shouldn't
+// be invisible — previously it was only slog.Debug'd).
+type deliverResult struct {
+	status deliverStatus
+	reason string // human-readable, shown to the user
+}
+
+// deliverOK reports whether delivery succeeded (or was intentionally absent).
+func (d deliverResult) ok() bool { return d.status == deliverOK || d.status == deliverNone }
+
+// forHistory maps the delivery outcome onto the run-record status vocabulary.
+// A failed delivery is reported as "deliver_failed" so the UI can render it
+// distinctly from an agent run error.
+func (d deliverResult) forHistory(runErr bool) string {
+	if runErr {
+		return "error"
+	}
+	switch d.status {
+	case deliverFailed:
+		return "deliver_failed"
+	case deliverSkipped:
+		return "deliver_skipped"
+	default:
+		return "ok"
 	}
 }
 
@@ -464,12 +564,19 @@ func splitEmailDest(dest string) (to, subject string) {
 
 // appendFile appends text to a file, creating it if needed. Best-effort.
 func appendFile(path, text string) {
+	_ = appendFileE(path, text)
+}
+
+// appendFileE is like appendFile but returns the error so callers can surface a
+// delivery failure instead of silently swallowing it.
+func appendFileE(path, text string) error {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return
+		return err
 	}
 	defer f.Close()
-	_, _ = f.WriteString(text)
+	_, err = f.WriteString(text)
+	return err
 }
 
 // --- task CRUD (called by the schedule_* tools) -----------------------------
@@ -620,23 +727,34 @@ func (s *Scheduler) RunNow(id string) (string, error) {
 	pusher := s.imPusher
 	emailer := s.emailer
 	notifier := s.notifier
+	prober := s.accountProber
 	s.mu.Unlock()
 	if !ok {
 		return "", fmt.Errorf("task %q not found", id)
 	}
 	result := s.runOne(runner, t)
-	s.deliverOutput(pusher, emailer, notifier, t, result)
+	runErr := strings.HasPrefix(result, "error:") || strings.HasPrefix(result, "skipped:")
+	deliver := s.deliverOutput(pusher, emailer, notifier, prober, t, result)
+	if !deliver.ok() && notifier != nil && !runErr {
+		notifier.Notify(t.Name+" · 投递失败", deliver.reason)
+	}
 	now := time.Now()
 	s.mu.Lock()
 	if cur, ok := s.findLocked(id); ok {
 		cur.LastRun = now
 		cur.RunCount++
 		cur.LastResult = truncate(result, 500)
+		cur.LastDeliverAt = now
+		if deliver.ok() {
+			cur.LastDeliverErr = ""
+		} else {
+			cur.LastDeliverErr = deliver.reason
+		}
 		s.appendHistoryLocked(RunRecord{
 			TaskID:     t.ID,
 			Name:       t.Name,
 			At:         now,
-			Status:     runStatus(result),
+			Status:     deliver.forHistory(runErr),
 			Result:     truncate(result, 500),
 			OutputMode: t.OutputMode,
 		})

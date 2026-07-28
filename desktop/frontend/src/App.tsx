@@ -1531,7 +1531,7 @@ export default function App() {
 
   const openBlankSession = useCallback(async (scope: string, workspaceRoot: string) => {
     window.dispatchEvent(new CustomEvent("cowork:reset-panel"));
-    await ensureBlankTab(scope, scope === "project" ? workspaceRoot : "");
+    await ensureBlankTab(scope, scope === "project" ? workspaceRoot : "", profileRef.current);
     setProjectRevision((value) => value + 1);
     await refreshTabMetas();
     setTabRevealSignal((signal) => signal + 1);
@@ -1958,6 +1958,15 @@ export default function App() {
     setComposerInsertRequest({ id: Date.now(), text });
   }, []);
 
+  useEffect(() => {
+    const handleCoworkInsert = (e: Event) => {
+      const text = (e as CustomEvent<string>).detail;
+      if (text) addWorkspaceTextToComposer(text);
+    };
+    window.addEventListener("cowork:insert-text", handleCoworkInsert as EventListener);
+    return () => window.removeEventListener("cowork:insert-text", handleCoworkInsert as EventListener);
+  }, [addWorkspaceTextToComposer]);
+
   const handleTabChange = useCallback(async (id: string) => {
     closeTransientOverlays();
     await switchTab(id);
@@ -2103,7 +2112,7 @@ export default function App() {
     setSidebarImDetailConnectionId("");
     try {
       if (target.kind === "path") {
-        const tab = await ensureBlankTab(connection.scope, connection.scope === "project" ? connection.workspaceRoot : "");
+        const tab = await ensureBlankTab(connection.scope, connection.scope === "project" ? connection.workspaceRoot : "", profileRef.current);
         await resumeSession(target.value, tab.id);
       } else if (connection.scope === "project") {
         await openProjectTab(connection.workspaceRoot, target.value);

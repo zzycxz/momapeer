@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/zzycxz/momapeer/internal/tool"
 )
@@ -30,7 +31,11 @@ func (globTool) Schema() json.RawMessage {
 
 func (globTool) ReadOnly() bool { return true }
 
-const globMaxResults = 1000
+// globMaxResults caps how many paths glob returns. Beyond it the output is
+// truncated and a "(N more)" note reports the real overflow (not 0 — the
+// original bug sliced before computing the remainder). 200 keeps a single glob
+// response inside a manageable token budget while surfacing enough matches.
+const globMaxResults = 200
 
 func (g globTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct {
@@ -70,11 +75,8 @@ func (g globTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 	if len(matches) == 0 {
 		return "(no matches)", nil
 	}
-	if len(matches) > globMaxResults {
-		matches = matches[:globMaxResults]
-		return strings.Join(matches, "\n") + fmt.Sprintf("\n... (truncated at %d results)", globMaxResults), nil
-	}
-	return strings.Join(matches, "\n"), nil
+	sortByMtimeDesc(matches)
+	return formatGlobResults(matches), nil
 }
 
 // globRecursive handles patterns containing ** by walking the filesystem.
@@ -148,50 +150,85 @@ func globRecursive(ctx context.Context, pattern string) (string, error) {
 	if len(matches) == 0 {
 		return "(no matches)", nil
 	}
-	sort.Strings(matches)
-	result := strings.Join(matches, "\n")
+	sortByMtimeDesc(matches)
+	result := formatGlobResults(matches)
 	if truncated {
+		// truncated only signals the cap was hit; the "(N more)" note is only
+		// meaningful when we know the true total, which the recursive walker
+		// stops counting at globMaxResults. Keep the cap-exceeded marker without
+		// a fabricated count.
 		result += fmt.Sprintf("\n... (truncated at %d results)", globMaxResults)
 	}
 	return result, nil
 }
 
 // doubleStarMatch handles patterns containing ** (double-star) which match
-// zero or more directory levels. Examples:
+// zero or more directory levels. Supports ANY number of ** segments — the
+// fixed segments between them are honored (the C5 regression: "a/**/b/**/c.go"
+// used to wrongly match "a/x/c.go" because only the first ** was split and the
+// middle "b" segment was dropped). Examples:
 //   - **/foo/** matches any path containing "foo" as a directory component
 //   - **/test/*.go matches any .go file under a "test" directory
+//   - a/**/b/**/c.go matches "a/x/b/y/c.go" and "a/b/c.go" but NOT "a/x/y/c.go"
 func doubleStarMatch(pattern, name string) bool {
-	// Normalize separators.
 	pattern = filepath.ToSlash(pattern)
 	name = filepath.ToSlash(name)
+	return doubleStarMatchParts(strings.Split(pattern, "**"), strings.Split(name, "/"))
+}
 
-	// Split on ** to get prefix and suffix parts.
-	parts := strings.SplitN(pattern, "**", 2)
-	if len(parts) != 2 {
-		// No ** — fall back to simple match.
-		matched, _ := filepath.Match(pattern, name)
-		return matched
+// doubleStarMatchParts is the recursive core. segs is the pattern split on **,
+// comps is the path split on /. segs[0] is a literal anchored at the start of
+// comps; between two literal segs a ** absorbs zero or more components, so the
+// next literal seg is searched for at every component offset.
+func doubleStarMatchParts(segs, comps []string) bool {
+	// No more pattern segments → match only if all components consumed.
+	if len(segs) == 0 {
+		return len(comps) == 0
 	}
-	prefix := strings.TrimSuffix(parts[0], "/")
-	suffix := strings.TrimPrefix(parts[1], "/")
+	// segs[0] is a literal (may be empty when the pattern starts with **).
+	literal := strings.Trim(segs[0], "/")
+	literalComps := splitNonEmpty(literal, "/")
 
-	// If there's a prefix, name must start with it.
-	if prefix != "" && !strings.HasPrefix(name, prefix+"/") {
-		return false
+	// Consume the first literal segment from the front of comps.
+	if len(literalComps) > 0 {
+		if len(comps) < len(literalComps) {
+			return false
+		}
+		for i, lc := range literalComps {
+			matched, _ := filepath.Match(lc, comps[i])
+			if !matched {
+				return false
+			}
+		}
+		comps = comps[len(literalComps):]
 	}
-	// If there's a suffix, name must end with it (matching at some directory level).
-	if suffix == "" {
-		return true
+
+	// If that was the last pattern segment, the whole name must be consumed.
+	// (A trailing literal in the pattern anchors the path's end.)
+	if len(segs) == 1 {
+		return len(comps) == 0
 	}
-	// Try matching suffix at each directory level.
-	nameParts := strings.Split(name, "/")
-	for i := range nameParts {
-		sub := strings.Join(nameParts[i:], "/")
-		if matched, _ := filepath.Match(suffix, sub); matched {
+
+	// Otherwise a ** sits between segs[0] and segs[1]: it absorbs zero or more
+	// leading components, so try every possible split and recurse.
+	for skip := 0; skip <= len(comps); skip++ {
+		if doubleStarMatchParts(segs[1:], comps[skip:]) {
 			return true
 		}
 	}
 	return false
+}
+
+// splitNonEmpty splits s on sep and drops empty pieces (for "/a//b" → ["a","b"]).
+func splitNonEmpty(s, sep string) []string {
+	parts := strings.Split(s, sep)
+	out := parts[:0]
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // matchGlobSuffix checks if path matches the suffix pattern after **.
@@ -219,4 +256,49 @@ func matchGlobSuffix(path, pattern string) bool {
 		}
 	}
 	return false
+}
+
+// sortByMtimeDesc reorders paths newest-first by file mtime. Paths whose mtime
+// can't be read are pushed to the end (stable among themselves) rather than
+// dropped — a stat failure shouldn't hide a match. This realizes the tool's
+// documented "most-recent first" ordering; the previous code sorted
+// lexicographically, which buried recently-edited files behind alphabetical
+// noise.
+func sortByMtimeDesc(paths []string) {
+	// Pair each path with its mtime BEFORE sorting: sort callbacks receive
+	// indices into the slice being reordered, so a parallel mtimes[] array
+	// would desync as elements swap. Carrying mtime on each entry keeps them
+	// glued together through the swap.
+	type entry struct {
+		path  string
+		mtime time.Time
+	}
+	entries := make([]entry, len(paths))
+	for i, p := range paths {
+		entries[i] = entry{path: p}
+		if info, err := os.Stat(p); err == nil {
+			entries[i].mtime = info.ModTime()
+		}
+		// zero time on failure → sorts to the end under descending order.
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		// Newer (larger mtime) first. Equal mtimes keep their original order
+		// (SliceStable), so a tie doesn't reshuffle the walk's natural order.
+		return entries[i].mtime.After(entries[j].mtime)
+	})
+	for i, e := range entries {
+		paths[i] = e.path
+	}
+}
+
+// formatGlobResults joins paths and, when the caller has more matches than the
+// cap, appends a "(N more)" note carrying the true overflow count. The earlier
+// code sliced first and then computed len-len, always yielding 0.
+func formatGlobResults(paths []string) string {
+	if len(paths) <= globMaxResults {
+		return strings.Join(paths, "\n")
+	}
+	more := len(paths) - globMaxResults
+	return strings.Join(paths[:globMaxResults], "\n") +
+		fmt.Sprintf("\n... (%d more", more)
 }

@@ -286,7 +286,8 @@ func TestWebFetchHTML(t *testing.T) {
 }
 
 // TestWebFetchPlain confirms non-HTML bodies pass through untouched (apart
-// from the prepended status header).
+// from the prepended status header and the <untrusted_content> safety wrapper
+// every fetch output now carries to defend against prompt injection).
 func TestWebFetchPlain(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -298,8 +299,13 @@ func TestWebFetchPlain(t *testing.T) {
 	if !strings.Contains(out, "line1") || !strings.Contains(out, "line2") {
 		t.Errorf("plain body content missing:\n%s", out)
 	}
-	if strings.Contains(out, "<") {
-		t.Errorf("html reducer ran on text/plain: %s", out)
+	// The HTML reducer must NOT run on text/plain — its output would be
+	// <p>line1</p>... style markup. The untrusted-content safety wrapper is
+	// expected and allowed; only HTML reducer artifacts fail this check.
+	for _, tag := range []string{"<p>", "<br", "<div", "<span", "<html"} {
+		if strings.Contains(out, tag) {
+			t.Errorf("html reducer ran on text/plain (found %q): %s", tag, out)
+		}
 	}
 }
 

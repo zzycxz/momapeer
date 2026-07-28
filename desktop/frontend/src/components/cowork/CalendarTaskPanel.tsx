@@ -294,6 +294,8 @@ export function CalendarTaskPanel() {
                         <span className="cowork-calendar-task__dot" style={{ background: colorForEvent(e) }} />
                         <span className="cowork-calendar-task__list-time">{e.allDay ? "全天" : formatTime(e.start)}</span>
                         <span className="cowork-calendar-task__list-title">{e.title}</span>
+                        {e.outputMode === "im" && <span className="cowork-calendar-task__push-badge" title={`提醒推送 IM：${e.outputDest}`}>💬</span>}
+                        {e.outputMode === "email" && <span className="cowork-calendar-task__push-badge" title={`提醒推送邮件：${e.outputDest}`}>✉️</span>}
                         {e.location && <span className="cowork-calendar-task__list-loc">📍 {e.location}</span>}
                       </div>
                     ))}

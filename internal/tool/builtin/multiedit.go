@@ -111,6 +111,16 @@ func (m multiEdit) Execute(ctx context.Context, args json.RawMessage) (string, e
 		if !unique {
 			return "", fmt.Errorf("edit %d: old_string is not unique; add more surrounding context or set replace_all", i+1)
 		}
+		// Guard against fuzzy-match fallback returning a region that is not an
+		// exact substring of the file content. strings.Replace would otherwise
+		// silently replace zero occurrences, reporting success while making no
+		// change. (Same guard edit_file has; without it multi_edit could claim
+		// "1 edit applied" yet leave the file untouched.)
+		if !strings.Contains(content, region) {
+			return "", fmt.Errorf(
+				"edit %d: fuzzy match found %q but it does not appear verbatim in %s; "+
+					"please supply the exact text from the file (including indentation)", i+1, old, p.Path)
+		}
 		content = strings.Replace(content, region, newStr, 1)
 		applied++
 	}

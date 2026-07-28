@@ -5,6 +5,7 @@ package main
 // for live refresh, and direct Store calls for mutations.
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -33,6 +34,10 @@ type CalendarEventView struct {
 	Reminders     []int    `json:"reminders"`
 	TaskID        string   `json:"taskId"`
 	Tags          []string `json:"tags"`
+	// Output routing for reminders (mirrors Event). Empty outputMode = toast only.
+	OutputMode    string   `json:"outputMode"`
+	OutputDest    string   `json:"outputDest"`
+	OutputAccount string   `json:"outputAccount"`
 	CreatedAt     string   `json:"createdAt"`
 }
 
@@ -51,6 +56,9 @@ type CalendarEventInput struct {
 	RecurrenceEnd string   `json:"recurrenceEnd"`
 	Reminders     []int    `json:"reminders"`
 	Tags          []string `json:"tags"`
+	OutputMode    string   `json:"outputMode"`
+	OutputDest    string   `json:"outputDest"`
+	OutputAccount string   `json:"outputAccount"`
 }
 
 const calTimeFmt = "2006-01-02T15:04"
@@ -67,8 +75,13 @@ func (a *App) initCalendar() {
 	a.calendarStore = store
 	builtin.SetCalendarStore(store)
 
-	// Start the reminder engine (checks every 60s).
+	// Start the reminder engine (checks every 60s). The desktop toast is the
+	// default channel; IM/email bridges let events opt into pushing beyond the
+	// desktop (OutputMode on the Event). Both are read at fire time so a bot
+	// started after calendar init still works.
 	re := calendar.NewReminderEngine(store, &calendarNotifier{app: a})
+	re.SetIMPusher(calendarIMPusher{app: a})
+	re.SetEmailSender(calendarEmailSender{})
 	re.SetLogger(func(format string, args ...any) {
 		slog.Debug("calendar: "+format, args...)
 	})
@@ -88,6 +101,27 @@ func (n *calendarNotifier) NotifyReminder(title, body string) {
 			"body":  body,
 		})
 	}
+}
+
+// calendarIMPusher implements calendar.ReminderIMPusher by routing through the
+// bot gateway (same Push the scheduler uses). The gateway is bound lazily, so
+// we read it at push time; nil gateway = silent skip (the toast already fired).
+type calendarIMPusher struct{ app *App }
+
+func (p calendarIMPusher) Push(ctx context.Context, dest, text string) error {
+	gw := p.app.botGW.Load()
+	if gw == nil {
+		return nil // bot not running — toast already covered it
+	}
+	return gw.Push(ctx, dest, text)
+}
+
+// calendarEmailSender implements calendar.ReminderEmailSender via the shared
+// builtin.SendPlainTextAs (same multi-account SMTP as the scheduler/tools).
+type calendarEmailSender struct{}
+
+func (calendarEmailSender) Send(ctx context.Context, account, to, subject, body string) error {
+	return builtin.SendPlainTextAs(account, to, subject, body)
 }
 
 // calendarChanged emits a Wails event so the frontend refreshes.
@@ -174,6 +208,9 @@ func (a *App) CreateCalendarEvent(in CalendarEventInput) (CalendarEventView, err
 		Recurrence:  in.Recurrence,
 		Reminders:   in.Reminders,
 		Tags:        in.Tags,
+		OutputMode:    in.OutputMode,
+		OutputDest:    in.OutputDest,
+		OutputAccount: in.OutputAccount,
 	}
 	if in.RecurrenceEnd != "" {
 		reEnd, err := time.ParseInLocation("2006-01-02", in.RecurrenceEnd, time.Local)
@@ -236,6 +273,15 @@ func (a *App) UpdateCalendarEvent(in CalendarEventInput) (CalendarEventView, err
 	if len(in.Tags) > 0 {
 		e.Tags = in.Tags
 	}
+	if in.OutputMode != "" {
+		e.OutputMode = in.OutputMode
+	}
+	if in.OutputDest != "" {
+		e.OutputDest = in.OutputDest
+	}
+	if in.OutputAccount != "" {
+		e.OutputAccount = in.OutputAccount
+	}
 	if err := a.calendarStore.Update(e); err != nil {
 		return CalendarEventView{}, err
 	}
@@ -291,6 +337,9 @@ func eventToView(e calendar.Event) CalendarEventView {
 		Reminders:   e.Reminders,
 		TaskID:      e.TaskID,
 		Tags:        e.Tags,
+		OutputMode:    e.OutputMode,
+		OutputDest:    e.OutputDest,
+		OutputAccount: e.OutputAccount,
 		CreatedAt:   e.CreatedAt.Format("2006-01-02 15:04"),
 	}
 	if !e.RecurrenceEnd.IsZero() {

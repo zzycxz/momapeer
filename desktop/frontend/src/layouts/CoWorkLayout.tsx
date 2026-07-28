@@ -201,6 +201,13 @@ export function CoWorkLayout({
 
       {/* Center: dynamic panel based on selection */}
       <section className="cowork-main">
+        {/* Only display session header in active taskCenter (chat) mode */}
+        {activePanel === "taskCenter" && (
+          <div className="cowork-main__global-topbar" style={{ flexShrink: 0, zIndex: 10 }}>
+            {headerNode}
+          </div>
+        )}
+
         {/* taskCenter stays mounted (hidden when inactive) so an expert-session
             run's live stream (ExpertSessionView inside mainNode) isn't torn down
             when the user peeks at another panel. The backend goroutine survives
@@ -210,7 +217,6 @@ export function CoWorkLayout({
             below) preserves the stream. Hidden via display:none so it doesn't
             capture layout space. */}
         <div style={{ display: activePanel === "taskCenter" ? "contents" : "none" }}>
-          {headerNode}
           <div className="cowork-main__transcript">{mainNode}</div>
           <div className="cowork-main__composer">{footerNode}</div>
         </div>

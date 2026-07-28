@@ -323,6 +323,18 @@ func (a *App) Platform() string {
 // off the initialization in a background goroutine so the webview loads immediately.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// Route slog to a file in the config dir so diagnostic logs (mail save,
+	// probe, panic traces) are visible in a packaged GUI build, where stdout/
+	// stderr are not attached. Truncates on each launch to avoid unbounded
+	// growth; rotation isn't needed for short debug sessions.
+	if cfgDir := desktopConfigDir(); cfgDir != "" {
+		if err := os.MkdirAll(cfgDir, 0o755); err == nil {
+			if f, err := os.OpenFile(filepath.Join(cfgDir, "app.log"),
+				os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644); err == nil {
+				slog.SetDefault(slog.New(slog.NewTextHandler(f, nil)))
+			}
+		}
+	}
 	// Relocate legacy un-profiled session/topic data into the "dev" partition
 	// BEFORE tabs are restored, so the sidebar lists sessions at their new
 	// paths. Idempotent (guarded by a marker) and best-effort: failures are
@@ -531,12 +543,14 @@ func (n authNotifier) NotifyAuthExpired(account string) {
 	}
 }
 
-// imapProber implements scheduler.AccountProber by probing IMAP connectivity.
+// imapProber implements scheduler.AccountProber by delegating to the real
+// IMAP probe (builtin.ProbeAccountIMAP), which resolves the named account to
+// its configured IMAP credentials and verifies connect+login without fetching
+// mail. Returns nil for send-only accounts (no IMAP host) so they don't block.
 type imapProber struct{}
 
-func (imapProber) Probe(addr, user, password string) error {
-	// Future: actually probe IMAP. For now, return nil.
-	return nil
+func (imapProber) Probe(account string) error {
+	return builtin.ProbeAccountIMAP(account)
 }
 
 // ExpertSessionMeta holds metadata for an expert collaboration session.
@@ -1820,6 +1834,28 @@ func (a *App) PickImportFolder() (string, error) {
 	return dir, nil
 }
 
+// PickImportFiles opens a multiple-file dialog for RAG import.
+// Allows users to select specific documents (PDF, DOCX, TXT, etc.) to import into a collection.
+func (a *App) PickImportFiles() ([]string, error) {
+	if a.ctx == nil {
+		return nil, nil
+	}
+	cur, _ := os.Getwd()
+	a.mu.RLock()
+	if tab := a.activeTabLocked(); tab != nil && tab.WorkspaceRoot != "" {
+		cur = tab.WorkspaceRoot
+	}
+	a.mu.RUnlock()
+	files, err := runtime.OpenMultipleFilesDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:            "选择要导入的文档（支持批量选择）",
+		DefaultDirectory: dialogDefaultDirectory(cur),
+	})
+	if err != nil || len(files) == 0 {
+		return nil, err
+	}
+	return files, nil
+}
+
 func dialogDefaultDirectory(preferred string) string {
 	if dir := nearestExistingDirectory(preferred); dir != "" {
 		return dir
@@ -1866,18 +1902,31 @@ func (a *App) ListWorkspaces() []WorkspaceMeta {
 	profileKey := a.activeProfileKey()
 	migrateLegacyWorkspacesIntoProjects(profileKey)
 	activeRoot := ""
-	cur, _ := os.Getwd()
 	a.mu.RLock()
 	if tab := a.activeTabLocked(); tab != nil && tab.WorkspaceRoot != "" {
 		activeRoot = normalizeProjectRoot(tab.WorkspaceRoot)
 	}
 	a.mu.RUnlock()
-	if activeRoot == "" {
-		activeRoot = normalizeProjectRoot(cur)
+	openRoots := map[string]bool{}
+	if activeRoot != "" {
+		openRoots[activeRoot] = true
 	}
+	a.mu.RLock()
+	for _, tab := range a.tabs {
+		if tab != nil && tab.WorkspaceRoot != "" {
+			if profileKey == "" || tab.profile == "" || config.ProfileNameKey(tab.profile) == profileKey {
+				openRoots[normalizeProjectRoot(tab.WorkspaceRoot)] = true
+			}
+		}
+	}
+	a.mu.RUnlock()
+
 	projects := loadProjectsFile(profileKey).Projects
 	out := make([]WorkspaceMeta, 0, len(projects))
 	for _, project := range projects {
+		if len(project.Topics) == 0 && len(loadTopicTitles(project.Root)) == 0 && !openRoots[normalizeProjectRoot(project.Root)] {
+			continue
+		}
 		out = append(out, WorkspaceMeta{
 			Path:    project.Root,
 			Name:    projectDisplayName(project),
@@ -1894,7 +1943,7 @@ func (a *App) RemoveWorkspace(dir string) error {
 	profileKey := a.activeProfileKey()
 	dir = normalizeProjectRoot(dir)
 	forgetWorkspace(dir)
-	if err := removeProject(profileKey, dir); err != nil {
+	if err := removeProject(dir, profileKey); err != nil {
 		return err
 	}
 	// If the removed workspace was the active one, clear the pointer
@@ -1968,7 +2017,7 @@ func (a *App) SwitchWorkspace(dir string) (string, error) {
 	// Open a registered topic so the new workspace appears in the project tree
 	// immediately instead of only existing as an in-memory tab. New workspaces
 	// open in the active tab's profile (dev by default).
-	profile := a.activeProfileKeyRaw()
+	profile := a.activeProfileKey()
 	topic, err := a.CreateTopic("project", dir, profile, "")
 	if err != nil {
 		return "", err

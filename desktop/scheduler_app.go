@@ -39,6 +39,12 @@ type TaskView struct {
 	LastResult    string `json:"lastResult"`
 	OutputMode    string `json:"outputMode"`
 	OutputDest    string `json:"outputDest"`
+	OutputAccount string `json:"outputAccount"` // named mailbox for "email" mode; "" = default
+	OutputDir     string `json:"outputDir"`
+	Color         string `json:"color"`
+	Location      string `json:"location"`
+	LastDeliverErr string `json:"lastDeliverErr"` // "" if last delivery was ok / skipped
+	LastDeliverAt string `json:"lastDeliverAt"`   // "" if never delivered
 	HumanSchedule string `json:"humanSchedule"` // friendly description, e.g. "每天 18:00"
 }
 
@@ -84,6 +90,10 @@ type TaskInput struct {
 	Prompt     string `json:"prompt"`
 	OutputMode string `json:"outputMode"`
 	OutputDest string `json:"outputDest"`
+	OutputAccount string `json:"outputAccount"`
+	OutputDir  string `json:"outputDir"`
+	Color      string `json:"color"`
+	Location   string `json:"location"`
 }
 
 const (
@@ -111,11 +121,15 @@ func (a *App) CreateScheduledTask(in TaskInput) (TaskView, error) {
 		return TaskView{}, fmt.Errorf("scheduler offline")
 	}
 	created, err := a.scheduler.Create(scheduler.ScheduledTask{
-		Name:       in.Name,
-		Expression: in.Expression,
-		Prompt:     in.Prompt,
-		OutputMode: in.OutputMode,
-		OutputDest: in.OutputDest,
+		Name:          in.Name,
+		Expression:    in.Expression,
+		Prompt:        in.Prompt,
+		OutputMode:    in.OutputMode,
+		OutputDest:    in.OutputDest,
+		OutputAccount: in.OutputAccount,
+		OutputDir:     in.OutputDir,
+		Color:         in.Color,
+		Location:      in.Location,
 	})
 	if err != nil {
 		return TaskView{}, err
@@ -135,6 +149,10 @@ func (a *App) UpdateScheduledTask(in TaskInput) (TaskView, error) {
 		t.Prompt = in.Prompt
 		t.OutputMode = in.OutputMode
 		t.OutputDest = in.OutputDest
+		t.OutputAccount = in.OutputAccount
+		t.OutputDir = in.OutputDir
+		t.Color = in.Color
+		t.Location = in.Location
 	})
 	if err != nil {
 		return TaskView{}, err
@@ -300,12 +318,14 @@ func (a *App) emitSchedulerChanged() {
 
 // --- scheduler EmailSender / Notifier bridges -------------------------------
 
-// schedulerEmailSender implements scheduler.EmailSender by routing through the
-// shared builtin.SendPlainText (same SMTP config as the email_send tool).
+// schedulerEmailSender implements scheduler.EmailSender by routing through
+// builtin.SendPlainTextAs, which resolves the named account (or default when
+// empty) to the right SMTP config. Same multi-account config as the email_send
+// tool.
 type schedulerEmailSender struct{}
 
-func (schedulerEmailSender) Send(ctx context.Context, to, subject, body string) error {
-	return builtin.SendPlainText(to, subject, body)
+func (schedulerEmailSender) Send(ctx context.Context, account, to, subject, body string) error {
+	return builtin.SendPlainTextAs(account, to, subject, body)
 }
 
 // schedulerNotifier implements scheduler.Notifier by emitting a "scheduler:notice"
@@ -327,24 +347,32 @@ func (n schedulerNotifier) Notify(name, result string) {
 
 func toTaskView(t scheduler.ScheduledTask) TaskView {
 	v := TaskView{
-		ID:            t.ID,
-		Name:          t.Name,
-		Expression:    t.Expression,
-		Prompt:        t.Prompt,
-		Profile:       t.Profile,
-		Enabled:       t.Enabled,
-		OneShot:       t.OneShot,
-		RunCount:      t.RunCount,
-		LastResult:    t.LastResult,
-		OutputMode:    t.OutputMode,
-		OutputDest:    t.OutputDest,
-		HumanSchedule: describeSchedule(t.Expression),
+		ID:             t.ID,
+		Name:           t.Name,
+		Expression:     t.Expression,
+		Prompt:         t.Prompt,
+		Profile:        t.Profile,
+		Enabled:        t.Enabled,
+		OneShot:        t.OneShot,
+		RunCount:       t.RunCount,
+		LastResult:     t.LastResult,
+		OutputMode:     t.OutputMode,
+		OutputDest:     t.OutputDest,
+		OutputAccount:  t.OutputAccount,
+		OutputDir:      t.OutputDir,
+		Color:          t.Color,
+		Location:       t.Location,
+		LastDeliverErr: t.LastDeliverErr,
+		HumanSchedule:  describeSchedule(t.Expression),
 	}
 	if !t.LastRun.IsZero() {
 		v.LastRun = t.LastRun.Format(timeFmt)
 	}
 	if !t.NextRun.IsZero() {
 		v.NextRun = t.NextRun.Format(timeFmt)
+	}
+	if !t.LastDeliverAt.IsZero() {
+		v.LastDeliverAt = t.LastDeliverAt.Format(timeFmt)
 	}
 	return v
 }

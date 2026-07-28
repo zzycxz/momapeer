@@ -8,11 +8,10 @@
 // - GraphLegend (bottom-right overlay)
 
 import { useCallback, useEffect, useState } from "react";
-import { FolderPlus } from "lucide-react";
+import { FolderPlus, Maximize2, MousePointer2, BoxSelect } from "lucide-react";
 
 import { app, onFilesDropped, onRagChanged } from "../../lib/bridge";
 import type { RagCollectionView } from "../../lib/types";
-import { asArray } from "../../lib/array";
 import { useToast } from "../../lib/toast";
 import { useT } from "../../lib/i18n";
 import { GraphCanvas } from "./GraphCanvas";
@@ -20,10 +19,12 @@ import { GraphToolbar, type SearchMode } from "./GraphToolbar";
 import { GraphLegend } from "./GraphLegend";
 import { KnowledgeRefBar } from "./KnowledgeRefBar";
 import { SkillSelectModal } from "./SkillSelectModal";
+import { ImportModal } from "./ImportModal";
 
 export function RagPanel() {
   const { showToast } = useToast();
   const t = useT();
+  const [showImportModal, setShowImportModal] = useState(false);
 
   // Data state.
   const [collections, setCollections] = useState<RagCollectionView[]>([]);
@@ -116,18 +117,6 @@ export function RagPanel() {
     }
   }, [collections, activeCollection]);
 
-  // Import handler.
-  const handleImport = async () => {
-    try {
-      const path = await app.PickImportFolder();
-      if (!path) return;
-      const res = await app.RagImportPaths(activeCollection || "default", [path]);
-      showToast(res.message, "info");
-      void refresh();
-    } catch (e) {
-      showToast(String(e), "error");
-    }
-  };
 
   // Drag-and-drop import.
   useEffect(() => {
@@ -173,6 +162,7 @@ export function RagPanel() {
     }
   };
 
+  /*
   const handleDetectCommunities = async () => {
     try {
       await app.RagDetectCommunities(activeCollection || "");
@@ -181,6 +171,7 @@ export function RagPanel() {
       showToast(String(e), "error");
     }
   };
+  */
 
   // Node click: dispatch entity-click event with the node's own collection so
   // EntityDetail can find it even in "all collections" scope.
@@ -188,37 +179,12 @@ export function RagPanel() {
     window.dispatchEvent(new CustomEvent("rag:entity-click", { detail: { name, collection: entityCollection } }));
   };
 
-  // Empty state.
-  if (!hasData) {
-    return (
-      <div
-        className="rag-panel rag-panel--empty"
-        style={{ "--wails-drop-target": "drop" } as React.CSSProperties}
-        role="region"
-        aria-label={t("cowork.ragDropRegion")}
-      >
-        <div className="rag-panel__empty-content">
-          <div className="rag-panel__empty-text">{t("cowork.ragDropToStart")}</div>
-          <div className="rag-panel__empty-hint">
-            {supportedFormats.length > 0
-              ? `支持 ${supportedFormats.join(" / ")}`
-              : "支持 md / docx / pdf / xlsx / csv / 代码 等格式"}
-          </div>
-          <button className="btn btn--primary" onClick={() => void handleImport()}>
-            <FolderPlus size={14} />
-            <span>导入文件</span>
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div
       className="rag-panel"
       style={{ "--wails-drop-target": "drop" } as React.CSSProperties}
     >
-      {/* Top toolbar */}
+      {/* Top toolbar: ALWAYS keep visible to preserve product layout and navigation */}
       <GraphToolbar
         collection={activeCollection}
         collections={collections}
@@ -229,52 +195,127 @@ export function RagPanel() {
         onSearchModeChange={setSearchMode}
         filterTypes={filterTypes}
         onFilterChange={setFilterTypes}
-        selectionMode={selectionMode}
-        onToggleSelectionMode={() => setSelectionMode(!selectionMode)}
-        onImport={() => void handleImport()}
+        onImport={() => setShowImportModal(true)}
         onExportObsidian={() => void handleExportObsidian()}
-        onDetectCommunities={() => void handleDetectCommunities()}
+        hasData={hasData}
+        summary={summary}
+        summaryLoading={summaryLoading}
+        onFetchSummary={() => void fetchSummary()}
       />
 
-      {/* Knowledge summary card */}
-      {summary && (
-        <div className="rag-summary">
-          <div className="rag-summary__text">{summary.summary}</div>
-          <div className="rag-summary__themes">
-            {asArray(summary.themes).map((t) => (
-              <span key={t} className="rag-summary__theme" onClick={() => setSearchQuery(t)}>{t}</span>
-            ))}
+      {/* Graph canvas area: display GraphCanvas when data exists; display modern embedded Guide when empty */}
+      <div className="rag-panel__graph" style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column" }}>
+        {hasData ? (
+          <GraphCanvas
+            collection={activeCollection}
+            searchQuery={searchQuery}
+            searchMode={searchMode}
+            filterTypes={filterTypes}
+            selectionMode={selectionMode}
+            selectedEntities={selectedEntities}
+            selectedRelations={selectedRelations}
+            onNodeClick={handleNodeClick}
+            onSelectionChange={(ents, rels) => {
+              setSelectedEntities(ents);
+              setSelectedRelations(rels);
+            }}
+          />
+        ) : (
+          <div
+            className="rag-panel__empty-canvas-guide"
+            style={{
+              flex: 1,
+              width: "100%",
+              height: "100%",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 16,
+              background: "radial-gradient(circle at center, rgba(59, 130, 246, 0.05) 0%, transparent 70%)",
+            }}
+          >
+            <div
+              style={{
+                width: 64,
+                height: 64,
+                borderRadius: 20,
+                background: "rgba(249, 115, 22, 0.1)",
+                color: "#f97316",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                boxShadow: "0 8px 24px rgba(249, 115, 22, 0.12)",
+                border: "1px solid rgba(249, 115, 22, 0.2)",
+              }}
+            >
+              <FolderPlus size={32} />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, maxWidth: 480, textAlign: "center" }}>
+              <h3 style={{ fontSize: 17, fontWeight: 600, color: "var(--fg)", margin: 0 }}>
+                {activeCollection ? `当前分类「${activeCollection}」暂无文稿` : "知识库首页 · 准备建图"}
+              </h3>
+              <p style={{ fontSize: 13, color: "var(--fg-dim)", margin: 0, lineHeight: 1.5 }}>
+                {t("cowork.ragDropToStart")}，系统将在后台自动构建 FTS5 全文检索与 Embedding 语义检索双引擎索引，并依托高精度 LLM 深度分析生成您的可视化实体图谱。
+              </p>
+            </div>
+            <div style={{ padding: "6px 14px", borderRadius: 20, background: "var(--bg-soft)", border: "1px solid var(--border-soft)", fontSize: 11.5, color: "var(--fg-faint)" }}>
+              {supportedFormats.length > 0
+                ? `⚡ 支持 ${supportedFormats.join(" / ")}`
+                : "⚡ 支持 md / docx / pdf / xlsx / csv / 代码 等多样化支持"}
+            </div>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => setShowImportModal(true)}
+              style={{
+                marginTop: 6,
+                padding: "9px 24px",
+                borderRadius: 8,
+                background: "var(--accent)",
+                color: "#fff",
+                border: "none",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                boxShadow: "0 4px 12px rgba(249, 115, 22, 0.25)",
+              }}
+            >
+              <FolderPlus size={16} />
+              <span>选择导入资产...</span>
+            </button>
           </div>
-        </div>
-      )}
-      {!summary && !summaryLoading && activeCollection && hasData && (
-        <div className="rag-summary rag-summary--prompt">
-          <button className="btn btn--link" onClick={() => void fetchSummary()}>
-            生成知识摘要
-          </button>
-        </div>
-      )}
-
-      {/* Graph canvas */}
-      <div className="rag-panel__graph">
-        <GraphCanvas
-          collection={activeCollection}
-          searchQuery={searchQuery}
-          searchMode={searchMode}
-          filterTypes={filterTypes}
-          selectionMode={selectionMode}
-          selectedEntities={selectedEntities}
-          selectedRelations={selectedRelations}
-          onNodeClick={handleNodeClick}
-          onSelectionChange={(ents, rels) => {
-            setSelectedEntities(ents);
-            setSelectedRelations(rels);
-          }}
-        />
+        )}
       </div>
 
       {/* Legend overlay */}
       <GraphLegend hasCommunities={hasCommunities} />
+
+      {/* Canvas bottom-right controls (Selection & Fit) */}
+      <div style={{ position: "absolute", bottom: "24px", right: "24px", display: "flex", gap: "6px", background: "rgba(255, 255, 255, 0.8)", backdropFilter: "blur(12px)", padding: "4px", borderRadius: "8px", border: "1px solid var(--border-soft)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", pointerEvents: "auto", zIndex: 10 }}>
+        <button
+          className={`rag-toolbar__btn ${selectionMode ? "rag-toolbar__btn--active" : ""}`}
+          onClick={() => setSelectionMode(!selectionMode)}
+          title={selectionMode ? "退出框选模式" : "开启框选节点模式"}
+          style={{ padding: "6px 12px", borderRadius: "6px" }}
+        >
+          {selectionMode ? <MousePointer2 size={14} /> : <BoxSelect size={14} />}
+          <span>框选节点</span>
+        </button>
+        <div style={{ width: "1px", background: "var(--border-soft)", margin: "6px 2px" }} />
+        <button
+          className="rag-toolbar__btn"
+          onClick={() => window.dispatchEvent(new CustomEvent("rag:fit-view"))}
+          title="居中视图（缩放到全部节点）"
+          style={{ padding: "6px 12px", borderRadius: "6px" }}
+        >
+          <Maximize2 size={14} />
+          <span>居中</span>
+        </button>
+      </div>
 
       {/* Knowledge reference bar (selection mode) */}
       {selectionMode && (
@@ -298,6 +339,17 @@ export function RagPanel() {
           onClose={() => setShowSkillModal(false)}
         />
       )}
+
+      <ImportModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        collections={collections}
+        defaultCollection={activeCollection}
+        onSuccess={(col) => {
+          setActiveCollection(col);
+          void refresh();
+        }}
+      />
     </div>
   );
 }

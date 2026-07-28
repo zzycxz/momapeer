@@ -18,7 +18,7 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 
 import { app } from "../../lib/bridge";
-import type { SchedulePreview, TaskInput, TaskView, TemplateView } from "../../lib/types";
+import type { RecentChatView, SchedulePreview, TaskInput, TaskView, TemplateView } from "../../lib/types";
 import { useT } from "../../lib/i18n";
 
 const DELIVERY_OPTIONS = [
@@ -27,6 +27,12 @@ const DELIVERY_OPTIONS = [
   { value: "im", key: "cowork.automationDeliveryIM" },
   { value: "email", key: "cowork.automationDeliveryEmail" },
   { value: "file", key: "cowork.automationDeliveryFile" },
+] as const;
+
+const IM_PLATFORMS = [
+  { value: "feishu", label: "飞书 / Feishu" },
+  { value: "qq", label: "QQ" },
+  { value: "weixin", label: "微信 / WeChat" },
 ] as const;
 
 export function TaskForm({
@@ -53,11 +59,25 @@ export function TaskForm({
   const [prompt, setPrompt] = useState(initial?.prompt ?? seedTpl?.prompt ?? "");
   const [outputMode, setOutputMode] = useState(initial?.outputMode ?? seedTpl?.outputMode ?? "notify");
   const [outputDest, setOutputDest] = useState(initial?.outputDest ?? "");
+  const [outputAccount, setOutputAccount] = useState(initial?.outputAccount ?? "");
   const [outputDir, setOutputDir] = useState(initial?.outputDir ?? "");
   const [color, setColor] = useState(initial?.color ?? "#4488FF");
   const [location, setLocation] = useState(initial?.location ?? "");
   const [preview, setPreview] = useState<SchedulePreview | null>(null);
   const [saving, setSaving] = useState(false);
+  // IM-target picker state. recentChats is loaded once from the bot gateway so
+  // the user can select a destination instead of hand-typing "feishu:oc_xxx".
+  // imPlatform + imChatIndex drive a platform dropdown + chat dropdown; the
+  // composed dest string is written back into outputDest on change.
+  const [recentChats, setRecentChats] = useState<RecentChatView[]>([]);
+  // emailAccounts is loaded from settings so the email mode can pick a sender.
+  const [emailAccounts, setEmailAccounts] = useState<{name: string; default: boolean}[]>([]);
+  // imPlatform defaults from the existing dest (parsed) or "feishu".
+  const [imPlatform, setImPlatform] = useState<string>(() => {
+    const d = initial?.outputDest ?? "";
+    const idx = d.indexOf(":");
+    return idx > 0 ? d.slice(0, idx) : "feishu";
+  });
   const [error, setError] = useState<string>("");
 
   // Live preview of the expression as the user types. Debounced via a microtask
@@ -72,6 +92,43 @@ export function TaskForm({
     }, 200);
     return () => clearTimeout(handle);
   }, [expression]);
+
+  // Load IM recent chats + email accounts once, for the IM/email pickers.
+  // Failures are non-fatal (the pickers just show empty / fall back to manual).
+  useEffect(() => {
+    let cancelled = false;
+    void app.ListRecentBotChats().then((cs) => { if (!cancelled) setRecentChats(cs); }).catch(() => {});
+    void app.Settings().then((sv) => {
+      if (cancelled) return;
+      const accts = (sv.cowork?.emailAccounts ?? []).map((a) => ({ name: a.name, default: a.default }));
+      setEmailAccounts(accts);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // composeImDest builds the dest string from platform + a recent chat. QQ group/
+  // channel chats need the chatType segment so gw.Push routes to the right URL;
+  // feishu/weixin route by chatID alone (2-segment dest).
+  const composeImDest = (platform: string, chat: RecentChatView | undefined, manualDest: string) => {
+    if (chat) {
+      if (platform === "qq" && chat.chatType && chat.chatType !== "dm") {
+        return `${platform}:${chat.chatType}:${chat.chatId}`;
+      }
+      return `${platform}:${chat.chatId}`;
+    }
+    return manualDest;
+  };
+
+  // Parse the current outputDest back into a selected chat index (for the
+  // dropdown's controlled value) when it matches a known recent chat.
+  const selectedChatIdx = (() => {
+    if (outputMode !== "im") return -1;
+    const filtered = recentChats.filter((c) => c.platform === imPlatform);
+    return filtered.findIndex((c) => {
+      const composed = composeImDest(imPlatform, c, "");
+      return composed === outputDest || `${imPlatform}:${c.chatId}` === outputDest;
+    });
+  })();
 
   const applyTemplate = (tpl: TemplateView) => {
     setName(tpl.name);
@@ -116,6 +173,7 @@ export function TaskForm({
         prompt: prompt.trim(),
         outputMode,
         outputDest: outputDest.trim(),
+        outputAccount: outputAccount.trim(),
         outputDir: outputDir.trim(),
         color,
         location: location.trim(),
@@ -252,7 +310,106 @@ export function TaskForm({
                 </button>
               ))}
             </div>
-            {(outputMode === "email" || outputMode === "im" || outputMode === "file") && (
+
+            {/* IM: platform dropdown + recent-chat picker, with manual fallback. */}
+            {outputMode === "im" && (
+              <div className="cowork-taskform__im-picker">
+                <div className="cowork-taskform__im-row">
+                  <label className="cowork-taskform__label">
+                    <span className="cowork-taskform__labeltext">{t("cowork.automationFormIMPlatform")}</span>
+                    <select
+                      className="cowork-taskform__input"
+                      value={imPlatform}
+                      onChange={(e) => {
+                        setImPlatform(e.target.value);
+                        setOutputDest(""); // reset dest when platform changes
+                      }}
+                    >
+                      {IM_PLATFORMS.map((p) => (
+                        <option key={p.value} value={p.value}>{p.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="cowork-taskform__label">
+                    <span className="cowork-taskform__labeltext">{t("cowork.automationFormIMChat")}</span>
+                    {(() => {
+                      const filtered = recentChats.filter((c) => c.platform === imPlatform);
+                      if (filtered.length === 0) {
+                        return (
+                          <span className="cowork-taskform__im-empty">{t("cowork.automationFormIMEmpty")}</span>
+                        );
+                      }
+                      return (
+                        <select
+                          className="cowork-taskform__input"
+                          value={selectedChatIdx >= 0 ? String(selectedChatIdx) : ""}
+                          onChange={(e) => {
+                            const i = Number(e.target.value);
+                            const chat = filtered[i];
+                            setOutputDest(composeImDest(imPlatform, chat, outputDest));
+                          }}
+                        >
+                          <option value="">{t("cowork.automationFormIMSelect")}</option>
+                          {filtered.map((c, i) => (
+                            <option key={c.chatId + i} value={String(i)}>
+                              {c.userName || c.chatId}
+                              {c.chatType && c.chatType !== "dm" ? ` (${c.chatType})` : ""}
+                              {" — "}{c.chatId.slice(0, 16)}{c.chatId.length > 16 ? "…" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      );
+                    })()}
+                  </label>
+                </div>
+                <label className="cowork-taskform__label">
+                  <span className="cowork-taskform__labeltext">{t("cowork.automationFormDest")}</span>
+                  <input
+                    className="cowork-taskform__input"
+                    value={outputDest}
+                    placeholder={t("cowork.automationFormDestHint")}
+                    onChange={(e) => setOutputDest(e.target.value)}
+                  />
+                </label>
+                <span className="cowork-taskform__im-hint">
+                  {t("cowork.automationFormIMHint")}
+                </span>
+              </div>
+            )}
+
+            {/* Email: account dropdown (sender) + recipient dest. */}
+            {outputMode === "email" && (
+              <div className="cowork-taskform__email-picker">
+                {emailAccounts.length > 0 && (
+                  <label className="cowork-taskform__label">
+                    <span className="cowork-taskform__labeltext">{t("cowork.automationFormEmailAccount")}</span>
+                    <select
+                      className="cowork-taskform__input"
+                      value={outputAccount}
+                      onChange={(e) => setOutputAccount(e.target.value)}
+                    >
+                      {emailAccounts.map((a) => (
+                        <option key={a.name} value={a.name}>
+                          {a.name}{a.default ? ` (${t("cowork.mailDefault")})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <label className="cowork-taskform__label">
+                  <span className="cowork-taskform__labeltext">{t("cowork.automationFormDest")}</span>
+                  <input
+                    className="cowork-taskform__input"
+                    value={outputDest}
+                    placeholder={t("cowork.automationFormDestHint")}
+                    onChange={(e) => setOutputDest(e.target.value)}
+                  />
+                </label>
+              </div>
+            )}
+
+            {/* File: just the path. */}
+            {outputMode === "file" && (
               <label className="cowork-taskform__label">
                 <span className="cowork-taskform__labeltext">{t("cowork.automationFormDest")}</span>
                 <input

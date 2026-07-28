@@ -1,7 +1,9 @@
 package calendar
 
 import (
+	"context"
 	"log/slog"
+	"strings"
 	"time"
 )
 
@@ -11,6 +13,8 @@ import (
 type ReminderEngine struct {
 	store    *Store
 	notifier ReminderNotifier
+	imPusher ReminderIMPusher
+	emailer  ReminderEmailSender
 	logger   func(string, ...any)
 	stop     chan struct{}
 	done     chan struct{}
@@ -20,8 +24,24 @@ type ReminderEngine struct {
 }
 
 // ReminderNotifier delivers a reminder to the user (desktop toast, etc.).
+// This is the default/fallback channel — every reminder fires here regardless
+// of OutputMode, so a reminder is never silently lost.
 type ReminderNotifier interface {
 	NotifyReminder(title, body string)
+}
+
+// ReminderIMPusher pushes a reminder body to an IM chat. Optional — when nil,
+// events with OutputMode="im" fall back to the desktop toast only. dest is the
+// event's OutputDest ("platform:chatID" or "platform:chatType:chatID").
+type ReminderIMPusher interface {
+	Push(ctx context.Context, dest, text string) error
+}
+
+// ReminderEmailSender emails a reminder body. Optional — when nil, events with
+// OutputMode="email" fall back to the desktop toast. account selects the named
+// sender ("" = default); to is the recipient.
+type ReminderEmailSender interface {
+	Send(ctx context.Context, account, to, subject, body string) error
 }
 
 // NewReminderEngine creates a reminder engine that checks every 60 seconds.
@@ -39,6 +59,14 @@ func NewReminderEngine(store *Store, notifier ReminderNotifier) *ReminderEngine 
 func (re *ReminderEngine) SetLogger(fn func(string, ...any)) {
 	re.logger = fn
 }
+
+// SetIMPusher binds the IM delivery bridge for events with OutputMode="im".
+// Nil (the default) means IM output degrades to the desktop toast only.
+func (re *ReminderEngine) SetIMPusher(p ReminderIMPusher) { re.imPusher = p }
+
+// SetEmailSender binds the email delivery bridge for events with
+// OutputMode="email". Nil means email output degrades to the desktop toast.
+func (re *ReminderEngine) SetEmailSender(e ReminderEmailSender) { re.emailer = e }
 
 // Start begins the reminder check loop. Call Stop() to shut down.
 func (re *ReminderEngine) Start() {
@@ -128,9 +156,6 @@ func (re *ReminderEngine) check() {
 }
 
 func (re *ReminderEngine) fire(inst EventInstance, minutesBefore int, remindAt time.Time) {
-	if re.notifier == nil {
-		return
-	}
 	var body string
 	if minutesBefore == 0 {
 		body = inst.Title + " 现在开始"
@@ -146,7 +171,39 @@ func (re *ReminderEngine) fire(inst EventInstance, minutesBefore int, remindAt t
 	if re.logger != nil {
 		re.logger("reminder: firing for %q (%d min before)", inst.Title, minutesBefore)
 	}
-	re.notifier.NotifyReminder("日程提醒", body)
+
+	// Always fire the desktop toast first — it's the never-fail fallback, so a
+	// reminder is never silently dropped even when IM/email aren't configured or
+	// fail. Then, if the event opted into IM/email push, attempt that channel;
+	// a push failure is logged but doesn't block the toast or the dedup mark.
+	if re.notifier != nil {
+		re.notifier.NotifyReminder("日程提醒", body)
+	}
+
+	switch strings.ToLower(strings.TrimSpace(inst.OutputMode)) {
+	case "im":
+		if re.imPusher != nil && strings.TrimSpace(inst.OutputDest) != "" {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if err := re.imPusher.Push(ctx, inst.OutputDest, body); err != nil {
+				if re.logger != nil {
+					re.logger("reminder: IM push to %s failed: %v", inst.OutputDest, err)
+				}
+			}
+			cancel()
+		}
+	case "email":
+		if re.emailer != nil && strings.TrimSpace(inst.OutputDest) != "" {
+			to := strings.TrimSpace(inst.OutputDest)
+			subject := "日程提醒：" + inst.Title
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if err := re.emailer.Send(ctx, inst.OutputAccount, to, subject, body); err != nil {
+				if re.logger != nil {
+					re.logger("reminder: email to %s failed: %v", to, err)
+				}
+			}
+			cancel()
+		}
+	}
 
 	// Record the fired remindAt (not time.Now) so a later tier (whose remindAt is
 	// later) still fires: reminded_at=start-60m does not block remindAt=start-15m.

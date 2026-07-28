@@ -68,15 +68,16 @@ func TestGlobExecuteSortByMtime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Expect order: recent, mid, old (newest first).
+	// Expect order: recent, mid, old (newest first). Compare on the basename
+	// since Execute returns absolute paths rooted at workDir.
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	want := []string{"recent.txt", "mid.txt", "old.txt"}
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 results, got %d: %v", len(lines), lines)
 	}
 	for i, w := range want {
-		if lines[i] != w {
-			t.Errorf("result[%d] = %q, want %q (full: %v)", i, lines[i], w, lines)
+		if got := filepath.Base(lines[i]); got != w {
+			t.Errorf("result[%d] = %q (base %q), want %q (full: %v)", i, lines[i], got, w, lines)
 		}
 	}
 }

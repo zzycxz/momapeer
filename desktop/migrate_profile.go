@@ -503,7 +503,7 @@ func migrateProjectsIndexByMerge() {
 		GlobalTitle:  firstNonEmpty(legacyFile.GlobalTitle, coworkExisting.GlobalTitle),
 		GlobalColor:  firstNonEmpty(legacyFile.GlobalColor, coworkExisting.GlobalColor),
 		GlobalTopics: nil,
-		Projects:     cloneProjectsWithoutTopics(append(append([]desktopProject{}, legacyFile.Projects...), coworkExisting.Projects...)),
+		Projects:     cloneProjectsWithoutTopics(coworkExisting.Projects),
 	}
 	if err := saveProjectsFile(coworkSeed, config.ProfileCowork); err != nil {
 		slog.Warn("profile migration: seed cowork projects index", "err", err)

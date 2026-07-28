@@ -257,25 +257,7 @@ export function ProjectTree({
   const refresh = useCallback(async () => {
     try {
       const nodes = await app.ListProjectTree(profile);
-      let list = asArray(nodes);
-      
-      // In Cowork mode, hide empty sessions ("新的会话" / "新建日程") to avoid sidebar clutter
-      if (profile === "cowork") {
-        const filterEmpty = (items: ProjectNode[]): ProjectNode[] => {
-          return items.filter(node => {
-            if ((node.kind === "topic" || node.kind === "global_topic") && 
-                (!node.turns || node.turns === 0) &&
-                (node.label === "新的会话" || node.label === t("mock.newSession") || node.label === "新的日程" || node.label === t("cowork.newTask"))) {
-              return false;
-            }
-            if (node.children) {
-              node.children = filterEmpty(asArray(node.children));
-            }
-            return true;
-          });
-        };
-        list = filterEmpty(list);
-      }
+      const list = asArray(nodes);
 
       setTree(list);
       setExpanded((prev) => {

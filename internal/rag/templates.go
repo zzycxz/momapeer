@@ -4,7 +4,6 @@ package rag
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 	"time"
 )
@@ -222,74 +221,83 @@ func GetTemplatePrompt(name string) (nodePrompt, edgePrompt string) {
 	return "", ""
 }
 
-// ListTemplates returns all available templates.
+var defaultEntityFields = []FieldMeta{
+	{Name: "name", Description: "实体核心规范标示名称"},
+	{Name: "type", Description: "实体的本体分类类别"},
+	{Name: "description", Description: "基于上下文提炼的深度事实摘要"},
+}
+
+var defaultRelationFields = []FieldMeta{
+	{Name: "source", Description: "关系起点源实体名称"},
+	{Name: "target", Description: "关系指向目标实体名称"},
+	{Name: "type", Description: "客观二元连线动词或关系"},
+	{Name: "description", Description: "支撑该关联的上下文依据说明"},
+}
+
+// ListTemplates returns all available templates, ensuring built-in domain
+// templates remain first-class citizens with rich schemas regardless of whether
+// an external Hyper-Extract server is running.
 func ListTemplates(heClient *HEClient) []TemplateInfo {
-	// Try to get templates from Hyper-Extract server.
-	if heClient != nil {
-		ctx, cancel := newCtx(5)
-		defer cancel()
-		heTemplates, err := heClient.ListTemplates(ctx)
-		if err == nil && len(heTemplates) > 0 {
-			// Build a lookup for built-in descriptions.
-			builtinDesc := make(map[string]string, len(builtinTemplates))
-			for _, bt := range builtinTemplates {
-				builtinDesc[bt.Name] = bt.Description
-			}
-			out := make([]TemplateInfo, 0, len(heTemplates))
-			for _, t := range heTemplates {
-				desc := builtinDesc[t.Name]
-				if desc == "" {
-					desc = t.Description
-				}
-				ti := TemplateInfo{
-					Name:           t.Name,
-					Category:       t.Category,
-					DisplayName:    templateDisplayName(t.Name),
-					Description:    desc,
-					Available:      t.Available,
-					TemplateType:   t.TemplateType,
-					EntityFields:   make([]FieldMeta, 0, len(t.EntityFields)),
-					RelationFields: make([]FieldMeta, 0, len(t.RelationFields)),
-				}
-				for _, f := range t.EntityFields {
-					ti.EntityFields = append(ti.EntityFields, FieldMeta(f))
-				}
-				for _, f := range t.RelationFields {
-					ti.RelationFields = append(ti.RelationFields, FieldMeta(f))
-				}
-				out = append(out, ti)
-			}
-			return out
-		}
-	}
-	// Fallback: return built-in templates. Normalize EntityFields/RelationFields
-	// to non-nil empty slices so they never JSON-encode as null (the frontend
-	// calls .length/.map on them unconditionally). Rebuild into a fresh slice
-	// to avoid exposing the shared package-level builtinTemplates to callers.
-	slog.Info("rag.ListTemplates: HE unavailable, falling back to built-in templates", "count", len(builtinTemplates))
+	// 1. Always build our rich built-in templates first.
+	builtinMap := make(map[string]TemplateInfo, len(builtinTemplates))
 	out := make([]TemplateInfo, 0, len(builtinTemplates))
+
 	for _, bt := range builtinTemplates {
 		ef := bt.EntityFields
-		if ef == nil {
-			ef = []FieldMeta{}
+		if len(ef) == 0 {
+			ef = defaultEntityFields
 		}
 		rf := bt.RelationFields
-		if rf == nil {
-			rf = []FieldMeta{}
+		if len(rf) == 0 {
+			rf = defaultRelationFields
 		}
-		out = append(out, TemplateInfo{
+		ti := TemplateInfo{
 			Name:           bt.Name,
 			Category:       bt.Category,
 			DisplayName:    bt.DisplayName,
 			Description:    bt.Description,
-			Available:      bt.Available,
+			Available:      true, // Always guarantee built-in domain capabilities
 			TemplateType:   bt.TemplateType,
 			EntityFields:   ef,
 			RelationFields: rf,
 			NodePrompt:     bt.NodePrompt,
 			EdgePrompt:     bt.EdgePrompt,
-		})
+		}
+		builtinMap[bt.Name] = ti
+		out = append(out, ti)
 	}
+
+	// 2. If an external HE server is connected, merge in any extra/custom templates
+	// without allowing it to disable or overwrite our rich built-in definitions.
+	if heClient != nil {
+		ctx, cancel := newCtx(5)
+		defer cancel()
+		if heTemplates, err := heClient.ListTemplates(ctx); err == nil {
+			for _, t := range heTemplates {
+				if _, exists := builtinMap[t.Name]; !exists && t.Available {
+					ef := make([]FieldMeta, len(t.EntityFields))
+					for i, f := range t.EntityFields {
+						ef[i] = FieldMeta{Name: f.Name, Description: f.Description}
+					}
+					rf := make([]FieldMeta, len(t.RelationFields))
+					for i, f := range t.RelationFields {
+						rf[i] = FieldMeta{Name: f.Name, Description: f.Description}
+					}
+					out = append(out, TemplateInfo{
+						Name:           t.Name,
+						Category:       t.Category,
+						DisplayName:    templateDisplayName(t.Name),
+						Description:    t.Description,
+						Available:      t.Available,
+						TemplateType:   t.TemplateType,
+						EntityFields:   ef,
+						RelationFields: rf,
+					})
+				}
+			}
+		}
+	}
+
 	return out
 }
 

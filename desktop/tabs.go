@@ -576,6 +576,14 @@ func (a *App) OpenProjectTab(args ...string) (TabMeta, error) {
 	return meta, nil
 }
 
+// OpenProjectTab3 is a non-variadic wrapper for OpenProjectTab.
+// Wails v2 bindings don't handle variadic Go functions correctly (it expects
+// a single array argument, not separate arguments). This wrapper accepts
+// explicit parameters so the frontend can call it directly.
+func (a *App) OpenProjectTab3(workspaceRoot, topicID, profile string) (TabMeta, error) {
+	return a.OpenProjectTab(workspaceRoot, topicID, profile)
+}
+
 // OpenGlobalTab opens a new global-scope tab (no project root). The global
 // workspace root is the momapeer user config directory.
 // OpenGlobalTab opens (or activates) a global-scope tab. The profile-aware form
@@ -720,7 +728,7 @@ func (a *App) EnsureBlankTab(scope, workspaceRoot, profile string) (TabMeta, err
 	a.mu.Lock()
 	for _, id := range a.orderedTabIDsLocked() {
 		tab := a.tabs[id]
-		if a.blankTabMatchesTargetLocked(tab, scope, workspaceRoot) {
+		if a.blankTabMatchesTargetLocked(tab, scope, workspaceRoot, profile) {
 			a.activeTabID = tab.ID
 			meta := a.tabMeta(tab, true)
 			a.saveTabsLocked()
@@ -729,7 +737,7 @@ func (a *App) EnsureBlankTab(scope, workspaceRoot, profile string) (TabMeta, err
 		}
 	}
 
-	if topicID := a.indexedBlankTopicIDLocked(scope, workspaceRoot); topicID != "" {
+	if topicID := a.indexedBlankTopicIDLocked(scope, workspaceRoot, profile); topicID != "" {
 		a.mu.Unlock()
 		if scope == "global" {
 			return a.OpenGlobalTab(topicID, profile)
@@ -788,11 +796,15 @@ func (a *App) EnsureBlankTab(scope, workspaceRoot, profile string) (TabMeta, err
 
 // blankTabMatchesTargetLocked returns true if tab is a reusable blank tab
 // matching the given scope/project root — no running controller, no real history.
-func (a *App) blankTabMatchesTargetLocked(tab *WorkspaceTab, scope, workspaceRoot string) bool {
+func (a *App) blankTabMatchesTargetLocked(tab *WorkspaceTab, scope, workspaceRoot, profile string) bool {
 	if tab == nil || tab.Scope != scope {
 		return false
 	}
 	if scope == "project" && tab.WorkspaceRoot != workspaceRoot {
+		return false
+	}
+	// Profile must match — never reuse a blank tab from a different profile.
+	if normalizeProfileName(tab.profile) != normalizeProfileName(profile) {
 		return false
 	}
 	if tab.Ctrl == nil {
@@ -806,10 +818,10 @@ func (a *App) blankTabMatchesTargetLocked(tab *WorkspaceTab, scope, workspaceRoo
 
 // indexedBlankTopicIDLocked finds a blank topic ID that is indexed on disk
 // but not open in any tab — for reusing without creating a new topic.
-func (a *App) indexedBlankTopicIDLocked(scope, workspaceRoot string) string {
+func (a *App) indexedBlankTopicIDLocked(scope, workspaceRoot, profile string) string {
 	titleRoot := topicTitleRoot(scope, workspaceRoot)
 	titles := loadTopicTitles(titleRoot)
-	f := loadProjectsFile(a.activeProfileKeyLocked())
+	f := loadProjectsFile(normalizeProfileName(profile))
 
 	var topicIDs []string
 	if scope == "global" {
@@ -1018,7 +1030,7 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 		tab.sink.ctx = wailsCtx
 	}
 
-	sessionDir := desktopSessionDir(root)
+	sessionDir := tabSessionDir(tab)
 	topicID := strings.TrimSpace(tab.TopicID)
 	if tab.Scope == "global" {
 		migratedTopics := migrateLegacySessionsIntoGlobalTopics(config.SessionDir(), a.activeProfileKey())
@@ -2913,9 +2925,19 @@ func (a *App) ListProjectTree(profile string) []ProjectNode {
 		running bool
 		status  string
 	}{}
+	openRoots := map[string]bool{}
+	profileKey := config.ProfileNameKey(profile)
 	a.mu.RLock()
 	for _, tab := range a.tabs {
-		if tab == nil || strings.TrimSpace(tab.TopicID) == "" {
+		if tab == nil {
+			continue
+		}
+		if tab.WorkspaceRoot != "" {
+			if profileKey == "" || tab.profile == "" || config.ProfileNameKey(tab.profile) == profileKey {
+				openRoots[normalizeProjectRoot(tab.WorkspaceRoot)] = true
+			}
+		}
+		if strings.TrimSpace(tab.TopicID) == "" {
 			continue
 		}
 		key := topicSummaryKey(tab.Scope, tab.WorkspaceRoot, tab.TopicID)
@@ -3008,6 +3030,9 @@ func (a *App) ListProjectTree(profile string) []ProjectNode {
 				Status:         status.status,
 			})
 		}
+		if len(children) == 0 && !openRoots[normalizeProjectRoot(p.Root)] {
+			continue
+		}
 		node.Label = title
 		node.ProjectColor = p.Color
 		node.Children = children
@@ -3020,7 +3045,7 @@ func (a *App) ListProjectTree(profile string) []ProjectNode {
 	// shown — expert sessions always live in the cowork profile, so they only
 	// surface when the cowork sidebar is rendered.
 	a.mu.RLock()
-	profileKey := config.ProfileNameKey(profile)
+	profileKey = config.ProfileNameKey(profile)
 	for _, tab := range a.tabs {
 		if !tab.IsExpertSession || tab.ExpertTeamID == "" {
 			continue
@@ -3426,8 +3451,10 @@ func (a *App) knownSessionDirs() []string {
 	}
 	add(config.SessionDir())
 	add(desktopSessionDir(globalWorkspaceRoot()))
+	add(desktopSessionDirFor(globalWorkspaceRoot(), a.activeProfileKey()))
 	for _, project := range loadProjectsFile(a.activeProfileKey()).Projects {
 		add(desktopSessionDir(project.Root))
+		add(desktopSessionDirFor(project.Root, a.activeProfileKey()))
 	}
 	a.mu.RLock()
 	for _, tab := range a.tabs {

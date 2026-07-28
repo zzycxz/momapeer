@@ -109,6 +109,8 @@ func (a *App) ListScheduledTasksAsEvents(since, before string) []CalendarEventVi
 			Start:     start,
 			End:       end,
 			AllDay:    false,
+			Color:     view.Color,
+			Location:  view.Location,
 			Status:    "confirmed",
 			Source:    "agent",
 			TaskID:    view.ID,

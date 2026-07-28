@@ -794,7 +794,7 @@ func TestRenameTopicUpdatesOpenTabMeta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
-	tab, err := app.OpenProjectTab(projectRoot, topic.ID)
+	tab, err := app.OpenProjectTab(projectRoot, topic.ID, "")
 	if err != nil {
 		t.Fatalf("open project tab: %v", err)
 	}
@@ -824,7 +824,7 @@ func TestRenameTopicRecreatesDeletedProjectTitleIndexFromOpenTab(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
-	tab, err := app.OpenProjectTab(projectRoot, topic.ID)
+	tab, err := app.OpenProjectTab(projectRoot, topic.ID, "")
 	if err != nil {
 		t.Fatalf("open project tab: %v", err)
 	}

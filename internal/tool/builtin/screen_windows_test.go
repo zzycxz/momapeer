@@ -5,7 +5,7 @@ package builtin
 import "testing"
 
 // TestScreenToolsRoster guards the desktop-automation tool set. On Windows the
-// roster includes all 5 tools; on other platforms ScreenTools returns nil (the
+// roster includes all 7 tools; on other platforms ScreenTools returns nil (the
 // tools don't exist) — the test asserts whichever applies so a dropped tool is
 // caught regardless of build platform.
 func TestScreenToolsRoster(t *testing.T) {
@@ -15,6 +15,7 @@ func TestScreenToolsRoster(t *testing.T) {
 	want := map[string]bool{
 		"screenshot": true, "screen_click": true, "screen_type": true,
 		"screen_scroll": true, "get_ui_tree": true, "screen_perceive": true,
+		"screen_key": true,
 	}
 	seen := make(map[string]bool, len(tools))
 	for _, tl := range tools {
