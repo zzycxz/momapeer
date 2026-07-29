@@ -71,6 +71,7 @@ export function CoWorkLayout({
 }: CoWorkLayoutProps) {
   const t = useT();
   const [activePanel, setActivePanel] = useState<CoWorkPanel>("taskCenter");
+  const [preferenceOpen, setPreferenceOpen] = useState(false);
 
   // When an expert-team run kicks off from the chat (the agent called
   // expert_team_run), auto-switch to the experts panel so the user sees the
@@ -165,8 +166,8 @@ export function CoWorkLayout({
 
           <section className="cowork-sidebar__group" style={{ marginBottom: '0px', marginTop: 'auto' }}>
             <button
-              className={`cowork-sidebar__item ${activePanel === "preference" ? "cowork-sidebar__item--active" : ""}`}
-              onClick={() => setActivePanel("preference")}
+              className="cowork-sidebar__item"
+              onClick={() => setPreferenceOpen(true)}
             >
               <SlidersHorizontal size={14} />
               <span>{t("cowork.preference") || "办公偏好"}</span>
@@ -183,7 +184,10 @@ export function CoWorkLayout({
             </button>
             <button
               className={`cowork-sidebar__item ${activePanel === "experts" ? "cowork-sidebar__item--active" : ""}`}
-              onClick={() => setActivePanel("experts")}
+              onClick={() => {
+                setActivePanel("experts");
+                if (dockOnClose) dockOnClose();
+              }}
             >
               <Users size={14} />
               <span>{t("cowork.expert") || "专家团"}</span>
@@ -221,9 +225,6 @@ export function CoWorkLayout({
           <div className="cowork-main__composer">{footerNode}</div>
         </div>
 
-        {activePanel === "preference" && (
-          <PreferencePanel />
-        )}
 
         {activePanel === "calendarTask" && (
           <CalendarTaskPanel />
@@ -277,6 +278,10 @@ export function CoWorkLayout({
             window.dispatchEvent(new CustomEvent("rag:open-file", { detail: { path } }));
           }}
         />
+      )}
+
+      {preferenceOpen && (
+        <PreferencePanel onClose={() => setPreferenceOpen(false)} />
       )}
     </div>
   );

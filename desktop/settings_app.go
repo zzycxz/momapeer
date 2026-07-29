@@ -391,7 +391,19 @@ func (a *App) Settings() SettingsView {
 		},
 		Agent:  AgentView{Temperature: cfg.Agent.Temperature, MaxSteps: cfg.Agent.MaxSteps, PlannerMaxSteps: cfg.Agent.PlannerMaxSteps, SystemPrompt: cfg.Agent.SystemPrompt, RPM: cfg.LLM.RPM},
 		Bot:    botSettingsView(cfg.Bot),
-		Cowork: coworkSettingsView(cfg.Cowork),
+		Cowork: func() CoWorkSettingsView {
+			cv := coworkSettingsView(cfg.Cowork)
+			// Reflect whether email_send is in permissions.Allow (the headless
+			// auto-send toggle). Read from the loaded config so the checkbox
+			// shows the true state after a save/restart.
+			for _, rule := range cfg.Permissions.Allow {
+				if strings.EqualFold(strings.TrimSpace(rule), "email_send") {
+					cv.AllowHeadlessEmail = true
+					break
+				}
+			}
+			return cv
+		}(),
 		WebSearch: WebSearchView{
 			BraveKeySet:  os.Getenv("BRAVE_API_KEY") != "" || os.Getenv("BRAVE_SEARCH_API_KEY") != "",
 			ExaKeySet:    os.Getenv("EXA_API_KEY") != "",
@@ -657,6 +669,13 @@ func (a *App) rebuild() error {
 		a.emitReady(a.ctx)
 		return err
 	}
+	// boot.Build (re)built the global RPM budget; rebind it into RAG extraction
+	// and the Jiutian direct-call path so a runtime RPM change propagates to all
+	// request paths, not just the main conversation. cfg resolves the RAG bucket
+	// key to the configured extract model; nil falls back to the Jiutian key.
+	rebuildCfg, _ := config.LoadForRoot(root)
+	boot.RebindRAGBudget(a.ragExtractor, rebuildCfg)
+
 	a.bindControllerDisplayRecorder(ctrl)
 	a.mu.Lock()
 	if tab.Ctrl == oldCtrl {

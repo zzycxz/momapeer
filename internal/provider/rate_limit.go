@@ -70,10 +70,15 @@ func UnwrapProvider(p Provider) Provider {
 
 // BudgetKeyForConfig returns the budget bucket key for a provider Config —
 // baseURL + the resolved API key. Two providers hitting the same endpoint with
-// the same key share one RPM quota (matching how providers actually meter).
+// the same key share one RPM quota (matching how providers actually meter: the
+// platform counts requests per key, regardless of which model/feature/client
+// issued them). The name parameter is accepted for call-site symmetry with
+// provider.Config but intentionally NOT included, so the main conversation,
+// subagents, Jiutian multimodal tools, RAG extraction/embedding, and RagAsk all
+// draw from one bucket when they share an endpoint+key.
 func BudgetKeyForConfig(name, baseURL, apiKey string) string {
-	// Include name so two different provider instances on the same key (rare,
-	// but possible when a user duplicates an entry) don't falsely merge.
-	// The key is just an opaque string; it only needs to be consistent.
-	return name + "|" + baseURL + "|" + apiKey
+	_ = name // accepted for symmetry; deliberately excluded from the key
+	// The key is just an opaque string; it only needs to be consistent for a
+	// given endpoint+key pair.
+	return baseURL + "|" + apiKey
 }

@@ -66,6 +66,10 @@ type CoWorkSettingsView struct {
 	// above are kept as a backward-compat mirror of the Default account so older
 	// frontends and the legacy probe path still work.
 	EmailAccounts []EmailAccountView `json:"emailAccounts"`
+	// AllowHeadlessEmail, when true, adds email_send to permissions.Allow so
+	// scheduled tasks can send email in headless mode (no tab = no interactive
+	// user to approve). Surfaced as a checkbox in the mail settings card.
+	AllowHeadlessEmail bool `json:"allowHeadlessEmail"`
 }
 
 // EmailAccountView is one mailbox in the multi-account list. Passwords are
@@ -380,6 +384,13 @@ func (a *App) SetCoWorkSettings(v CoWorkSettingsView) (err error) {
 			surviving := make(map[string]bool, len(v.EmailAccounts))
 			next := make([]config.EmailAccount, 0, len(v.EmailAccounts))
 			for _, av := range v.EmailAccounts {
+				// Skip empty accounts: a half-filled card (user clicked "new"
+				// but didn't enter a host) must not be persisted — it would
+				// create a ghost entry with only password_env, which then shows
+				// as a second blank "primary" and can confuse DefaultEmailAccount.
+				if strings.TrimSpace(av.SMTP.Host) == "" && strings.TrimSpace(av.IMAP.Host) == "" {
+					continue
+				}
 				name := strings.TrimSpace(av.Name)
 				if name == "" {
 					name = "primary"
@@ -448,6 +459,12 @@ func (a *App) SetCoWorkSettings(v CoWorkSettingsView) (err error) {
 				IMAP:    imap,
 			}}
 		}
+		// Toggle email_send in permissions.Allow based on the user's checkbox.
+		// When ON, scheduled tasks can send email in headless mode (no tab open
+		// = no interactive approver). When OFF, email_send falls back to the
+		// default Ask rule, which headless denies. We add/remove only the bare
+		// "email_send" tool name, leaving any subject-scoped rules untouched.
+		c.Permissions.Allow = togglePermissionRule(c.Permissions.Allow, "email_send", v.AllowHeadlessEmail)
 		return nil
 	}); err != nil {
 		return err
@@ -501,7 +518,7 @@ func (a *App) ProbeMailAccount(name string) (result MailProbeResult, err error) 
 			err = nil
 		}
 	}()
-	slog.Debug("ProbeMailAccount", "name", name)
+	slog.Info("ProbeMailAccount", "name", name)
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Warn("ProbeMailAccount: config.Load failed", "err", err)
@@ -547,14 +564,11 @@ type InboxItem struct {
 	Preview string `json:"preview"`
 }
 
-// InboxPreview reads the most recent unread messages (up to limit) from the
-// default mailbox's INBOX, for the cowork dock's "邮件" tab. Like
-// ProbeMailAccount, it reloads config so a just-saved mailbox works without
-// restart, and it never returns a Go error for expected states (unconfigured /
-// connect failure) — those go in the returned slice's absence + an error
-// message on the dedicated Err field so wails doesn't pop a system dialog.
-// Returns an empty slice when no mailbox is configured.
-func (a *App) InboxPreview(limit int) ([]InboxItem, error) {
+// InboxPreview reads the most recent messages (up to limit) from the default
+// mailbox, for the cowork dock's "邮件" tab. mailbox is "INBOX" (unread only)
+// or "Sent" (all sent). Like ProbeMailAccount, it reloads config so a just-saved
+// mailbox works without restart. Returns an empty slice when unconfigured.
+func (a *App) InboxPreview(mailbox string, limit int) ([]InboxItem, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, fmt.Errorf("读取配置失败：%s", err.Error())
@@ -563,7 +577,13 @@ func (a *App) InboxPreview(limit int) ([]InboxItem, error) {
 	if !ok || strings.TrimSpace(acct.IMAP.Host) == "" {
 		return []InboxItem{}, nil // unconfigured — dock shows "未配置邮箱"
 	}
-	msgs, err := builtin.ReadInboxFor(acct.IMAP, limit, true)
+	mbox := strings.TrimSpace(mailbox)
+	if mbox == "" {
+		mbox = "INBOX"
+	}
+	// unreadOnly only makes sense for INBOX; sent folders show all.
+	unreadOnly := mbox == "INBOX"
+	msgs, err := builtin.ReadInboxFor(acct.IMAP, mbox, limit, unreadOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -762,4 +782,32 @@ func migrateLegacyCoworkEnv() {
 	}
 	// Every non-empty entry made it into the store; drop the plaintext residue.
 	_ = os.Remove(coworkEnvPath())
+}
+
+// togglePermissionRule adds or removes a bare tool name (e.g. "email_send")
+// from a permission rule list. It matches case-insensitively on the tool-name
+// prefix only, so a subject-scoped rule like "email_send:example.com" is left
+// untouched (we only manage the blanket rule). add=true appends if absent;
+// add=false removes all bare-tool matches.
+func togglePermissionRule(rules []string, tool string, add bool) []string {
+	tool = strings.ToLower(strings.TrimSpace(tool))
+	out := make([]string, 0, len(rules))
+	present := false
+	for _, r := range rules {
+		name := strings.TrimSpace(r)
+		if i := strings.IndexAny(name, "(:"); i >= 0 {
+			name = name[:i]
+		}
+		if strings.EqualFold(strings.TrimSpace(name), tool) {
+			present = true
+			if !add {
+				continue // drop it
+			}
+		}
+		out = append(out, r)
+	}
+	if add && !present {
+		out = append(out, tool)
+	}
+	return out
 }

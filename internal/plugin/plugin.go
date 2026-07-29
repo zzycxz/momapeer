@@ -389,6 +389,17 @@ func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool
 			}
 			continue
 		}
+		if h.has(r.spec.Name) {
+			r.client.close()
+			if p.AbortOnError {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("server %q is already connected", r.spec.Name)
+				}
+			} else {
+				h.RecordFailure(r.spec, fmt.Errorf("server %q is already connected", r.spec.Name))
+			}
+			continue
+		}
 		h.clients = append(h.clients, r.client)
 		tools = append(tools, r.tools...)
 		// prompts/resources are filled in later by StartPhaseB.

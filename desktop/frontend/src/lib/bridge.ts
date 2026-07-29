@@ -278,11 +278,10 @@ export interface AppBindings {
   // green/red status dot after the user saves. Always resolves (a connection
   // failure comes back as status="error", not a rejection).
   ProbeMailAccount(name: string): Promise<MailProbeResult>;
-  // InboxPreview reads the most recent unread messages (up to limit) from the
-  // default mailbox INBOX, for the cowork dock's "邮件" tab. Returns [] when
-  // no mailbox is configured or no unread mail. Rejects only on unexpected
-  // errors (config read failure / IMAP connect failure after config present).
-  InboxPreview(limit: number): Promise<InboxItem[]>;
+  // InboxPreview reads the most recent messages (up to limit) from a mailbox
+  // ("INBOX" unread-only, or "Sent" for sent mail), for the cowork dock's
+  // "邮件" tab. Returns [] when no mailbox is configured or no mail.
+  InboxPreview(mailbox: string, limit: number): Promise<InboxItem[]>;
   // Hooks settings (settings.json, global + project scopes). HooksSettings
   // returns the payload for the Hooks tab; Save/Trust write + gate project hooks.
   HooksSettings(scope: string): Promise<HooksSettingsView>;
@@ -1071,6 +1070,7 @@ function makeMockApp(): AppBindings {
       screenshotVlmModel: "qwen/qwen3.6-27b",
       estopHotkey: "Ctrl+Shift+Pause",
       emailAccounts: [],
+      allowHeadlessEmail: false,
     },
     bot: {
       enabled: !freshMock,
@@ -3381,7 +3381,7 @@ function makeMockApp(): AppBindings {
     async StopEStopHotkey() {},
     async SetCoWorkSettings(v: any) { settings.cowork = { ...v, detectedBrowser: settings.cowork.detectedBrowser }; },
     async ProbeMailAccount(_name: string) { return { ok: true, status: "unconfigured", message: "" } as MailProbeResult; },
-    async InboxPreview(_limit: number) { return [] as InboxItem[]; },
+    async InboxPreview(_mailbox: string, _limit: number) { return [] as InboxItem[]; },
     async HooksSettings(scope: string) {
       const key = scope === "project" ? "project" : "global";
       return JSON.parse(JSON.stringify(hookSettings[key])) as HooksSettingsView;

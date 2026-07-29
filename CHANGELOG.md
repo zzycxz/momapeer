@@ -1,6 +1,29 @@
 # Changelog
 
-## [0.5.5] — 2026-07-28
+## [0.5.6] — 2026-07-29
+
+**深度重构文档解析引擎与重构限流架构生命周期：由 MarkItDown 全面接管复杂文档流解析，彻底修复 RPM 设置热重载断层问题。**
+
+本轮迭代聚焦于后台两大核心机制的重塑。首先，我们用微软的开源文档解析器 `markitdown` 完全替代了原生 Go 库对复杂文档（如带水印流 PDF、旧版 Office 文件）的软弱无力，实现了对各世代办公资产的高精度 Markdown 提纯；其次，根治了多智能体架构下全局状态更新脱节的顽疾，让 RPM 的设置变更能够如同神经系统般实时下发到每一个在后台奔跑的并发线程。
+
+---
+
+### Changed / Refactored — RAG 知识库提取逻辑大换血
+
+- **全面启用 MarkItDown 作为首选提取器**（`internal/rag/store.go`）：将原先保守的 `binaryOfficeExts` 重构为 `richDocumentExts`，一旦系统感知到 Python 桥接脚本的存在，便强行拦截所有的 `.docx, .xlsx, .pptx, .html, .htm`，以及现代复杂 `.pdf`。全部交由 `markitdown` 提取极其完美的结构化内容（含表格与富文本还原），废弃原生 Go 库软弱的后备降级，从而大幅提升了大模型图谱提炼时的语料质量。
+- **扩大知识库入库白名单通行证**（`internal/rag/extract.go`）：打破以往对格式的极度限制，把老旧的办公资产 `.doc`, `.ppt`, `.xls` 甚至 `.msg` 邮件与 `.epub` 电子书堂堂正正地拉进 `isSupportedExt` 白名单，允许大模型进行一口吞并。纯文本和代码文件（如 `.md, .txt, .go` 等）依然绕过桥接器，维持极速原生直读，做到了性能与质量的极佳平衡。
+
+---
+
+### Fixed — 全局请求频率（RPM）设置实时生效（热重载断层修复）
+
+**背景**：此前当用户在设置面板调整并保存“请求频率 (RPM)”时，系统仅仅简单粗暴地在后台 new 出了一个全新的限流器。但在它生成之前早已在后台并发奔跑的子智能体、专家辩论或文档提取任务，它们手中捏着的永远是旧版本的限流器（如果初始是 0，它们甚至一辈子都在“裸奔”），造成了极为割裂的失控感。
+
+- **重构 RequestBudget 单例生命周期**（`internal/boot/boot.go`）：在系统配置发生改变而触发重载（`rebuild`）时，摒弃简单替换 `globalBudget` 内存指针的做法，改为复用系统启动时的唯一原生实例，保证了所有并发通道的数据源一致。
+- **动态读写安全与配置注入**（`internal/provider/budget.go`）：为 `RequestBudget` 结构赋予可实时变更的 `SetBudget(rpm, reserveMain int)` 热注入接口，并为 `rpm` 读写全面引入互斥锁（Mutex）加固，确保了所有智能体在并发状态下接收新配额时杜绝任何的 Data Race 风险。
+- **永久加持防弹外衣**（`internal/provider/rate_limit.go`）：取消原先 `rpm <= 0` 就不做限流层包裹的性能投机机制；现在无论启停，任何通道皆无条件包裹 `RateLimitedProvider` 外壳。配合内部遇到 0 秒放行的策略，它让原本不受限的任务，只要用户一声令下（在面板拉起限流条），瞬间全部受控被卡。
+
+## [0.5.5] — 2026-07-29
 
 **UI 微调与架构收敛：彻底重构侧边栏 TodayView 组件，解决极端窄屏幕下的排版坍塌问题；废弃冗余的面包块卡片堆叠，重塑纯净极简的高级感暗黑控制面板。**
 
@@ -14,6 +37,28 @@
 - **统合式纵向状态控制面板**（`CoworkDock.tsx`）：将底部原本散落的邮箱探针状态、IM Bot 探针状态和刷新控制按钮，高度收敛为一张带有微距圆角与轻量阴影的一体化悬浮卡片；彻底摒弃容易导致元素互挤的水平分栏，改为**上下堆叠的 List Cell 列表布局**
 - **防文本折行与溢出防线**：在侧边栏极窄（<300px）苛刻环境下，通过 `minWidth: 0`、`whiteSpace: nowrap` 和溢出截断（`textOverflow: ellipsis`）机制，外加充分利用堆叠列宽，完美容纳了多维状态（如“X封未读”、“已连接”、“暂无新件”），不再允许任何核心文本被生硬折叠
 - **弹性沉底卡片与文案纠偏**：为主滚动视口增加 `flex: 1` 和 `overflow-y: auto` 的弹性闭环，使控制卡片宛如钉子般牢牢固定在侧边栏最底端；同时清理了无关标语，并将顶层简报标题精确归位于“今日日工任务”
+
+---
+
+### Fixed — 全路径 RPM 限流闭环：让工具与 RAG 真正遵守请求频率
+
+**背景**：排查发现「设置 → 模型 → 请求频率（RPM）」只有主对话链路（主 Agent / Subagent / 压缩 / 判定）真正生效，大量绕过 provider 层、直连九天 API 的路径完全不受限流——多模态工具、RAG 抽取与检索、知识库问答各自裸奔，会与主对话争抢同一把 `JIUTIAN_API_KEY` 的服务商配额，触发 429。本轮彻底堵死所有绕过点，并修复了三个深层缺陷，让 RPM 对「所有发请求的路径」一视同仁，且运行时改 RPM 即时全路径生效。
+
+- **九天直连单点拦截**（`internal/jiutian/api.go`）：在所有九天平台 API 的统一入口 `APICall` 开头注入限流闸门，对 LLM 类路径（`/image/text`、`/video/text`、`/images/generations`、`/embeddings`、`/chat/completions`）在发请求前 `Acquire` 一个后台优先级名额，文件存储类路径（`/fs/*`）跳过。一次性覆盖 image_understand / image_generate / video_understand 工具、RAG 语义检索的 embedding 调用、openai provider 内嵌的九天 VLM 兜底链路
+- **接口隔离防循环依赖**（`internal/jiutian/api.go` `BudgetAcquirer`）：`jiutian` 包被 `provider/openai` 引用，无法反向 import `provider`。仿照 `rag.BudgetAcquirer` 的既有隔离模式，在 `jiutian` 包内定义同名 duck-type 接口（`Acquire(ctx,key,priority) error`），boot 注入真正的 `*provider.RequestBudget`，编译期即验证类型满足
+
+### Fixed — 三大深层缺陷修复
+
+- **① budget key 错把 name 计入桶标识，导致同 endpoint 同 key 却分开计数**（`internal/provider/rate_limit.go` `BudgetKeyForConfig`）：原实现 `name|baseURL|apiKey` 把 provider 名也算进 key，使得默认主对话（name=`moma`）与九天直连工具（name=`jiutian-direct`）尽管打同一九天 endpoint、用同一把 `JIUTIAN_API_KEY`，却各自独立计数——实际可能合计超出服务商 RPM，违背限流初衷。改为仅按 `baseURL|apiKey` 算 key，让主对话 / Subagent / 九天工具 / RAG / RagAsk 在共享同一 endpoint+key 时真正共饮一桶，完全匹配服务商「按 key 计量」的现实
+- **② RAG 抽取绑死在启动时的独立 localBudget 上，运行时改 RPM 永不生效**（`desktop/app.go` `initRAG` + `internal/boot/boot.go`）：原 `initRAG` 因「globalBudget 在 boot.Build 里才初始化、时序晚于 initRAG」的注释承诺了「Build 完成后 re-wire」，但该 re-wire 从未实现——`boot.GlobalBudget()` 是死代码，extractor 永远持有启动时创建的 `localBudget`（且 `reserve_main=0`），改 RPM 必须重启应用。本轮删除独立 localBudget，新增 `boot.RebindRAGBudget` 在每次 boot.Build 成功后把真正的 globalBudget 重新注入 extractor + 九天直连路径，实现运行时改 RPM 即时全路径生效
+- **③ 启动竞态致 extractor 拿不到限流器**（`desktop/app.go`）：`restoreOrBuildTabs`（异步 goroutine，含首次 boot.Build）与 `initRAG`（同步创建 extractor）并发执行，若 Build 先完成则 rebind 看到 `ragExtractor==nil` 直接跳过，extractor 此后永不被绑定。在 `initRAG` 末尾补一次幂等 rebind，与 `buildTabController` / `rebuild` 中的 rebind 构成双重保护，两个时序分支都被覆盖
+- **ragBudgetKey 死代码**（`internal/boot/boot.go`）：当 `extract_model` 为空（最常见的默认场景）时，把 ref 赋成 `fast_task_model` 却未用它解析 model，直接落到九天兜底 key，导致 extractor 的桶与其真实 endpoint 不符。重写为与 `initRAG` 完全一致的三级优先级（extract_model → fast_task_model → default_model），每级都真正解析
+
+### Added — 新增导出能力
+
+- **`boot.RebindRAGBudget(extractor, cfg)`**（`internal/boot/boot.go`）：把当前 globalBudget 重新注入 extractor（若实现 `rag.BudgetSetter`）与九天直连路径，供 desktop 层在首次启动、每次建 Tab、每次设置重建后调用，保证 RPM 变更全路径同步
+- **`boot.RagAskBudgetKey(cfg)`**（`internal/boot/boot.go`）：为绕过 provider 层、直发 `/chat/completions` 的 RagAsk 计算 budget key（fast_task_model → default_model），使其与同模型的其它路径共享配额
+- **`desktop/rag_app.go` `RagAsk` 限流接入**：知识库问答直调 chat 前先 `boot.GlobalBudget().Acquire`（后台优先级 false），不再裸奔
 
 ---
 

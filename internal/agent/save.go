@@ -177,6 +177,7 @@ type SessionInfo struct {
 	WorkspaceRoot  string
 	TopicID        string
 	TopicTitle     string
+	Profile        string
 }
 
 // ListSessions returns every *.jsonl session under dir, most-recently-active
@@ -226,6 +227,7 @@ func ListSessions(dir string) ([]SessionInfo, error) {
 		workspaceRoot := ""
 		topicID := ""
 		topicTitle := ""
+		profile := ""
 		if metaOK {
 			if !meta.CreatedAt.IsZero() {
 				createdAt = meta.CreatedAt
@@ -237,6 +239,7 @@ func ListSessions(dir string) ([]SessionInfo, error) {
 			workspaceRoot = meta.WorkspaceRoot
 			topicID = meta.TopicID
 			topicTitle = meta.TopicTitle
+			profile = meta.Profile
 		}
 		out = append(out, SessionInfo{
 			Path:           full,
@@ -249,6 +252,7 @@ func ListSessions(dir string) ([]SessionInfo, error) {
 			WorkspaceRoot:  workspaceRoot,
 			TopicID:        topicID,
 			TopicTitle:     topicTitle,
+			Profile:        profile,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

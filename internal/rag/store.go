@@ -957,11 +957,12 @@ func ReadDoc(path string) (string, string, error) {
 	return readDoc(path)
 }
 
-// binaryOfficeExts are formats handled by markitdown (Python) with Go fallback.
-// Only include formats that have a working Go fallback parser.
-// epub/msg have no Go fallback — they only work via markitdown.
-var binaryOfficeExts = map[string]bool{
+// richDocumentExts are rich-text or binary formats handled preferably by markitdown (Python)
+// with Go fallback for some formats.
+var richDocumentExts = map[string]bool{
 	"docx": true, "xlsx": true, "pptx": true,
+	"doc": true, "xls": true, "ppt": true,
+	"epub": true, "msg": true, "html": true, "htm": true,
 }
 
 func readDoc(path string) (string, string, error) {
@@ -983,8 +984,8 @@ func readDoc(path string) (string, string, error) {
 		return content, "markdown", nil
 	}
 
-	// Binary office formats: try markitdown first, fallback to Go parsers.
-	if binaryOfficeExts[ext] {
+	// Rich document formats: try markitdown first, fallback to Go parsers if available.
+	if richDocumentExts[ext] {
 		if findDocConverterScript() != "" {
 			text, err := convertWithMarkitdown(path)
 			if err == nil && len(text) > 0 {
@@ -1011,32 +1012,23 @@ func readDoc(path string) (string, string, error) {
 				return "", ext, fmt.Errorf("read pptx: %w", err)
 			}
 			return content, ext, nil
+		case "html", "htm":
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return "", "", err
+			}
+			return stripHTML(string(data)), ext, nil
+		default:
+			// Formats like doc, ppt, xls, epub, msg have no Go fallback parser.
+			return "", ext, fmt.Errorf(".%s requires markitdown to parse properly (or parsing failed)", ext)
 		}
-	}
-
-	// Markitdown-only formats (no Go fallback): epub, xls, msg.
-	markitdownOnly := ext == "epub" || ext == "xls" || ext == "msg"
-	if markitdownOnly {
-		if findDocConverterScript() == "" {
-			return "", ext, fmt.Errorf(".%s requires markitdown (doc_converter.py not found)", ext)
-		}
-		text, err := convertWithMarkitdown(path)
-		if err != nil {
-			return "", ext, fmt.Errorf("read %s: %w", ext, err)
-		}
-		return text, "markdown", nil
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", "", err
 	}
-	// Strip HTML tags for .html.
-	body := string(data)
-	if ext == "html" || ext == "htm" {
-		body = stripHTML(body)
-	}
-	return body, ext, nil
+	return string(data), ext, nil
 }
 
 // chunkDoc splits a document into indexable chunks. Strategy: split on double

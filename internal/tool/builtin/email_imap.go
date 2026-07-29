@@ -119,19 +119,18 @@ func ProbeAccountIMAP(account string) error {
 	return ProbeIMAPConfig(a.IMAP)
 }
 
-// ReadInboxFor reads the most recent `limit` messages from INBOX (unread only
-// when unreadOnly=true). Exported so the cowork dock's "邮件" tab can preview
-// the inbox WITHOUT going through the agent tool path or the global
-// emailAccounts slice (which is only refreshed on boot). Same pattern as
-// ProbeIMAPConfig: takes a standalone IMAP config, applies its own timeout,
-// returns a friendly error on auth/connection failure.
-func ReadInboxFor(cfg config.IMAPConfig, limit int, unreadOnly bool) ([]EmailMessage, error) {
+// ReadInboxFor reads the most recent `limit` messages from a mailbox (INBOX by
+// default; "Sent" for the sent view). Unread-only when unreadOnly=true (ignored
+// for non-INBOX). Exported so the cowork dock's "邮件" tab can preview mail
+// WITHOUT going through the agent tool path. Same pattern as ProbeIMAPConfig:
+// standalone config, own timeout, friendly error on auth/connection failure.
+func ReadInboxFor(cfg config.IMAPConfig, mailbox string, limit int, unreadOnly bool) ([]EmailMessage, error) {
 	if limit <= 0 {
 		limit = 10
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	return imapRead(ctx, cfg, limit, unreadOnly, time.Time{}, time.Time{})
+	return imapRead(ctx, cfg, mailbox, limit, unreadOnly, false, time.Time{}, time.Time{})
 }
 
 // ProbeIMAPConfig verifies a standalone IMAP config can connect + log in +
@@ -293,21 +292,44 @@ func imapPassword(cfg config.IMAPConfig) string {
 	return ""
 }
 
-// imapRead selects INBOX, fetches the most recent `limit` messages (or unread
-// only). Returns envelopes + a plain-text body preview per message.
-func imapRead(ctx context.Context, cfg config.IMAPConfig, limit int, unreadOnly bool, since, before time.Time) ([]EmailMessage, error) {
+// imapRead selects a mailbox (INBOX by default), fetches the most recent `limit`
+// messages (or unread only). Returns envelopes + a plain-text body preview per
+// message if withBody is true. mailbox may be "INBOX" or a sent folder name;
+// when empty it defaults to INBOX. For sent folders the unread flag filter is
+// ignored (sent mail has no "unread" concept the user cares about).
+func imapRead(ctx context.Context, cfg config.IMAPConfig, mailbox string, limit int, unreadOnly bool, withBody bool, since, before time.Time) ([]EmailMessage, error) {
 	c, err := imapConnect(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = c.Logout() }()
 
-	if _, err := c.Select("INBOX", true); err != nil { // read-only
-		return nil, fmt.Errorf("select inbox: %w", err)
+	mbox := strings.TrimSpace(mailbox)
+	if mbox == "" {
+		mbox = "INBOX"
+	}
+	if _, err := c.Select(mbox, true); err != nil { // read-only
+		// The requested mailbox may not exist under that exact name — providers
+		// use "Sent", "Sent Messages", "已发送", "[Gmail]/Sent Mail", etc. Try
+		// a few common aliases before giving up, so the dock's sent view works
+		// across 139/chinamobile/QQ/Gmail without per-provider config.
+		if mbox != "INBOX" {
+			for _, alias := range []string{"Sent", "Sent Messages", "已发送", "已发送邮件", "[Gmail]/Sent Mail"} {
+				if _, e := c.Select(alias, true); e == nil {
+					mbox = alias
+					err = nil
+					break
+				}
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("select %s: %w", mbox, err)
+		}
 	}
 
 	criteria := &imap.SearchCriteria{}
-	if unreadOnly {
+	if unreadOnly && mbox == "INBOX" {
+		// Only filter unread in the inbox; sent folders show all.
 		criteria.WithoutFlags = []string{imap.SeenFlag}
 	}
 	if !since.IsZero() {
@@ -331,21 +353,36 @@ func imapRead(ctx context.Context, cfg config.IMAPConfig, limit int, unreadOnly 
 	for i, j := 0, len(seqs)-1; i < j; i, j = i+1, j-1 {
 		seqs[i], seqs[j] = seqs[j], seqs[i]
 	}
-	return fetchMessages(c, seqs)
+	return fetchMessages(c, seqs, withBody)
 }
 
 // imapSearch runs a server-side IMAP SEARCH narrowed by from/subject header
 // substrings and/or an internal-date range, then fetches matches. Empty filters
 // are omitted, so a date-only search returns every message in the window.
-func imapSearch(ctx context.Context, cfg config.IMAPConfig, from, subject string, limit int, since, before time.Time) ([]EmailMessage, error) {
+func imapSearch(ctx context.Context, cfg config.IMAPConfig, mailbox, from, subject string, limit int, since, before time.Time) ([]EmailMessage, error) {
 	c, err := imapConnect(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = c.Logout() }()
 
-	if _, err := c.Select("INBOX", true); err != nil {
-		return nil, err
+	mbox := strings.TrimSpace(mailbox)
+	if mbox == "" {
+		mbox = "INBOX"
+	}
+	if _, err := c.Select(mbox, true); err != nil {
+		if mbox != "INBOX" {
+			for _, alias := range []string{"Sent", "Sent Messages", "已发送", "已发送邮件", "[Gmail]/Sent Mail"} {
+				if _, e := c.Select(alias, true); e == nil {
+					mbox = alias
+					err = nil
+					break
+				}
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("select %s: %w", mbox, err)
+		}
 	}
 	// go-imap's SearchCriteria.Header is a map[string][]string of header fields
 	// to match (IMAP SEARCH HEADER). Build it from whichever of from/subject the
@@ -376,19 +413,22 @@ func imapSearch(ctx context.Context, cfg config.IMAPConfig, from, subject string
 	for i, j := 0, len(seqs)-1; i < j; i, j = i+1, j-1 {
 		seqs[i], seqs[j] = seqs[j], seqs[i]
 	}
-	return fetchMessages(c, seqs)
+	return fetchMessages(c, seqs, false)
 }
 
 // fetchMessages FETCHes ENVELOPE + the full body for the given sequence numbers,
 // parsing each via go-message for correct MIME/charset handling. Body preview is
 // the first ~500 chars of the text/plain part (or text/html stripped, fallback).
-func fetchMessages(c *client.Client, seqs []uint32) ([]EmailMessage, error) {
+func fetchMessages(c *client.Client, seqs []uint32, withBody bool) ([]EmailMessage, error) {
 	seqset := new(imap.SeqSet)
 	for _, s := range seqs {
 		seqset.AddNum(s)
 	}
 	messages := make(chan *imap.Message, len(seqs))
-	items := []imap.FetchItem{imap.FetchEnvelope, imap.FetchItem("BODY[]")}
+	items := []imap.FetchItem{imap.FetchEnvelope}
+	if withBody {
+		items = append(items, imap.FetchItem("BODY[]"))
+	}
 	if err := c.Fetch(seqset, items, messages); err != nil {
 		return nil, fmt.Errorf("fetch: %w", err)
 	}
@@ -696,6 +736,7 @@ func (emailReadTool) Execute(ctx context.Context, args json.RawMessage) (string,
 		Limit           int    `json:"limit"`
 		UnreadOnly      bool   `json:"unread_only"`
 		Account         string `json:"account"`
+		Mailbox         string `json:"mailbox"`
 		Since           string `json:"since"`
 		Before          string `json:"before"`
 		SaveAttachments string `json:"save_attachments"`
@@ -714,7 +755,12 @@ func (emailReadTool) Execute(ctx context.Context, args json.RawMessage) (string,
 	if err != nil {
 		return "", err
 	}
-	msgs, err := imapRead(ctx, cfg, p.Limit, p.UnreadOnly, since, before)
+	// p.Mailbox is "" for the default INBOX; "Sent" exposes the sent view.
+	mbox := strings.TrimSpace(p.Mailbox)
+	if mbox == "" {
+		mbox = "INBOX"
+	}
+	msgs, err := imapRead(ctx, cfg, mbox, p.Limit, p.UnreadOnly, true, since, before)
 	if err != nil {
 		return "", friendlyEmailErr(p.Account, err)
 	}
@@ -774,6 +820,7 @@ func (emailSearchTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		Subject string `json:"subject"`
 		Limit   int    `json:"limit"`
 		Account string `json:"account"`
+		Mailbox string `json:"mailbox"`
 		Since   string `json:"since"`
 		Before  string `json:"before"`
 	}
@@ -794,7 +841,7 @@ func (emailSearchTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if err != nil {
 		return "", err
 	}
-	msgs, err := imapSearch(ctx, cfg, p.From, p.Subject, p.Limit, since, before)
+	msgs, err := imapSearch(ctx, cfg, p.Mailbox, p.From, p.Subject, p.Limit, since, before)
 	if err != nil {
 		return "", friendlyEmailErr(p.Account, err)
 	}

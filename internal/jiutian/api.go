@@ -51,6 +51,45 @@ func SetBaseDomain(base string) {
 	BaseURL = base
 }
 
+// BudgetAcquirer gates a request through the global RPM limiter. It's the
+// subset of *provider.RequestBudget this package needs, exposed as an
+// interface to avoid a jiutian→provider import cycle (provider/openai imports
+// jiutian). boot.go injects the real *provider.RequestBudget at startup; it
+// satisfies this interface via RequestBudget.Acquire.
+type BudgetAcquirer interface {
+	Acquire(ctx context.Context, key string, priority bool) error
+}
+
+var (
+	// budget, when set, gates all Jiutian LLM-class calls (image/text,
+	// video/text, images/generations, embeddings) through the global RPM limiter
+	// so tools and RAG share the user's per-minute quota. nil = no limiting.
+	budget BudgetAcquirer
+	// budgetKey is the budget bucket key (baseURL + resolved API key) shared by
+	// all direct Jiutian calls, so they draw from one RPM quota.
+	budgetKey string
+)
+
+// SetBudget installs the global RPM limiter for all Jiutian platform LLM calls.
+// boot calls this after building globalBudget; pass nil to disable. key should
+// be a stable string identifying the Jiutian API key + base URL (the same key
+// form boot uses elsewhere) so all direct Jiutian calls share one quota.
+func SetBudget(b BudgetAcquirer, key string) {
+	budget = b
+	budgetKey = key
+}
+
+// isLLMPath reports whether path targets an LLM-class Jiutian endpoint that
+// counts against the platform's RPM (and thus should be gated by the budget).
+// File-storage paths (/fs/*) are excluded — they are not LLM calls.
+func isLLMPath(path string) bool {
+	switch path {
+	case "/image/text", "/video/text", "/images/generations", "/embeddings", "/chat/completions":
+		return true
+	}
+	return false
+}
+
 // APICall is a shared helper for calling Jiutian platform APIs.
 // It handles API key lookup, HTTP request creation, auth header, response
 // status checking, and JSON response parsing. The result is unmarshaled
@@ -59,6 +98,17 @@ func APICall(ctx context.Context, method, path string, payload any, out any) err
 	apiKey := os.Getenv("JIUTIAN_API_KEY")
 	if apiKey == "" {
 		return fmt.Errorf("JIUTIAN_API_KEY not set")
+	}
+
+	// Gate LLM-class calls (image/video/embeddings/generations) through the
+	// global RPM limiter so multimodal tools, RAG embedding, and the VLM
+	// fallback share the user's per-minute quota with the main conversation.
+	// Background priority (false) so they don't starve interactive requests
+	// when reserve_main is configured. File-storage paths (/fs/*) skip this.
+	if budget != nil && isLLMPath(path) {
+		if err := budget.Acquire(ctx, budgetKey, false); err != nil {
+			return fmt.Errorf("jiutian %s rate-limited: %w", path, err)
+		}
 	}
 
 	var reqBody *bytes.Reader

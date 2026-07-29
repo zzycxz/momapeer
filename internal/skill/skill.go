@@ -69,6 +69,16 @@ type Skill struct {
 	// index from the full (unfiltered) store; the filtered store still omits
 	// disabled skills entirely, keeping them uncallable.
 	Disabled bool
+	// ProfileHidden marks a skill the active product profile's whitelist hides
+	// (e.g. the dev/coding profile hides office skills), NOT a user choice.
+	// Unlike Disabled, a profile-hidden skill is fully OMITTED from the pinned
+	// index: the model neither sees it nor suggests re-enabling it, since the
+	// user didn't turn it off — switching profile brings it back automatically.
+	// This keeps the coding model's prompt free of office-skill descriptions the
+	// user never asked to see. It is still uncallable (the live store filters it
+	// via the profile-disabled name set). Set by callers (boot) when applying a
+	// profile whitelist; mutually exclusive with Disabled for the same skill.
+	ProfileHidden bool
 	// Cold marks a skill whose last use is older than the configured retirement
 	// threshold, so the index tags it [休眠]. Set by callers (boot) from a
 	// UsageTracker; built-in skills are never marked cold. Cosmetic only — a

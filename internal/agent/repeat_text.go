@@ -22,8 +22,10 @@ const (
 	// normal prose is rare, short enough to catch a repeated sentence.
 	repeatN = 8
 	// repeatThreshold is how many times an n-gram must appear before it counts
-	// as a loop. 2 = the passage appears twice back-to-back, the minimum signal.
-	repeatThreshold = 2
+	// as a loop. 3 = the passage appears three times, reducing false positives
+	// on legitimate repeated phrasing (common in Chinese summaries/lists) while
+	// still catching genuine output loops.
+	repeatThreshold = 3
 	// repeatWindowTokens caps how many tokens of recent output we scan, so cost
 	// stays bounded and old, unrelated repetition doesn't fire.
 	repeatWindowTokens = 400

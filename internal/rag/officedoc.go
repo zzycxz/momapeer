@@ -54,20 +54,27 @@ func readPDF(path string) (string, error) {
 		if err == nil && utf8.RuneCountInString(text) > 0 {
 			return fixCJKSpaces(text), nil
 		}
-		// Python failed — fall through to Go fallback.
-		if err != nil {
-			// Log but don't fail; try Go fallback.
-			_ = err
+	}
+
+	// Try markitdown (Python doc converter) for PDF — handles modern PDF
+	// stream encodings that the Go library can't parse.
+	if findDocConverterScript() != "" {
+		text, err := convertWithMarkitdown(path)
+		if err == nil && utf8.RuneCountInString(text) > 0 {
+			return fixCJKSpaces(text), nil
 		}
 	}
 
-	// Fallback: ledongthuc/pdf (pure Go, no table support, no OCR).
+	// Fallback: ledongthuc/pdf (pure Go). Limited — can't parse many
+	// modern PDFs (xref streams, object streams). Returns error on failure
+	// so the caller can report which files were skipped.
 	f, r, err := pdflib.Open(path)
 	if err != nil {
-		return "", fmt.Errorf("open pdf: %w", err)
+		return "", fmt.Errorf("open pdf (Go fallback): %w", err)
 	}
 	defer f.Close()
 	var b strings.Builder
+	pageErrors := 0
 	for i := 1; i <= r.NumPage(); i++ {
 		p := r.Page(i)
 		if p.V.IsNull() {
@@ -75,6 +82,7 @@ func readPDF(path string) (string, error) {
 		}
 		text, err := p.GetPlainText(nil)
 		if err != nil {
+			pageErrors++
 			continue
 		}
 		text = strings.TrimSpace(text)
@@ -83,7 +91,14 @@ func readPDF(path string) (string, error) {
 			b.WriteString("\n\n")
 		}
 	}
-	return fixCJKSpaces(strings.TrimSpace(b.String())), nil
+	result := strings.TrimSpace(b.String())
+	if result == "" {
+		if pageErrors > 0 {
+			return "", fmt.Errorf("pdf: %d/%d pages failed to parse (unsupported stream encoding)", pageErrors, r.NumPage())
+		}
+		return "", fmt.Errorf("pdf: no extractable text found")
+	}
+	return fixCJKSpaces(result), nil
 }
 
 // ocrScriptCandidates lists possible locations of ocr_pdf.py.

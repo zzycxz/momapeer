@@ -115,6 +115,12 @@ type App struct {
 	ragStore    *ragpkg.Store
 	ragPipeline *ragpkg.Pipeline
 	ragSession  *ragpkg.SessionRAGContext
+	// ragExtractor holds the configured extraction model (jiutianExtractor, or
+	// nil when no extract model is set). Kept on the App so boot.RebindRAGBudget
+	// can re-inject the global RPM budget after each boot.Build — without it,
+	// a runtime RPM change (settings rebuild) wouldn't reach RAG extraction
+	// until an app restart, and extraction would stay on a stale/disabled budget.
+	ragExtractor ragpkg.Extractor
 	// heService manages the Hyper-Extract Python server lifecycle.
 	heService *HEService
 	// expertStore + expertOrchestrator power the 专家团 (expert-team) panel:
@@ -449,28 +455,15 @@ func (a *App) initRAG() {
 	if extractor == nil {
 		slog.Warn("rag: extract model not configured — deep extraction disabled (FTS5 still works)")
 	} else {
-		// Wire the global RPM budget into the extractor so RAG extraction
-		// shares the user-configured RPM limit instead of hammering the API
-		// and getting 429'd. Extraction runs at background priority so it
-		// doesn't starve interactive conversation.
-		//
-		// NOTE: globalBudget is initialized inside boot.Build(), which runs
-		// LATER (in restoreOrBuildTabs goroutine). At this point during startup
-		// it may still be nil. We create a local budget from config now, and
-		// also retry wiring after the first boot.Build completes.
-		rpm := 0
-		if c, err := config.Load(); err == nil {
-			rpm = c.LLM.RPM
-		}
-		if rpm > 0 {
-			localBudget := provider.NewRequestBudget(rpm, 0)
-			if bs, ok := extractor.(ragpkg.BudgetSetter); ok {
-				bs.SetBudget(localBudget, "rag-extract")
-				slog.Info("rag: RPM budget wired from config", "rpm", rpm)
-			}
-		} else {
-			slog.Info("rag: RPM not configured (llm.rpm=0), extraction runs unlimited")
-		}
+		// Stash the extractor so the global RPM budget can be wired into it once
+		// boot.Build has initialized globalBudget (it runs later, in
+		// restoreOrBuildTabs). boot.RebindRAGBudget — called from the first
+		// successful Build and again on every settings rebuild — injects the
+		// shared budget so RAG extraction draws from the same per-minute quota
+		// as the main conversation, instead of a separate local budget that
+		// could exceed the configured RPM. Extraction runs at background
+		// priority (reserve_main protects interactive requests).
+		a.ragExtractor = extractor
 	}
 	a.ragPipeline = ragpkg.NewPipeline(store, extractor, cfg, func(ev ragpkg.ProgressEvent) {
 		if a.ctx != nil {
@@ -504,6 +497,15 @@ func (a *App) initRAG() {
 	} else {
 		slog.Info("Hyper-Extract script not found — HE extraction unavailable")
 	}
+
+	// Try to wire the global RPM budget into the extractor now. restoreOrBuildTabs
+	// runs concurrently (started earlier as a goroutine), so globalBudget may or
+	// may not be ready yet; RebindRAGBudget is nil-safe and idempotent. If the
+	// first Build hasn't finished, buildTabController rebinds again once it does.
+	// This call covers the race where Build already completed before initRAG set
+	// up a.ragExtractor (otherwise the extractor would never get the budget).
+	rebindCfg, _ := config.Load()
+	boot.RebindRAGBudget(a.ragExtractor, rebindCfg)
 }
 
 // initScheduler creates the app-level scheduled-task engine, loads persisted
@@ -1523,6 +1525,7 @@ type SessionMeta struct {
 	WorkspaceRoot  string `json:"workspaceRoot,omitempty"`
 	TopicID        string `json:"topicId,omitempty"`
 	TopicTitle     string `json:"topicTitle,omitempty"`
+	Profile        string `json:"profile,omitempty"`
 }
 
 type WorkspaceMeta struct {
@@ -1650,6 +1653,7 @@ func sessionMetaFromInfo(s agent.SessionInfo, title string, current, open bool, 
 		WorkspaceRoot:  s.WorkspaceRoot,
 		TopicID:        s.TopicID,
 		TopicTitle:     s.TopicTitle,
+		Profile:        s.Profile,
 	}
 }
 
@@ -1834,8 +1838,8 @@ func (a *App) PickImportFolder() (string, error) {
 	return dir, nil
 }
 
-// PickImportFiles opens a multiple-file dialog for RAG import.
-// Allows users to select specific documents (PDF, DOCX, TXT, etc.) to import into a collection.
+// PickImportFiles opens a multi-file dialog WITHOUT switching workspace.
+// Supports selecting individual files (not just folders) for import.
 func (a *App) PickImportFiles() ([]string, error) {
 	if a.ctx == nil {
 		return nil, nil
@@ -1846,14 +1850,18 @@ func (a *App) PickImportFiles() ([]string, error) {
 		cur = tab.WorkspaceRoot
 	}
 	a.mu.RUnlock()
-	files, err := runtime.OpenMultipleFilesDialog(a.ctx, runtime.OpenDialogOptions{
-		Title:            "选择要导入的文档（支持批量选择）",
+	selection, err := runtime.OpenMultipleFilesDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:            "选择要导入的文件",
 		DefaultDirectory: dialogDefaultDirectory(cur),
+		Filters: []runtime.FileFilter{
+			{DisplayName: "文档文件", Pattern: "*.pdf;*.docx;*.xlsx;*.pptx;*.xls;*.epub;*.txt;*.md;*.csv;*.tsv;*.json;*.html;*.htm;*.py;*.go;*.js;*.ts;*.yaml;*.yml"},
+			{DisplayName: "所有文件", Pattern: "*"},
+		},
 	})
-	if err != nil || len(files) == 0 {
+	if err != nil || len(selection) == 0 {
 		return nil, err
 	}
-	return files, nil
+	return selection, nil
 }
 
 func dialogDefaultDirectory(preferred string) string {
@@ -2653,6 +2661,13 @@ type SkillView struct {
 	Scope       string `json:"scope"`
 	RunAs       string `json:"runAs"`
 	Enabled     bool   `json:"enabled"`
+	// Active reports whether the skill is in effect under the current product
+	// profile's skill set: true when it is surfaced to the model (in the pinned
+	// index / callable), false when the active profile's whitelist hides it. This
+	// is distinct from Enabled (a user toggle): a profile-hidden skill can be
+	// Enabled=true yet Active=false. The skills page uses this to separate "in
+	// effect for this mode" from "available after switching mode".
+	Active bool `json:"active"`
 }
 
 type SkillRootSkillView struct {
@@ -2686,10 +2701,12 @@ func (a *App) Capabilities() CapabilitiesView {
 	disabled := map[string]ServerView{}
 	var order []string
 	var workspaceRoot string
+	var profileName string
 	a.mu.RLock()
 	if tab := a.activeTabLocked(); tab != nil {
 		ctrl = tab.Ctrl
 		workspaceRoot = tab.WorkspaceRoot
+		profileName = tab.profile
 		for name, s := range tab.disabledMCP {
 			disabled[name] = s
 		}
@@ -2714,6 +2731,9 @@ func (a *App) Capabilities() CapabilitiesView {
 	}
 	if h := ctrl.Host(); h != nil {
 		for _, s := range h.Servers() {
+			if seen[s.Name] {
+				continue
+			}
 			seen[s.Name] = true
 			connected[s.Name] = true
 			view := ServerView{
@@ -2730,6 +2750,9 @@ func (a *App) Capabilities() CapabilitiesView {
 			out.Servers = append(out.Servers, view)
 		}
 		for _, f := range h.Failures() {
+			if seen[f.Name] {
+				continue
+			}
 			seen[f.Name] = true
 			view := ServerView{
 				Name: f.Name, Transport: f.Transport, Status: "failed", BuiltIn: f.Name == "codegraph", Error: f.Error,
@@ -2822,11 +2845,34 @@ func (a *App) Capabilities() CapabilitiesView {
 	}
 	a.mu.Unlock()
 
+	// Resolve the active profile's skill whitelist (if any) so each SkillView can
+	// report whether it is in effect for the current mode. Mirrors boot.go's
+	// profileSkillWhitelist: an empty/non-existent EnabledSkills list means "all
+	// skills active"; a non-empty list is a whitelist and anything outside it is
+	// hidden by the profile (Active=false). Must stay in lockstep with the index
+	// logic in internal/boot/boot.go.
+	var profileWhitelist map[string]bool
+	if cfg, err := config.Load(); err == nil {
+		if prof, perr := cfg.ResolveProfile(strings.TrimSpace(profileName)); perr == nil && len(prof.EnabledSkills) > 0 {
+			profileWhitelist = make(map[string]bool, len(prof.EnabledSkills))
+			for _, n := range prof.EnabledSkills {
+				profileWhitelist[config.SkillNameKey(n)] = true
+			}
+		}
+	}
 	for _, s := range ctrl.AllSkills() {
+		enabled := ctrl.SkillEnabled(s.Name)
+		// A profile whitelist hides skills not named in it. User-disabled skills
+		// are Enabled=false already; profile-hidden ones are Enabled=true but
+		// Active=false.
+		active := enabled
+		if active && profileWhitelist != nil && !profileWhitelist[config.SkillNameKey(s.Name)] {
+			active = false
+		}
 		out.Skills = append(out.Skills, SkillView{
 			Name: s.Name, Description: s.Description,
 			Scope: string(s.Scope), RunAs: string(s.RunAs),
-			Enabled: ctrl.SkillEnabled(s.Name),
+			Enabled: enabled, Active: active,
 		})
 	}
 	out.SkillRoots = skillRootsView()

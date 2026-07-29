@@ -22,13 +22,17 @@ func TestRepeatTextNoRepeat(t *testing.T) {
 func TestRepeatTextDetectsVerbatimLoop(t *testing.T) {
 	var m repeatTextMonitor
 	passage := "the model is stuck repeating the same passage over and over again here "
-	// First occurrence: should not fire.
+	// First and second occurrences: should not fire (threshold is 3, so two
+	// appearances of the same n-gram is still within normal phrasing).
 	if m.append(passage) {
 		t.Fatalf("first occurrence should not fire")
 	}
-	// Second occurrence (same words): n-grams now recur within the window.
+	if m.append(passage) {
+		t.Fatalf("second occurrence should not fire (threshold=3)")
+	}
+	// Third occurrence (same words): n-grams now meet the threshold.
 	if !m.append(passage) {
-		t.Fatalf("verbatim repeat of a passage should be detected")
+		t.Fatalf("verbatim repeat of a passage should be detected on the third occurrence")
 	}
 }
 

@@ -469,6 +469,11 @@ export function HistoryPanel({
                               {!isTrash && s.current && <span className="hist-item__badge hist-item__badge--current">{tr("history.current")}</span>}
                               {!isTrash && !s.current && s.open && <span className="hist-item__badge hist-item__badge--open">{tr("history.open")}</span>}
                               {isTrash && <span className="hist-item__badge hist-item__badge--deleted">{tr("history.deleted")}</span>}
+                              {isTrash && (
+                                <span className="hist-item__badge" style={{ background: s.profile === "cowork" ? "rgba(242, 107, 49, 0.15)" : "rgba(100, 150, 255, 0.15)", color: s.profile === "cowork" ? "#f26b31" : "#80aaff", border: "none" }}>
+                                  {s.profile === "cowork" ? "办公" : "编码"}
+                                </span>
+                              )}
                               {sessionLocation(s, tr) && <span className="hist-item__scope">{sessionLocation(s, tr)}</span>}
                               <span className="hist-item__metaspacer" />
                               <span className="hist-item__stat">{tr(s.turns === 1 ? "history.turnOne" : "history.turnOther", { n: s.turns })}</span>

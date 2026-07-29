@@ -2530,32 +2530,21 @@ function JiutianSection() {
   ];
 
   return (
-    <section className="mem-section">
-      <div className="cap-skills-head">
-        <div className="cap-skills-head__copy">
-          <div className="cap-skills-head__title">{t("settings.jiutianTitle")}</div>
-          <div className="cap-skills-head__summary">{t("settings.jiutianSummary")}</div>
-        </div>
+    <section className="mem-section cap-tools">
+      <div className="cap-tools__head">
+        <div className="cap-tools__title">{t("settings.jiutianTitle")}</div>
+        <div className="cap-tools__summary">{t("settings.jiutianSummary")}</div>
       </div>
-      <div className="cap-skills">
+      <div className="cap-tools__list">
         {fields.map(({ key, labelKey, hintKey, toolName }) => {
           const label = t(labelKey);
           const hint = t(hintKey);
           return (
-          <div key={key} className={`cap-skill-card${!jiutian[key] ? " cap-skill-card--disabled" : ""}`}>
-            <div className="cap-skill-card__top">
-              <button className="cap-skill-card__toggle" type="button" tabIndex={-1}>
-                <span className="cap-skill-card__head">
-                  <span className="cap-skill-card__icon">/</span>
-                  <span className="cap-skill-card__main">
-                    <span className="cap-skill-card__command">{label}</span>
-                    <span className="cap-skill-card__badges">
-                      <span className="cap-skill-badge cap-skill-badge--project">{t("settings.jiutianBadge")}</span>
-                      {!jiutian[key] && <span className="cap-skill-badge cap-skill-badge--off">{t("settings.jiutianOff")}</span>}
-                    </span>
-                  </span>
-                </span>
-              </button>
+            <div key={key} className={`cap-tool-row${!jiutian[key] ? " cap-tool-row--off" : ""}`}>
+              <div className="cap-tool-row__copy">
+                <div className="cap-tool-row__label">{label}</div>
+                <div className="cap-tool-row__hint">{hint}</div>
+              </div>
               <Tooltip label={`${label}${jiutian[key] ? t("settings.jiutianDisable") : t("settings.jiutianEnable")}`}>
                 <label className="cap-switch" aria-label={`${label}${jiutian[key] ? t("settings.jiutianDisable") : t("settings.jiutianEnable")}`}>
                   <input
@@ -2568,8 +2557,6 @@ function JiutianSection() {
                 </label>
               </Tooltip>
             </div>
-            <div className="cap-skill-card__desc">{hint}</div>
-          </div>
           );
         })}
       </div>
@@ -4284,6 +4271,7 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
       // Multi-account list drives the mail UI when present. Mirrored onto
       // smtp/imap by the backend for legacy paths.
       emailAccounts: base.emailAccounts ?? [],
+      allowHeadlessEmail: base.allowHeadlessEmail ?? false,
     };
   });
   
@@ -4681,15 +4669,6 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
                           onBlur={() => void commitMailThenProbe(i, acct.name)}
                           onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                         />
-                        <input
-                          className="mem-input set-grow"
-                          type="password"
-                          placeholder={acct.passwordSet ? t("cowork.secretSet") : t("cowork.mailAuthCode")}
-                          value={acct.password}
-                          onChange={e => patchAccount(i, { password: e.target.value })}
-                          onBlur={() => void commitMailThenProbe(i, acct.name)}
-                          onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                        />
                         </label>
                         <label className="cowork-mail-account__field cowork-mail-account__field--grow">
                           <span className="cowork-mail-account__field-label">{t("cowork.mailAuthCode")}</span>
@@ -4722,17 +4701,17 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
                         </button>
                         </div>
                       </div>
-                      {/* Advanced server settings (collapsible). The first row
-                          covers the common fields (name/email/auth-code); this
-                          section exposes SMTP/IMAP host+port+encryption so the
-                          user can configure a NON-139 mailbox (e.g. chinamobile
-                          enterprise, QQ, Gmail). Defaults to collapsed since
-                          139 users never need it. */}
+                      {/* Advanced server settings (collapsible). Only the server
+                          ADDRESSES are exposed — ports (465/993) and encryption
+                          (SSL/TLS) are fixed defaults that work for 139,
+                          chinamobile, and most providers, so they're not shown
+                          to avoid clutter. The user only overrides the host when
+                          the auto-inferred smtp./imap.<domain> is wrong. */}
                       <details className="cowork-mail-account__advanced">
                         <summary>{t("cowork.mailAdvanced")}</summary>
                         <div className="cowork-mail-account__server-row">
                           <label className="cowork-mail-account__server-label">
-                            <span>SMTP {t("cowork.mailServer")}</span>
+                            <span>SMTP {t("cowork.mailServer")} <em className="cowork-mail-account__server-ex">{t("cowork.mailServerExSMTP")}</em></span>
                             <input
                               className="mem-input"
                               placeholder="smtp.example.com"
@@ -4742,34 +4721,8 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
                               onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                             />
                           </label>
-                          <label className="cowork-mail-account__server-label cowork-mail-account__server-label--port">
-                            <span>SMTP {t("cowork.mailPort")}</span>
-                            <input
-                              className="mem-input"
-                              type="number"
-                              placeholder="465"
-                              value={acct.smtp.port || ""}
-                              onChange={e => patchAccount(i, { smtp: { ...acct.smtp, port: Number(e.target.value) || 0 } })}
-                              onBlur={() => void commitMailThenProbe(i, acct.name)}
-                            />
-                          </label>
                           <label className="cowork-mail-account__server-label">
-                            <span>{t("cowork.mailEncryption")}</span>
-                            <select
-                              className="mem-input"
-                              value={acct.smtp.encryptionMode || "tls"}
-                              onChange={e => patchAccount(i, { smtp: { ...acct.smtp, encryptionMode: e.target.value, useTLS: e.target.value === "tls" } })}
-                              onBlur={() => void commitMailThenProbe(i, acct.name)}
-                            >
-                              <option value="tls">{t("cowork.mailEncTLS")}</option>
-                              <option value="starttls">{t("cowork.mailEncSTARTTLS")}</option>
-                              <option value="none">{t("cowork.mailEncNone")}</option>
-                            </select>
-                          </label>
-                        </div>
-                        <div className="cowork-mail-account__server-row">
-                          <label className="cowork-mail-account__server-label">
-                            <span>IMAP {t("cowork.mailServer")}</span>
+                            <span>IMAP {t("cowork.mailServer")} <em className="cowork-mail-account__server-ex">{t("cowork.mailServerExIMAP")}</em></span>
                             <input
                               className="mem-input"
                               placeholder="imap.example.com"
@@ -4779,18 +4732,10 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
                               onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                             />
                           </label>
-                          <label className="cowork-mail-account__server-label cowork-mail-account__server-label--port">
-                            <span>IMAP {t("cowork.mailPort")}</span>
-                            <input
-                              className="mem-input"
-                              type="number"
-                              placeholder="993"
-                              value={acct.imap.port || ""}
-                              onChange={e => patchAccount(i, { imap: { ...acct.imap, port: Number(e.target.value) || 0 } })}
-                              onBlur={() => void commitMailThenProbe(i, acct.name)}
-                            />
-                          </label>
                         </div>
+                        <span className="cowork-mail-account__server-note">
+                          {t("cowork.mailServerNote")}
+                        </span>
                       </details>
                       {/* Test-connection row: an explicit button so the user can
                           verify connectivity on demand (not only after a save),
@@ -4832,6 +4777,23 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
             >
               {t("cowork.mailAdd")}
             </button>
+            {/* Allow scheduled tasks to send email without interactive approval.
+                Headless mode (no tab) otherwise denies email_send as an
+                irreversible outward op. Surfaced as a checkbox so the user
+                explicitly opts in, rather than silently defaulting. */}
+            <label className="cowork-mail-autosend" title={t("cowork.mailAutoSendHint")}>
+              <input
+                type="checkbox"
+                checked={!!draft.allowHeadlessEmail}
+                onChange={e => setDraft(d => {
+                  const n = { ...d, allowHeadlessEmail: e.target.checked };
+                  dirtyRef.current = true;
+                  commitDraft(n);
+                  return n;
+                })}
+              />
+              <span>{t("cowork.mailAutoSend")}</span>
+            </label>
           </div>
         </OptionalModule>
 

@@ -339,6 +339,7 @@ export function Composer({
   onSwitchModel,
   onSetEffort,
   insertRequest,
+  onInsertComplete,
   disabled,
   decisionPending = false,
   ready,
@@ -374,6 +375,7 @@ export function Composer({
   onSwitchModel: (name: string) => void;
   onSetEffort: (level: string) => void;
   insertRequest?: ComposerInsertRequest | null;
+  onInsertComplete?: () => void;
   disabled?: boolean;
   decisionPending?: boolean;
   // ready/cwd/running re-trigger the command fetch: Commands() returns only
@@ -718,10 +720,11 @@ export function Composer({
     const ref = parseWorkspaceReference(insertRequest.text);
     if (ref) {
       addWorkspaceReference(ref);
-      return;
+    } else {
+      insertTextAtCaret(insertRequest.text);
     }
-    insertTextAtCaret(insertRequest.text);
-  }, [insertRequest]);
+    onInsertComplete?.();
+  }, [insertRequest, onInsertComplete]);
 
   const expandPastedBlocks = (displayText: string): string => {
     let expanded = displayText;

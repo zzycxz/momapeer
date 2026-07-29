@@ -39,6 +39,7 @@ import (
 	"github.com/zzycxz/momapeer/internal/permission"
 	"github.com/zzycxz/momapeer/internal/plugin"
 	"github.com/zzycxz/momapeer/internal/provider"
+	"github.com/zzycxz/momapeer/internal/rag"
 	openaiprov "github.com/zzycxz/momapeer/internal/provider/openai"
 	"github.com/zzycxz/momapeer/internal/sandbox"
 	"github.com/zzycxz/momapeer/internal/secret"
@@ -64,8 +65,85 @@ var ErrUnknownModel = errors.New("unknown model")
 var globalBudget *provider.RequestBudget
 
 // GlobalBudget exposes the budget for the desktop layer (status display, cost
-// estimates). May be nil when limiting is off.
+// estimates, and direct callers like RagAsk that talk HTTP outside the provider
+// layer). May be nil when limiting is off.
 func GlobalBudget() *provider.RequestBudget { return globalBudget }
+
+// jiutianBudgetKey returns the budget bucket key for direct Jiutian platform
+// calls (image/video tools, RAG embedding, the VLM fallback). Because
+// BudgetKeyForConfig keys only on baseURL+apiKey (not name), this resolves to
+// the SAME bucket the main conversation uses when it targets the Jiutian
+// endpoint with JIUTIAN_API_KEY — so all such calls share one per-minute quota,
+// matching how the platform meters a single API key. The placeholder name is
+// passed only to satisfy the call-site signature.
+func jiutianBudgetKey() string {
+	return provider.BudgetKeyForConfig("jiutian-direct", jiutian.BaseURL, os.Getenv("JIUTIAN_API_KEY"))
+}
+
+// ragBudgetKey returns the budget bucket key for RAG extraction (the
+// jiutianExtractor). It resolves the model with the SAME priority order initRAG
+// uses (extract_model → fast_task_model → default_model) so the key matches the
+// endpoint the extractor actually hits. If the model can't be resolved it falls
+// back to the generic Jiutian key so extraction is still gated under one bucket.
+func ragBudgetKey(cfg *config.Config) string {
+	if cfg != nil {
+		ref := strings.TrimSpace(cfg.Cowork.ExtractModel)
+		if ref == "" {
+			ref = strings.TrimSpace(cfg.Agent.FastTaskModel)
+		}
+		if ref == "" {
+			ref = strings.TrimSpace(cfg.DefaultModel)
+		}
+		if ref != "" {
+			if e, ok := cfg.ResolveModel(ref); ok {
+				return provider.BudgetKeyForConfig("rag-extract", e.BaseURL, e.APIKey())
+			}
+		}
+	}
+	return jiutianBudgetKey()
+}
+
+// RebindRAGBudget re-injects the current globalBudget into an extractor and the
+// Jiutian direct-call path, so a runtime RPM change (settings rebuild) or the
+// first boot.Build propagates to RAG extraction / multimodal tools / embedding
+// without an app restart. extractor may be nil or not implement rag.BudgetSetter
+// (e.g. HE-based extraction), in which case only the Jiutian path is rebound.
+// Pass the loaded config so the RAG bucket key resolves to the extract model.
+func RebindRAGBudget(extractor any, cfg *config.Config) {
+	// Always rebind the Jiutian direct path — covers multimodal tools, embedding,
+	// and the VLM fallback regardless of which extractor is in use.
+	if globalBudget != nil {
+		jiutian.SetBudget(globalBudget, jiutianBudgetKey())
+	}
+	// Rebind the extractor if it supports it (jiutianExtractor does; HE-based
+	// extraction runs in a subprocess and is not gated here).
+	if extractor == nil {
+		return
+	}
+	if bs, ok := extractor.(rag.BudgetSetter); ok && globalBudget != nil {
+		bs.SetBudget(globalBudget, ragBudgetKey(cfg))
+	}
+}
+
+// RagAskBudgetKey returns the budget bucket key for a knowledge-base Q&A call,
+// resolving from cfg the same model RagAsk uses (fast_task_model, then the
+// default). Callers that talk /chat/completions directly (outside the provider
+// layer) use this with GlobalBudget().Acquire so their calls share the
+// per-minute quota of the model they target.
+func RagAskBudgetKey(cfg *config.Config) string {
+	if cfg != nil {
+		ref := strings.TrimSpace(cfg.Agent.FastTaskModel)
+		if ref == "" {
+			ref = strings.TrimSpace(cfg.DefaultModel)
+		}
+		if ref != "" {
+			if e, ok := cfg.ResolveModel(ref); ok {
+				return provider.BudgetKeyForConfig("rag-ask", e.BaseURL, e.APIKey())
+			}
+		}
+	}
+	return jiutianBudgetKey()
+}
 
 // Options carries the per-run knobs a frontend chooses; everything else is read
 // from configuration. Model "" falls back to the configured default_model;
@@ -204,6 +282,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// default) disables limiting; NewProviderWithProxy then passes providers
 	// through unwrapped, preserving backward compatibility.
 	globalBudget = provider.NewRequestBudget(cfg.LLM.RPM, cfg.LLM.ReserveMain)
+	// Re-inject the fresh budget into the Jiutian direct-call path so multimodal
+	// tools, RAG embedding, and the VLM fallback share this quota on every
+	// rebuild (a runtime RPM change re-runs Build). Extraction's per-extractor
+	// binding is rebound separately by RebindRAGBudget from the desktop layer,
+	// which owns the extractor instance.
+	jiutian.SetBudget(globalBudget, jiutianBudgetKey())
 	httpClient, err := netclient.NewHTTPClient(proxySpec, netclient.TransportOptions{})
 	if err != nil {
 		return nil, err
@@ -348,16 +432,44 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		coldSet[config.SkillNameKey(n)] = true
 	}
 	indexedSkills := make([]skill.Skill, 0, len(allSkills))
-	for _, s := range allSkills {
-		disabled := cfg.IsSkillDisabled(s.Name) || isSkillDisabledByName(disabledNames, s.Name)
-		if !disabled && whitelist != nil && !whitelist[config.SkillNameKey(s.Name)] {
-			disabled = true
+	// userDisabledSet is the config-only disabled set (what the user explicitly
+	// turned off), WITHOUT the profile's whitelist hiding mixed in. We need it
+	// separate from disabledNames (which applyProfileToSkillDisabled merged the
+	// whitelist-hidden names into) so the index can distinguish "user turned this
+	// off → keep in index as [关闭], hint at re-enabling" from "profile whitelist
+	// hid this → omit from index entirely". Profile.DisabledSkills (additive) are
+	// treated as user intent here: a profile that explicitly disables a skill is
+	// closer to "off" than to "hidden by default".
+	userDisabledSet := make(map[string]bool, len(cfg.DisabledSkillNames()))
+	for _, n := range cfg.DisabledSkillNames() {
+		userDisabledSet[config.SkillNameKey(n)] = true
+	}
+	if opts.Profile != nil {
+		for _, n := range opts.Profile.DisabledSkills {
+			userDisabledSet[config.SkillNameKey(n)] = true
 		}
-		s.Disabled = disabled
+	}
+	for _, s := range allSkills {
+		userDisabled := userDisabledSet[config.SkillNameKey(s.Name)]
+		// A profile whitelist (e.g. the dev profile) hides skills NOT named in it.
+		// This is distinct from a user turning a skill off: profile hiding is
+		// automatic and reversible by switching profile, so it must NOT pollute the
+		// coding model's prompt with office-skill descriptions the user never opted
+		// out of. We tag such skills ProfileHidden and skip them entirely below —
+		// the model neither sees them nor suggests re-enabling. User-disabled skills
+		// stay in the index with [关闭] so the model can hint at re-enabling.
+		profileHidden := !userDisabled && whitelist != nil && !whitelist[config.SkillNameKey(s.Name)]
+		s.Disabled = userDisabled
+		s.ProfileHidden = profileHidden
 		// Mark cold (long-unused) skills. A skill that's both disabled and cold
 		// shows only [关闭] — user intent outranks auto-retirement in display.
-		if !disabled && s.Scope != skill.ScopeBuiltin && coldSet[config.SkillNameKey(s.Name)] {
+		if !userDisabled && s.Scope != skill.ScopeBuiltin && coldSet[config.SkillNameKey(s.Name)] {
 			s.Cold = true
+		}
+		// Profile-hidden skills are omitted from the pinned index (zero prompt
+		// cost). User-disabled ones still enter it, tagged [关闭].
+		if profileHidden {
+			continue
 		}
 		indexedSkills = append(indexedSkills, s)
 	}
@@ -689,6 +801,25 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 	}
 	eagerSpecs = append(eagerSpecs, opts.ExtraPlugins...)
+
+	// Deduplicate specs across all tiers by name. This prevents duplicated startup
+	// attempts when a built-in spec (like codegraph) overlaps with an entry loaded
+	// from mcp.json or legacy claude_desktop_config.json.
+	seenSpec := make(map[string]bool)
+	dedupSpecs := func(specs []plugin.Spec) []plugin.Spec {
+		var out []plugin.Spec
+		for _, s := range specs {
+			if seenSpec[s.Name] {
+				continue
+			}
+			seenSpec[s.Name] = true
+			out = append(out, s)
+		}
+		return out
+	}
+	eagerSpecs = dedupSpecs(eagerSpecs)
+	lazySpecs = dedupSpecs(lazySpecs)
+	bgSpecs = dedupSpecs(bgSpecs)
 
 	// Apply caller-supplied stderr override to every spec across tiers.
 	if opts.Stderr != nil {

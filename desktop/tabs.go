@@ -1077,6 +1077,14 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 		return
 	}
 
+	// boot.Build just (re)initialized the global RPM budget. Rebind it into the
+	// RAG extractor and the Jiutian direct-call path so extraction / multimodal
+	// tools / embedding share the same per-minute quota as the main conversation.
+	// On first launch this is when globalBudget first becomes available (initRAG
+	// runs before Build); on later tabs it's an idempotent refresh. cfg is this
+	// tab's loaded config, used to resolve the RAG bucket key.
+	boot.RebindRAGBudget(a.ragExtractor, cfg)
+
 	a.bindControllerDisplayRecorder(ctrl)
 	ctrl.EnableInteractiveApproval()
 	applyTabModeToController(ctrl, tab.mode)
@@ -1657,7 +1665,7 @@ func removeString(values []string, value string) []string {
 
 func orderedTopicIDs(explicit []string, titleMap map[string]string) []string {
 	seen := map[string]bool{}
-	out := make([]string, 0, len(explicit)+len(titleMap))
+	out := make([]string, 0, len(explicit))
 	for _, tid := range explicit {
 		tid = strings.TrimSpace(tid)
 		if tid == "" || seen[tid] {
@@ -1666,9 +1674,9 @@ func orderedTopicIDs(explicit []string, titleMap map[string]string) []string {
 		seen[tid] = true
 		out = append(out, tid)
 	}
-	var remaining []string
+	remaining := make([]string, 0, len(titleMap))
 	for tid := range titleMap {
-		if !seen[tid] {
+		if tid != "" && !seen[tid] {
 			remaining = append(remaining, tid)
 		}
 	}
@@ -2899,6 +2907,7 @@ func (a *App) ListProjectTree(profile string) []ProjectNode {
 	type topicSummary struct {
 		turns          int
 		lastActivityAt int64
+		profile        string
 	}
 	topicSummaries := map[string]topicSummary{}
 	for _, dir := range a.knownSessionDirs() {
@@ -2916,6 +2925,9 @@ func (a *App) ListProjectTree(profile string) []ProjectNode {
 			lastActivityAt := info.LastActivityAt.UnixMilli()
 			if lastActivityAt > summary.lastActivityAt {
 				summary.lastActivityAt = lastActivityAt
+			}
+			if summary.profile == "" && info.Profile != "" {
+				summary.profile = info.Profile
 			}
 			topicSummaries[key] = summary
 		}
@@ -2948,6 +2960,12 @@ func (a *App) ListProjectTree(profile string) []ProjectNode {
 		}
 		status.status = mergeTopicStatus(status.status, activityStatusForTab(tab))
 		openTopics[key] = status
+		
+		summary := topicSummaries[key]
+		if summary.profile == "" && tab.profile != "" {
+			summary.profile = tab.profile
+			topicSummaries[key] = summary
+		}
 	}
 	a.mu.RUnlock()
 
@@ -2965,6 +2983,17 @@ func (a *App) ListProjectTree(profile string) []ProjectNode {
 		for _, id := range globalTopicIDs {
 			title := globalTitleMap[id]
 			summary := topicSummaries[topicSummaryKey("global", "", id)]
+			effSummary := summary.profile
+			if effSummary == "" {
+				effSummary = config.ProfileDev
+			}
+			effProfile := profile
+			if effProfile == "" {
+				effProfile = config.ProfileDev
+			}
+			if effSummary != effProfile {
+				continue
+			}
 			status := openTopics[topicSummaryKey("global", "", id)]
 			children = append(children, ProjectNode{
 				Key:            "global_topic_" + id,
@@ -3014,6 +3043,17 @@ func (a *App) ListProjectTree(profile string) []ProjectNode {
 				topicTitle = topicTitleForTab("project", p.Root, tid)
 			}
 			summary := topicSummaries[topicSummaryKey("project", p.Root, tid)]
+			effSummary := summary.profile
+			if effSummary == "" {
+				effSummary = config.ProfileDev
+			}
+			effProfile := profile
+			if effProfile == "" {
+				effProfile = config.ProfileDev
+			}
+			if effSummary != effProfile {
+				continue
+			}
 			status := openTopics[topicSummaryKey("project", p.Root, tid)]
 			children = append(children, ProjectNode{
 				Key:            "topic_" + tid,

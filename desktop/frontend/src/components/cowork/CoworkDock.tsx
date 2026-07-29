@@ -278,11 +278,11 @@ function TodayView() {
 
     // 2. 异步慢加载：邮件探针与 50 封邮件列表（远程请求）
     Promise.all([
-      (app as unknown as { ProbeMailAccount: () => Promise<MailProbeResult> })
-        .ProbeMailAccount()
-        .catch(() => ({ ok: false, status: "error", message: "" } as MailProbeResult)),
-      (app as unknown as { InboxPreview?: (n: number) => Promise<InboxItem[]> })
-        .InboxPreview?.(50)
+      (app as unknown as { ProbeMailAccount: (name: string) => Promise<MailProbeResult> })
+        .ProbeMailAccount("")
+        .catch(() => ({ ok: false, status: "error", message: "Wails调用异常" } as MailProbeResult)),
+      (app as unknown as { InboxPreview?: (mailbox: string, n: number) => Promise<InboxItem[]> })
+        .InboxPreview?.("INBOX", 50)
         .catch(() => [] as InboxItem[]) ?? Promise.resolve([] as InboxItem[]),
     ]).then(([mb, inb]) => {
       setProbe(mb);
@@ -293,10 +293,6 @@ function TodayView() {
 
   useEffect(() => {
     refresh();
-    const h = window.setInterval(() => {
-      refresh();
-    }, 60000);
-    return () => window.clearInterval(h);
   }, [refresh]);
 
   // 移除整页阻塞 loading，改为局部静默刷新，防止切换页卡卡顿
@@ -320,7 +316,6 @@ function TodayView() {
     .slice(0, 3);
 
   const mailOk = probe?.status === "ok";
-  const mailUnconfigured = probe?.status === "unconfigured" || !probe;
   const unreadCount = inbox?.length ?? 0;
 
   return (
@@ -336,14 +331,14 @@ function TodayView() {
             <div>1. <CalendarClock size={13} style={{ color: "#8b949e", margin: "0 2px", verticalAlign: "middle" }} />今日安排核心日程 {todaysEvents.length} 项。</div>
             <div>2. <Mail size={13} style={{ color: "#58a6ff", margin: "0 2px", verticalAlign: "middle" }} />待处理未读件 {unreadCount} 封。</div>
             <div>3. ☕ 当前时段暂无紧迫议程。</div>
-            <div>4. 🤖 建议点击下方按钮，唤起 AI 定制工作优先级。</div>
+            <div>4. 🤖 请点击下方按钮，获取昨日邮件工作总结。</div>
           </div>
           <div className="cowork-today__briefing-actions">
             <button 
               className="rag-toolbar__btn" 
               style={{ background: "#f26522", color: "#fff", border: "none" }}
               onClick={() => {
-                const prompt = `请帮我生成今日的行政决策早报及工作优先级指引。已知信息：今日安排核心日程 ${todaysEvents.length} 项，待处理未读件 ${unreadCount} 封。`;
+                const prompt = `请生成今日行政决策早报。在早报开头，请务必直接列出以下现状信息：\n1. 今日安排核心日程 ${todaysEvents.length} 项。\n2. 待处理未读件 ${unreadCount} 封。\n3. 当前时段的紧迫议程。\n4. 昨日邮件的重要内容。\n\n接下来，请调用邮箱等工具分析上述内容，并向我简炼总结：今日还需要做的事情，以及昨天已经进行或遗留的重要事项。`;
                 window.dispatchEvent(new CustomEvent("cowork:insert-text", { detail: prompt }));
               }}
             >
@@ -480,16 +475,21 @@ function MailView() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [openKey, setOpenKey] = useState<string | null>(null);
+  // folder: "inbox" (unread INBOX) or "sent" (Sent folder). Drives which mailbox
+  // InboxPreview reads and the tab label.
+  const [folder, setFolder] = useState<"inbox" | "sent">("inbox");
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
+      const mailbox = folder === "sent" ? "Sent" : "INBOX";
       const [mb, inb] = await Promise.all([
-        (app as unknown as { ProbeMailAccount: () => Promise<MailProbeResult> })
-          .ProbeMailAccount()
-          .catch(() => ({ ok: false, status: "error", message: "" } as MailProbeResult)),
-        (app as unknown as { InboxPreview?: (n: number) => Promise<InboxItem[]> }).InboxPreview?.(30) ??
+        (app as unknown as { ProbeMailAccount: (name: string) => Promise<MailProbeResult> })
+          .ProbeMailAccount("")
+          .catch(() => ({ ok: false, status: "error", message: "Wails调用异常" } as MailProbeResult)),
+        (app as unknown as { InboxPreview?: (mailbox: string, n: number) => Promise<InboxItem[]> })
+          .InboxPreview?.(mailbox, 30) ??
           Promise.resolve([] as InboxItem[]),
       ]);
       setProbe(mb);
@@ -499,14 +499,10 @@ function MailView() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [folder]);
 
   useEffect(() => {
     refresh();
-    const h = window.setInterval(() => {
-      refresh();
-    }, 120000);
-    return () => window.clearInterval(h);
   }, [refresh]);
 
   const mailOk = probe?.status === "ok";
@@ -535,6 +531,24 @@ function MailView() {
           <RefreshCw size={13} className={loading ? "spin" : ""} />
         </button>
       </div>
+
+      {/* Inbox / Sent folder switch. Only show when mail is configured. */}
+      {!mailUnconfigured && !error && (
+        <div className="cowork-mailtab__folders">
+          <button
+            className={"cowork-mailtab__folder" + (folder === "inbox" ? " cowork-mailtab__folder--active" : "")}
+            onClick={() => setFolder("inbox")}
+          >
+            {t("coworkDock.mailInbox") || "收件箱"}
+          </button>
+          <button
+            className={"cowork-mailtab__folder" + (folder === "sent" ? " cowork-mailtab__folder--active" : "")}
+            onClick={() => setFolder("sent")}
+          >
+            {t("coworkDock.mailSent") || "发件箱"}
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="cowork-dock__loading">…</div>

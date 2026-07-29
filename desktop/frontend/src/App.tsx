@@ -1828,6 +1828,7 @@ export default function App() {
 
   const closeWorkspacePanel = useCallback(() => {
     closeTransientOverlays();
+    setCoworkDockOpen(false);
     if (!workspacePanelOpen) {
       return;
     }
@@ -2558,12 +2559,13 @@ export default function App() {
 
   const mainNode = (
     <main className="main">
-      {preferenceOpen ? (
+      {preferenceOpen && (
         <PreferencePanel 
           title={t("preference.title") || "编码偏好"}
           onClose={() => setPreferenceOpen(false)}
         />
-      ) : sidebarImDetailConnection ? (
+      )}
+      {sidebarImDetailConnection ? (
         <SidebarImConnectionDetail
           connection={sidebarImDetailConnection}
           onClose={() => setSidebarImDetailConnectionId("")}
@@ -2666,6 +2668,7 @@ export default function App() {
         onSwitchModel={switchModel}
         onSetEffort={setEffort}
         insertRequest={composerInsertRequest}
+        onInsertComplete={() => setComposerInsertRequest(null)}
         disabled={state.meta?.ready === false || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
         decisionPending={state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
         ready={state.meta?.ready === true}

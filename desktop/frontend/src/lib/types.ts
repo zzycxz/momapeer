@@ -284,6 +284,7 @@ export interface SessionMeta {
   workspaceRoot?: string;
   topicId?: string;
   topicTitle?: string;
+  profile?: string;
 }
 
 // SessionReference is a session selected via @ past:chats for context injection.
@@ -472,6 +473,9 @@ export interface SkillView {
   scope: string;
   runAs: string;
   enabled: boolean;
+  /** In effect under the current product profile. A profile whitelist can hide a
+   * skill the user left enabled — enabled=true, active=false. */
+  active?: boolean;
 }
 export interface SkillRootSkillView {
   name: string;
@@ -1195,6 +1199,9 @@ export interface CoWorkSettingsView {
   // overwrite); the legacy smtp/imap single-pair fields mirror the Default
   // account for backward compat.
   emailAccounts: EmailAccountView[];
+  // When true, email_send is added to permissions.Allow so scheduled tasks can
+  // send email in headless mode (no interactive user to approve).
+  allowHeadlessEmail: boolean;
 }
 
 // EmailAccountView is one mailbox in the multi-account list. password is

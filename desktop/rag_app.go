@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/zzycxz/momapeer/internal/boot"
 	"github.com/zzycxz/momapeer/internal/config"
 	"github.com/zzycxz/momapeer/internal/jiutian"
 	"github.com/zzycxz/momapeer/internal/rag"
@@ -868,6 +869,16 @@ func (a *App) RagAsk(collection, question string) (string, error) {
 
 	apiCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
+
+	// Gate this direct /chat/completions call through the global RPM limiter so
+	// knowledge-base Q&A shares the user's per-minute quota with the main
+	// conversation (it targets the same fast_task_model). Background priority
+	// (false) so it waits for reserve_main instead of starving chat.
+	if b := boot.GlobalBudget(); b != nil {
+		if err := b.Acquire(apiCtx, boot.RagAskBudgetKey(cfg), false); err != nil {
+			return "", fmt.Errorf("RagAsk rate-limited: %w", err)
+		}
+	}
 
 	req, err := http.NewRequestWithContext(apiCtx, "POST", baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {

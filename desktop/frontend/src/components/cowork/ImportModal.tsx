@@ -40,9 +40,8 @@ export function ImportModal({
         const folder = await app.PickImportFolder();
         if (folder) paths = [folder];
       } else {
-        // Mock / invoke file picking from app bridge if available, fallback to folder pick
-        const folderOrFiles = await app.PickImportFolder();
-        if (folderOrFiles) paths = [folderOrFiles];
+        const files = await app.PickImportFiles();
+        if (files && files.length > 0) paths = files;
       }
 
       if (paths.length === 0) {

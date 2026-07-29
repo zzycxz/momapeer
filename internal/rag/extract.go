@@ -276,6 +276,7 @@ func (p *Pipeline) EnqueuePaths(collection string, paths []string, nodePrompt, e
 		collection = "default"
 	}
 	var jobIDs []string
+	var skippedFiles []string
 	for _, root := range paths {
 		files, err := walkDocs(root)
 		if err != nil {
@@ -286,6 +287,7 @@ func (p *Pipeline) EnqueuePaths(collection string, paths []string, nodePrompt, e
 			jid, err := p.enqueueFile(collection, root, fpath, nodePrompt, edgePrompt, force)
 			if err != nil {
 				p.logf("rag: enqueue %s failed: %v", fpath, err)
+				skippedFiles = append(skippedFiles, fmt.Sprintf("%s (%v)", filepath.Base(fpath), err))
 				continue
 			}
 			if jid != "" {
@@ -297,6 +299,10 @@ func (p *Pipeline) EnqueuePaths(collection string, paths []string, nodePrompt, e
 	select {
 	case p.wake <- struct{}{}:
 	default:
+	}
+	// Log skipped files so they show in the app log and can be surfaced to the user.
+	if len(skippedFiles) > 0 {
+		p.logf("rag: %d files imported, %d skipped: %s", len(jobIDs), len(skippedFiles), strings.Join(skippedFiles, "; "))
 	}
 	return jobIDs, nil
 }
@@ -641,7 +647,7 @@ func isSupportedExt(path string) bool {
 	switch ext {
 	case "", "txt", "md", "markdown", "csv", "tsv", "json", "html", "htm",
 		"py", "go", "js", "ts", "tsx", "java", "c", "cpp", "h", "rs", "yaml", "yml",
-		"docx", "xlsx", "xls", "pptx", "pdf", "epub": // office formats via markitdown
+		"docx", "xlsx", "xls", "pptx", "pdf", "epub", "doc", "ppt", "msg": // office formats via markitdown
 		return true
 	}
 	return false

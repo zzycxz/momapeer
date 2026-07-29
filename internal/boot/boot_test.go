@@ -617,6 +617,68 @@ api_key_env = "MOMAPEER_TEST_KEY_UNSET"
 	}
 }
 
+// TestBuildProfileWhitelistHidesSkillsFromPrompt guards the fix for the token-
+// pollution bug: a profile whitelist (the dev/coding profile) hides every
+// builtin skill not named in it. Those skills must be OMITTED from the system
+// prompt entirely — not merely tagged [关闭] like user-disabled skills — so the
+// coding model never spends tokens on office-skill descriptions it can't use.
+// They stay uncallable too (the live store filters them via disabledNames).
+func TestBuildProfileWhitelistHidesSkillsFromPrompt(t *testing.T) {
+	dir := robustTempDir(t)
+	home := robustTempDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Chdir(dir)
+	writeFile(t, dir, "momapeer.toml", `
+default_model = "test-model"
+
+[codegraph]
+enabled = false
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "x"
+api_key_env = "MOMAPEER_TEST_KEY_UNSET"
+`)
+	// The dev profile's whitelist exposes only coding skills; every other
+	// builtin (browser-auto, email-auto, rag-auto, …) is hidden by the whitelist.
+	devProfile := &config.Profile{
+		Name:          config.ProfileDev,
+		EnabledSkills: []string{"init", "install-capability", "test", "research", "review", "security-review"},
+	}
+
+	ctrl, err := Build(context.Background(), Options{Profile: devProfile})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	// Hidden skills must NOT be callable.
+	for _, s := range ctrl.Skills() {
+		if s.Name == "browser-auto" || s.Name == "email-auto" {
+			t.Fatalf("profile-hidden skill %q should not be executable", s.Name)
+		}
+	}
+	sys := systemMessage(ctrl.History())
+	// The whole point: hidden skills must not appear in the prompt at all (no
+	// description, no [关闭] tag) — unlike user-disabled skills which stay as
+	// [关闭] hints. Check a representative hidden office skill.
+	for _, name := range []string{"browser-auto", "email-auto", "rag-auto", "schedule-auto", "document-auto", "expert-auto"} {
+		if strings.Contains(sys, name) {
+			t.Fatalf("profile-hidden skill %q must NOT appear in system prompt:\n%s", name, sys)
+		}
+	}
+	// But whitelisted coding skills SHOULD be present.
+	if !strings.Contains(sys, "review") {
+		t.Fatalf("whitelisted skill 'review' should appear in system prompt:\n%s", sys)
+	}
+}
+
 func TestBuildOmitsExcludedSkillRootsFromPromptAndRuntimeList(t *testing.T) {
 	dir := robustTempDir(t)
 	home := robustTempDir(t)

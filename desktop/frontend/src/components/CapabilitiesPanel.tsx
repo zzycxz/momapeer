@@ -1599,35 +1599,32 @@ export function SkillsSettingsPage({ initialHighlight }: { initialHighlight?: st
 		});
 	}, [view, skillQuery]);
 
-	// Split the filtered list into the built-in "market" (skills shipped with
-	// momapeer) and the user's own skills (project/global/custom). The market
-	// is a discovery surface — its "install" action is really just enable —
-	// while user skills are managed (enabled/disabled, rooted in real files).
-	// This mirrors Trae Work's skill-market separation without needing a remote
-	// catalog: the builtins are already in Capabilities().skills.
+	// Group skills by whether they are IN EFFECT under the current product
+	// profile, not by hardcoded names. The backend tags each skill with
+	// `active` (true when the profile's whitelist surfaces it). This replaces
+	// the old name-based "coding vs office" split which misclassified skills
+	// (email/rag/schedule were dumped into "coding") and broke when a skill was
+	// shadowed by a global override (ppt-auto showed as both builtin-office and
+	// global). Grouping by `active` reflects the real prompt the model sees.
 	const builtinSkills = useMemo(
 		() => filteredSkills.filter((sk) => sk.scope === "builtin"),
 		[filteredSkills],
 	);
-	const builtinCodingSkills = useMemo(
-		() => builtinSkills.filter((sk) => sk.name !== "browser-auto" && sk.name !== "computer-auto" && sk.name !== "ppt-auto"),
+	const activeBuiltinSkills = useMemo(
+		() => builtinSkills.filter((sk) => sk.active !== false),
 		[builtinSkills],
 	);
-	const builtinOfficeSkills = useMemo(
-		() => builtinSkills.filter((sk) => sk.name === "browser-auto" || sk.name === "computer-auto" || sk.name === "ppt-auto"),
+	const inactiveBuiltinSkills = useMemo(
+		() => builtinSkills.filter((sk) => sk.active === false),
 		[builtinSkills],
 	);
 	const userSkills = useMemo(
 		() => filteredSkills.filter((sk) => sk.scope !== "builtin"),
 		[filteredSkills],
 	);
-	const builtinCodingEnabledCount = useMemo(
-		() => builtinCodingSkills.filter((sk) => sk.enabled).length,
-		[builtinCodingSkills],
-	);
-	const builtinOfficeEnabledCount = useMemo(
-		() => builtinOfficeSkills.filter((sk) => sk.enabled).length,
-		[builtinOfficeSkills],
+	const activeBuiltinEnabledCount = useMemo(
+		() => activeBuiltinSkills.filter((sk) => sk.enabled).length,
+		[activeBuiltinSkills],
 	);
 
 	const skillSummary = useMemo(() => {
@@ -1664,21 +1661,20 @@ export function SkillsSettingsPage({ initialHighlight }: { initialHighlight?: st
 				onRemove={(path) => mutate(() => app.RemoveSkillPath(path))}
 			/>
 
-			{/* Built-in skill market: the catalog of skills shipped with momapeer.
-			    Each card is a one-click enable toggle (builtins are always present
-			    on disk; "install" == "enable"). Mirrors Trae Work's skill market. */}
-			{builtinCodingSkills.length > 0 && (
+			{/* Built-in skills IN EFFECT for the current mode: these are the ones
+			    the model actually sees in its prompt index right now. */}
+			{activeBuiltinSkills.length > 0 && (
 				<div className="cap-market">
 					<div className="cap-skills-head">
 						<div className="cap-skills-head__copy">
-							<div className="cap-skills-head__title">{t("caps.marketTitleCoding")}</div>
+							<div className="cap-skills-head__title">{t("caps.marketTitleActive")}</div>
 							<div className="cap-skills-head__summary">
-								{t("caps.marketSummary", { on: builtinCodingEnabledCount, total: builtinCodingSkills.length })}
+								{t("caps.marketSummary", { on: activeBuiltinEnabledCount, total: activeBuiltinSkills.length })}
 							</div>
 						</div>
 					</div>
 					<div className="cap-skills">
-						{builtinCodingSkills.map((sk) => (
+						{activeBuiltinSkills.map((sk) => (
 							<SkillRow
 								key={sk.name}
 								skill={sk}
@@ -1692,18 +1688,21 @@ export function SkillsSettingsPage({ initialHighlight }: { initialHighlight?: st
 				</div>
 			)}
 
-			{builtinOfficeSkills.length > 0 && (
-				<div className="cap-market">
+			{/* Built-in skills the current mode HIDES (profile whitelist). They're
+			    not in the model's prompt; switching mode brings them back. Shown
+			    greyed so the user understands the distinction. */}
+			{inactiveBuiltinSkills.length > 0 && (
+				<div className="cap-market cap-market--inactive">
 					<div className="cap-skills-head">
 						<div className="cap-skills-head__copy">
-							<div className="cap-skills-head__title">{t("caps.marketTitleOffice")}</div>
+							<div className="cap-skills-head__title">{t("caps.marketTitleInactive")}</div>
 							<div className="cap-skills-head__summary">
-								{t("caps.marketSummary", { on: builtinOfficeEnabledCount, total: builtinOfficeSkills.length })}
+								{t("caps.marketInactiveSummary", { count: inactiveBuiltinSkills.length })}
 							</div>
 						</div>
 					</div>
 					<div className="cap-skills">
-						{builtinOfficeSkills.map((sk) => (
+						{inactiveBuiltinSkills.map((sk) => (
 							<SkillRow
 								key={sk.name}
 								skill={sk}
