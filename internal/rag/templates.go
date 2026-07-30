@@ -34,11 +34,14 @@ type FieldMeta struct {
 }
 
 // Built-in template definitions (always available even without Hyper-Extract).
+// Only templates with REAL differentiated extraction logic are listed here.
+// general/hypergraph, general/list, general/model were removed: they existed as
+// placeholders mirroring Hyper-Extract's Python type system, but momapeer's Go
+// extractor has no hyperedge/list/model support (no custom prompts, fixed
+// binary-graph result shape), so selecting them produced identical output to
+// general/graph. The five domain templates below each carry distinct prompts.
 var builtinTemplates = []TemplateInfo{
 	{Name: "general/graph", Category: "general", DisplayName: "通用知识图谱", Description: "从任意文本中提取实体节点及二元关系", Available: true},
-	{Name: "general/hypergraph", Category: "general", DisplayName: "超图知识", Description: "超图结构知识提取", Available: true},
-	{Name: "general/list", Category: "general", DisplayName: "列表知识", Description: "列表结构知识提取", Available: true},
-	{Name: "general/model", Category: "general", DisplayName: "模型知识", Description: "模型结构知识提取", Available: true},
 	{Name: "finance/graph", Category: "finance", DisplayName: "金融分析", Description: "金融领域知识图谱提取", Available: true, NodePrompt: financeNodePrompt, EdgePrompt: financeEdgePrompt},
 	{Name: "medicine/graph", Category: "medicine", DisplayName: "医学知识", Description: "医学领域知识图谱提取", Available: true, NodePrompt: medicineNodePrompt, EdgePrompt: medicineEdgePrompt},
 	{Name: "legal/graph", Category: "legal", DisplayName: "法律文书", Description: "法律领域知识图谱提取", Available: true, NodePrompt: legalNodePrompt, EdgePrompt: legalEdgePrompt},

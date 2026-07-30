@@ -2380,6 +2380,7 @@ type Meta struct {
 	AutoApproveTools bool   `json:"autoApproveTools"`
 	Bypass           bool   `json:"bypass"` // legacy JSON key for YOLO/full-access tool auto-approval
 	ToolApprovalMode string `json:"toolApprovalMode"`
+	RagScope         string `json:"ragScope,omitempty"`
 	Goal             string `json:"goal,omitempty"`
 	GoalStatus       string `json:"goalStatus,omitempty"`
 	// ExpertSession is set when this tab is an expert-team collaboration session.
@@ -2410,6 +2411,7 @@ func (a *App) MetaForTab(tabID string) Meta {
 	cwd := tab.WorkspaceRoot
 	goal := tab.goal
 	toolApprovalMode := tab.toolApprovalMode
+	ragScope := tab.ragScope
 	isExpert := tab.IsExpertSession
 	expertTeamID := tab.ExpertTeamID
 	expertTeamName := tab.ExpertTeamName
@@ -2456,6 +2458,7 @@ func (a *App) MetaForTab(tabID string) Meta {
 		AutoApproveTools: autoApproveTools,
 		Bypass:           autoApproveTools,
 		ToolApprovalMode: toolApprovalMode,
+		RagScope:         ragScope,
 		Goal:             goal,
 		GoalStatus:       goalStatus,
 		ExpertSession:    expertSession,

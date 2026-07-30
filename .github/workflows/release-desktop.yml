@@ -271,3 +271,47 @@ jobs:
           name: ${{ github.ref_name }} signatures
           prerelease: false
           files: release-assets/*.minisig
+
+      - name: Sync Release to Gitee
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          if [ -z "$GITEE_TOKEN" ]; then
+            echo "No GITEE_TOKEN found. Skipping Gitee Release."
+            exit 0
+          fi
+          
+          TAG="${{ github.ref_name }}"
+          REPO="zzycxz/momapeer"
+          
+          echo "Checking if Gitee release exists..."
+          EXISTING_ID=$(curl -s "https://gitee.com/api/v5/repos/$REPO/releases/tags/$TAG?access_token=$GITEE_TOKEN" | jq -r .id)
+          if [ "$EXISTING_ID" != "null" ] && [ -n "$EXISTING_ID" ]; then
+            echo "Deleting existing release $EXISTING_ID..."
+            curl -s -X DELETE "https://gitee.com/api/v5/repos/$REPO/releases/$EXISTING_ID" -d "access_token=$GITEE_TOKEN"
+          fi
+          
+          echo "Creating new release for $TAG..."
+          CREATE_RES=$(curl -s -X POST "https://gitee.com/api/v5/repos/$REPO/releases" \
+            -d "access_token=$GITEE_TOKEN" \
+            -d "tag_name=$TAG" \
+            -d "name=$TAG" \
+            -d "body=✨ Release auto-synced from GitHub Actions")
+          
+          RELEASE_ID=$(echo "$CREATE_RES" | jq -r .id)
+          if [ "$RELEASE_ID" == "null" ] || [ -z "$RELEASE_ID" ]; then
+            echo "Failed to create release: $CREATE_RES"
+            exit 1
+          fi
+          
+          echo "Created Gitee Release ID: $RELEASE_ID"
+          
+          for file in release-assets/*; do
+            if [ -f "$file" ]; then
+              echo "Uploading $file..."
+              UPLOAD_RES=$(curl -s -X POST "https://gitee.com/api/v5/repos/$REPO/releases/$RELEASE_ID/attach_files" \
+                -F "access_token=$GITEE_TOKEN" \
+                -F "file=@$file")
+              echo "Upload result: $UPLOAD_RES"
+            fi
+          done
