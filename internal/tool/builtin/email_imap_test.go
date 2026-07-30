@@ -85,4 +85,3 @@ func TestFormatAddresses_GBK(t *testing.T) {
 		t.Fatalf("formatAddresses() = %q, want %q", got, want)
 	}
 }
-

@@ -50,14 +50,14 @@ type calendarParams struct {
 	// pushes reminders to output_dest ("platform:chatID"); "email" sends via the
 	// named output_account ("" = default) to output_dest (recipient). Empty/"" =
 	// toast only. Only takes effect when reminders are set.
-	OutputMode    string   `json:"output_mode"`
-	OutputDest    string   `json:"output_dest"`
-	OutputAccount string   `json:"output_account"`
-	Since         string   `json:"since"`
-	Before        string   `json:"before"`
-	Q             string   `json:"q"`
-	Limit         int      `json:"limit"`
-	Path          string   `json:"path"`
+	OutputMode    string `json:"output_mode"`
+	OutputDest    string `json:"output_dest"`
+	OutputAccount string `json:"output_account"`
+	Since         string `json:"since"`
+	Before        string `json:"before"`
+	Q             string `json:"q"`
+	Limit         int    `json:"limit"`
+	Path          string `json:"path"`
 }
 
 // calendarTool is the unified calendar entry point.

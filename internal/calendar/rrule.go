@@ -43,15 +43,15 @@ func ExpandRecurring(events []Event, since, before time.Time) []EventInstance {
 // offsets (minutes before start) so the reminder engine can compute a per-
 // instance remind time without re-reading the original Event.
 type EventInstance struct {
-	EventID       string
-	Title         string
-	StartTime     time.Time
-	EndTime       time.Time
-	AllDay        bool
-	Color         string
-	Location      string
-	TaskID        string
-	Reminders     []int
+	EventID   string
+	Title     string
+	StartTime time.Time
+	EndTime   time.Time
+	AllDay    bool
+	Color     string
+	Location  string
+	TaskID    string
+	Reminders []int
 	// Output fields are copied from the parent Event so the reminder engine can
 	// route each instance's push without re-reading the Event.
 	OutputMode    string

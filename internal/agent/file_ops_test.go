@@ -58,12 +58,12 @@ func TestExtractFileOps_MalformedJSONSkipped(t *testing.T) {
 	msgs := []provider.Message{
 		msgWithCalls(
 			tc("read_file", `{"path":"/a.go"}`),
-			tc("edit_file", `{"path":"/b.go"`),      // truncated JSON
-			tc("write_file", `not json at all`),     // garbage
-			tc("read_file", `{}`),                   // no path field
-			tc("read_file", `{"path":""}`),          // empty path
-			tc("read_file", `{"path":"   "}`),       // whitespace-only path
-			tc("write_file", `{"path":123}`),        // wrong type
+			tc("edit_file", `{"path":"/b.go"`),  // truncated JSON
+			tc("write_file", `not json at all`), // garbage
+			tc("read_file", `{}`),               // no path field
+			tc("read_file", `{"path":""}`),      // empty path
+			tc("read_file", `{"path":"   "}`),   // whitespace-only path
+			tc("write_file", `{"path":123}`),    // wrong type
 		),
 	}
 	ops := ExtractFileOps(msgs)
@@ -84,8 +84,8 @@ func TestExtractFileOps_MalformedJSONSkipped(t *testing.T) {
 func TestExtractFileOps_DeduplicatesAcrossCalls(t *testing.T) {
 	msgs := []provider.Message{
 		msgWithCalls(tc("read_file", `{"path":"/a.go"}`)),
-		msgWithCalls(tc("read_file", `{"path":"/a.go"}`)),      // same file read twice
-		msgWithCalls(tc("edit_file", `{"path":"/a.go",...}`)),  // edit on same path
+		msgWithCalls(tc("read_file", `{"path":"/a.go"}`)),     // same file read twice
+		msgWithCalls(tc("edit_file", `{"path":"/a.go",...}`)), // edit on same path
 	}
 	// Note: the edit_file args above are intentionally invalid JSON; fix it:
 	msgs[2] = msgWithCalls(tc("edit_file", `{"path":"/a.go","old_string":"x","new_string":"y"}`))

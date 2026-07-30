@@ -315,7 +315,7 @@ func (a applyPatch) Execute(ctx context.Context, args json.RawMessage) (string, 
 		movePath   string
 		oldContent string
 		newContent string
-		changeType string // "add", "update", "delete", "move"
+		changeType string       // "add", "update", "delete", "move"
 		enc        fileenc.Kind // detected encoding to preserve on write (update/move)
 	}
 	var changes []fileChange
