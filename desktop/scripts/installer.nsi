@@ -36,11 +36,6 @@ Section "Install"
   ; Main executable
   File "build\bin\${APP_EXE}"
 
-  ; Skills directory (if exists)
-  SetOutPath "$INSTDIR\.momapeer\skills"
-  IfFileExists "build\bin\.momapeer\skills\*" 0 +2
-    File /r "build\bin\.momapeer\skills\*"
-
   ; Create uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
@@ -61,7 +56,6 @@ SectionEnd
 Section "Uninstall"
   Delete "$INSTDIR\${APP_EXE}"
   Delete "$INSTDIR\uninstall.exe"
-  RMDir /r "$INSTDIR\.momapeer"
   RMDir "$INSTDIR"
 
   Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"

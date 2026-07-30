@@ -37,13 +37,11 @@ jobs:
             apt_deps: ''
             build_args: ''
 
-          - os: windows-latest
-            platform: windows/arm64
-            artifact: momapeer-windows-arm64.exe
-            binary_name: momapeer.exe
-            setup_artifact: momapeer-setup-*-arm64.exe
-            apt_deps: ''
-            build_args: ''
+          # Windows ARM64 disabled: LLVM-MinGW cross-compilation is unreliable.
+          # Re-enable when GitHub Actions provides native ARM64 Windows runners.
+          # - os: windows-latest
+          #   platform: windows/arm64
+          #   artifact: momapeer-windows-arm64.exe
 
           - os: ubuntu-22.04
             platform: linux/amd64
@@ -156,17 +154,10 @@ jobs:
       - name: Build NSIS Installer (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        working-directory: ./desktop
         run: |
           # Install NSIS
           choco install nsis -y --no-progress
-          # Copy skills to build directory
-          $buildBin = "desktop\build\bin"
-          $skillsSrc = ".momapeer\skills"
-          $skillsDst = "$buildBin\.momapeer\skills"
-          if (Test-Path $skillsSrc) {
-            New-Item -ItemType Directory -Path $skillsDst -Force | Out-Null
-            Copy-Item "$skillsSrc\*" $skillsDst -Recurse -Force
-          }
           # Update version in installer script
           $ver = "${{ steps.version.outputs.semver }}"
           (Get-Content scripts\installer.nsi) -replace '!define APP_VERSION ".*"', "!define APP_VERSION `"$ver`"" | Set-Content scripts\installer.nsi
@@ -175,8 +166,13 @@ jobs:
           # Rename with version and arch
           $arch = "${{ matrix.platform }}".Replace("windows/", "")
           $setupName = "momapeer-setup-$ver-$arch.exe"
-          Rename-Item "dist\momapeer-setup.exe" $setupName
-          Move-Item $setupName "desktop\build\bin\"
+          if (Test-Path "dist\momapeer-setup.exe") {
+            Rename-Item "dist\momapeer-setup.exe" $setupName
+            Move-Item $setupName "build\bin\"
+          } else {
+            Write-Error "NSIS installer not created"
+            exit 1
+          }
 
       - name: Upload Artifact (Windows)
         if: runner.os == 'Windows'
