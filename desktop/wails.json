@@ -2,9 +2,9 @@
   "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "momapeer",
   "outputfilename": "momapeer",
-  "frontend:install": "pnpm install",
+  "frontend:install": "npm install",
   "frontend:build": "npx vite build",
-  "frontend:dev:watcher": "pnpm dev",
+  "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
   "author": {
     "name": "zzycxz"
@@ -12,7 +12,7 @@
   "info": {
     "companyName": "momapeer",
     "productName": "momapeer",
-    "productVersion": "0.5.5",
+    "productVersion": "0.5.6",
     "copyright": "Copyright © 2026 momapeer Contributors",
     "comments": "momapeer desktop — a Wails shell around the Go kernel."
   }

@@ -74,3 +74,6 @@ node_modules/
 nul
 runs_latest.json
 .tmp_diff/
+
+# Scratch Go files at repo root (test_*.go) — throwaway, never commit
+/test_*.go

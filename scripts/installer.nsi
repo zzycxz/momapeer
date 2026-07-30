@@ -5,7 +5,7 @@
 !cd ".."
 
 !define APP_NAME "momapeer"
-!define APP_VERSION "0.5.0"
+!define APP_VERSION "0.5.6"
 !define APP_PUBLISHER "momapeer Contributors"
 !define APP_EXE "momapeer.exe"
 !define INSTALL_DIR "$LOCALAPPDATA\${APP_NAME}"
