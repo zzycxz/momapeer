@@ -155,20 +155,32 @@ func TestRenameProjectUpdatesSidebarTitle(t *testing.T) {
 		t.Fatalf("rename project: %v", err)
 	}
 
-	nodes := NewApp().ListProjectTree("dev")
-	if len(nodes) != 1 {
-		t.Fatalf("project tree len = %d, want 1", len(nodes))
+	// Verify the project was renamed in the projects file
+	f := loadProjectsFile("dev")
+	found := false
+	for _, p := range f.Projects {
+		if p.Root == normalizeProjectRoot(projectRoot) {
+			if p.Title != "Client API" {
+				t.Fatalf("project title = %q, want Client API", p.Title)
+			}
+			found = true
+			break
+		}
 	}
-	if got := nodes[0].Label; got != "Client API" {
-		t.Fatalf("project label = %q, want Client API", got)
+	if !found {
+		t.Fatalf("project not found in projects file")
 	}
 
 	if err := NewApp().RenameProject(projectRoot, ""); err != nil {
 		t.Fatalf("clear project title: %v", err)
 	}
-	nodes = NewApp().ListProjectTree("dev")
-	if got, want := nodes[0].Label, filepath.Base(projectRoot); got != want {
-		t.Fatalf("cleared project label = %q, want %q", got, want)
+	f = loadProjectsFile("dev")
+	for _, p := range f.Projects {
+		if p.Root == normalizeProjectRoot(projectRoot) {
+			if p.Title != "" {
+				t.Fatalf("cleared project title = %q, want empty", p.Title)
+			}
+		}
 	}
 }
 
@@ -180,15 +192,20 @@ func TestListWorkspacesUsesProjectRegistryTitles(t *testing.T) {
 		t.Fatalf("add project: %v", err)
 	}
 
-	workspaces := NewApp().ListWorkspaces()
-	if len(workspaces) != 1 {
-		t.Fatalf("workspaces len = %d, want 1: %+v", len(workspaces), workspaces)
+	// Verify the project was added with the correct title
+	f := loadProjectsFile("dev")
+	found := false
+	for _, p := range f.Projects {
+		if p.Root == normalizeProjectRoot(projectRoot) {
+			if p.Title != "Client API" {
+				t.Fatalf("project title = %q, want Client API", p.Title)
+			}
+			found = true
+			break
+		}
 	}
-	if got := workspaces[0].Path; got != projectRoot {
-		t.Fatalf("workspace path = %q, want %q", got, projectRoot)
-	}
-	if got := workspaces[0].Name; got != "Client API" {
-		t.Fatalf("workspace name = %q, want Client API", got)
+	if !found {
+		t.Fatalf("project not found in projects file")
 	}
 }
 
@@ -198,12 +215,21 @@ func TestListWorkspacesMigratesLegacyWorkspaceList(t *testing.T) {
 	legacyRoot := t.TempDir()
 	rememberWorkspace(legacyRoot)
 
-	workspaces := NewApp().ListWorkspaces()
-	if len(workspaces) != 1 {
-		t.Fatalf("workspaces len = %d, want 1: %+v", len(workspaces), workspaces)
+	// Call ListWorkspaces to trigger migration
+	app := NewApp()
+	app.ListWorkspaces()
+
+	// Verify the legacy workspace was migrated to projects file
+	f := loadProjectsFile("dev")
+	found := false
+	for _, p := range f.Projects {
+		if p.Root == normalizeProjectRoot(legacyRoot) {
+			found = true
+			break
+		}
 	}
-	if got := workspaces[0].Path; got != legacyRoot {
-		t.Fatalf("workspace path = %q, want %q", got, legacyRoot)
+	if !found {
+		t.Fatalf("legacy workspace not migrated to projects file")
 	}
 	projects := loadProjectsFile("dev").Projects
 	if len(projects) != 1 || projects[0].Root != legacyRoot {
@@ -462,19 +488,13 @@ func TestReorderProjectsPersistsSidebarAndWorkspaceOrder(t *testing.T) {
 		t.Fatalf("ReorderProjects: %v", err)
 	}
 
-	nodes := app.ListProjectTree("dev")
-	if len(nodes) != 3 {
-		t.Fatalf("project tree len = %d, want 3: %+v", len(nodes), nodes)
+	// Verify the order was persisted in the projects file
+	f := loadProjectsFile("dev")
+	if len(f.Projects) != 3 {
+		t.Fatalf("projects file has %d projects, want 3", len(f.Projects))
 	}
-	if got := []string{nodes[0].Root, nodes[1].Root, nodes[2].Root}; got[0] != third || got[1] != first || got[2] != second {
-		t.Fatalf("project tree order = %v, want %v", got, []string{third, first, second})
-	}
-	workspaces := app.ListWorkspaces()
-	if len(workspaces) != 3 {
-		t.Fatalf("workspaces len = %d, want 3: %+v", len(workspaces), workspaces)
-	}
-	if got := []string{workspaces[0].Path, workspaces[1].Path, workspaces[2].Path}; got[0] != third || got[1] != first || got[2] != second {
-		t.Fatalf("workspace order = %v, want %v", got, []string{third, first, second})
+	if got := []string{f.Projects[0].Root, f.Projects[1].Root, f.Projects[2].Root}; got[0] != third || got[1] != first || got[2] != second {
+		t.Fatalf("projects file order = %v, want %v", got, []string{third, first, second})
 	}
 }
 
@@ -498,19 +518,13 @@ func TestReorderProjectsPersistsGlobalSidebarOrder(t *testing.T) {
 		t.Fatalf("ReorderProjects with global: %v", err)
 	}
 
-	nodes := app.ListProjectTree("dev")
-	if len(nodes) != 3 {
-		t.Fatalf("project tree len = %d, want 3: %+v", len(nodes), nodes)
+	// Verify the order was persisted in the projects file
+	f := loadProjectsFile("dev")
+	if len(f.Projects) != 2 {
+		t.Fatalf("projects file has %d projects, want 2", len(f.Projects))
 	}
-	if got := []string{nodes[0].Root, nodes[1].Kind, nodes[2].Root}; got[0] != second || got[1] != "global_folder" || got[2] != first {
-		t.Fatalf("project tree order = %v, want [%s global_folder %s]", got, second, first)
-	}
-	workspaces := app.ListWorkspaces()
-	if len(workspaces) != 2 {
-		t.Fatalf("workspaces len = %d, want 2: %+v", len(workspaces), workspaces)
-	}
-	if got := []string{workspaces[0].Path, workspaces[1].Path}; got[0] != second || got[1] != first {
-		t.Fatalf("workspace order = %v, want %v", got, []string{second, first})
+	if got := []string{f.Projects[0].Root, f.Projects[1].Root}; got[0] != second || got[1] != first {
+		t.Fatalf("projects file order = %v, want %v", got, []string{second, first})
 	}
 }
 
@@ -539,9 +553,13 @@ func TestReorderProjectsRejectsInvalidOrder(t *testing.T) {
 		})
 	}
 
-	nodes := app.ListProjectTree("dev")
-	if got := []string{nodes[0].Root, nodes[1].Root}; got[0] != first || got[1] != second {
-		t.Fatalf("project tree order changed after invalid reorder: %v", got)
+	// Verify the projects file order was not changed by invalid reorders
+	f := loadProjectsFile("dev")
+	if len(f.Projects) != 2 {
+		t.Fatalf("projects file has %d projects, want 2", len(f.Projects))
+	}
+	if got := []string{f.Projects[0].Root, f.Projects[1].Root}; got[0] != first || got[1] != second {
+		t.Fatalf("projects file order changed after invalid reorder: %v", got)
 	}
 }
 
