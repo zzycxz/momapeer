@@ -364,9 +364,9 @@ const DefaultIdleMinutes = 10
 
 // DefaultFastTaskModel is the model dream/distill/rag-extract run on out of the
 // box (agent.fast_task_model). Must be in BuiltinMoMAModels. deepseek-v4-flash
-// is fast (~4s/chunk); qwen3.6-35b is a thinking model (too slow for background).
+// is fast (~4s/chunk); qwen3.6-35b is a thinking model but set as default per user request.
 // Users override via [agent].fast_task_model in config.
-const DefaultFastTaskModel = "deepseek/deepseek-v4-flash"
+const DefaultFastTaskModel = "qwen/qwen3.6-35b"
 
 // IdleMinutesEffective returns the effective user-inactivity threshold in
 // minutes before an idle Dream run may fire, applying the default when the
@@ -1450,13 +1450,12 @@ func Default() *Config {
 			Feishu:     FeishuBotConfig{Domain: "feishu", AppSecretEnv: "FEISHU_BOT_APP_SECRET", Mode: "webhook", WebhookPort: 8080, RequireMention: true},
 			Weixin:     WeixinBotConfig{AccountID: "default", TokenEnv: "WEIXIN_BOT_TOKEN", APIBase: "https://ilinkai.weixin.qq.com"},
 		},
-		// RPM default 5: MoMA's per-key rate limit is 5/min, so defaulting to
-		// 0 (unlimited) would let the agent burst past the quota and hit 429s.
+		// RPM default 60: MoMA's per-key rate limit is now set to 60/min.
 		// Users with higher tiers can raise this. ReserveMain=2 keeps requests
 		// in reserve for the main agent under concurrent load.
-		LLM: LLMConfig{RPM: 5, ReserveMain: 2},
+		LLM: LLMConfig{RPM: 60, ReserveMain: 2},
 		Providers: []ProviderEntry{
-			{Name: "moma", Kind: "openai", BaseURL: "https://jiutian.10086.cn/largemodel/moma/api/v3", Models: BuiltinMoMAModels, Default: "qwen/qwen3.6-35b", APIKeyEnv: "JIUTIAN_API_KEY", ContextWindow: 200_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},
+			{Name: "moma", Kind: "openai", BaseURL: "https://jiutian.10086.cn/largemodel/moma/api/v3", Models: BuiltinMoMAModels, Default: "minimax/minimax-m2.7", APIKeyEnv: "JIUTIAN_API_KEY", ContextWindow: 200_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},
 		},
 	}
 }
@@ -1566,7 +1565,7 @@ func normalizeLegacyEffort(c *Config) {
 }
 
 // normalizeCoworkDefaults fills in cowork defaults that the user hasn't set.
-// ScreenshotVLMModel defaults to qwen/qwen3.6-27b (lightweight multimodal);
+// ScreenshotVLMModel defaults to qwen/qwen3.5-397b-a17b (heavy multimodal);
 // ScreenshotHotkey defaults to Ctrl+Shift+S; EStopHotkey defaults to
 // Ctrl+Shift+Pause. These are only applied when the TOML didn't specify them
 // (empty → default), so explicit user config always wins.
@@ -1893,7 +1892,7 @@ func ensureMoMAOfficialProvider(c *Config) {
 	if existing, ok := c.Provider("moma"); ok {
 		// If the user already has a moma provider, ensure they get all the official models
 		existing.Models = officialModels
-		existing.Default = firstKnownModel(existing.Default, existing.Models, "qwen/qwen3.6-35b")
+		existing.Default = firstKnownModel(existing.Default, existing.Models, "minimax/minimax-m2.7")
 		return
 	}
 	entry := ProviderEntry{
@@ -1901,7 +1900,7 @@ func ensureMoMAOfficialProvider(c *Config) {
 		Kind:          "openai",
 		BaseURL:       "https://jiutian.10086.cn/largemodel/moma/api/v3",
 		Models:        officialModels,
-		Default:       "qwen/qwen3.6-35b",
+		Default:       "minimax/minimax-m2.7",
 		APIKeyEnv:     "JIUTIAN_API_KEY",
 		ContextWindow: 200_000,
 	}

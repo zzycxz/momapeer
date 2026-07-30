@@ -2045,7 +2045,7 @@ function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) 
 
             <SettingsField label={t("settings.screenshotVlmLabel")} hint={t("settings.screenshotVlmHint")}>
               <SimpleSelect
-                value={s.cowork?.screenshotVlmModel || "qwen/qwen3.6-27b"}
+                value={s.cowork?.screenshotVlmModel || "qwen/qwen3.5-397b-a17b"}
                 disabled={busy}
                 options={[
                   { value: "qwen/qwen3.6-27b", label: `qwen/qwen3.6-27b — ${t("settings.screenshotVlmLight")}` },

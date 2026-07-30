@@ -3693,6 +3693,18 @@ a[href] {
 .tool__body {
   padding: 0 11px 10px 30px;
 }
+.rag-legend__title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--fg-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.rag-legend__group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
 .tool__note {
   font-size: var(--font-caption);
   color: var(--fg-faint);
@@ -21181,19 +21193,18 @@ a[href] {
 /* Legend */
 .rag-legend {
   position: absolute;
-  bottom: 12px;
-  left: 12px;
+  bottom: 24px;
+  left: 72px;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 12px;
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 16px;
   background: var(--bg-elev);
   border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  box-shadow: var(--shadow-1);
+  border-radius: 24px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
   z-index: var(--z-local-raised);
-  max-height: 300px;
-  overflow-y: auto;
 }
 .rag-legend__group {
   display: flex;
@@ -21234,12 +21245,19 @@ a[href] {
 
 /* Knowledge reference bar */
 .rag-refbar {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 8px 16px;
   background: var(--bg-elev);
-  border-top: 1px solid var(--border-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
   flex-wrap: wrap;
 }
 .rag-refbar__info {
@@ -24930,3 +24948,56 @@ a[href] {
   }
 }
 
+/* React Flow Controls Beautification */
+.react-flow__controls {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.1) !important;
+  border-radius: 12px !important;
+  overflow: hidden;
+  border: 1px solid var(--border-soft) !important;
+  background: var(--bg-elev) !important;
+  display: flex;
+  flex-direction: column;
+}
+.react-flow__controls-button {
+  background: var(--bg-elev) !important;
+  border-bottom: 1px solid var(--border-soft) !important;
+  color: var(--fg) !important;
+  width: 32px !important;
+  height: 32px !important;
+  transition: background-color 0.2s ease !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.react-flow__controls-button:last-child {
+  border-bottom: none !important;
+}
+.react-flow__controls-button:hover {
+  background: var(--bg-soft) !important;
+}
+.react-flow__controls-button svg {
+  fill: var(--fg-dim) !important;
+}
+.react-flow__controls-button:hover svg {
+  fill: var(--fg) !important;
+}
+.rag-custom-controls button {
+  background: transparent !important;
+  border-bottom: 1px solid rgba(255,255,255,0.2) !important;
+  width: 26px !important;
+  height: 26px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+.rag-custom-controls button:last-child {
+  border-bottom: none !important;
+}
+.rag-custom-controls button svg {
+  fill: #ffffff !important;
+  width: 14px !important;
+  height: 14px !important;
+}
+.rag-custom-controls button:hover {
+  background: rgba(255,255,255,0.2) !important;
+}

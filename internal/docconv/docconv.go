@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"time"
+
+	"github.com/zzycxz/momapeer/internal/proc"
 )
 
 // Result is the JSON shape emitted by doc_converter.py (and ocr_pdf.py).
@@ -92,6 +94,7 @@ func ConvertFile(scriptPath, path string, timeout time.Duration) (Result, error)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, pythonExe(), scriptPath, path)
+	proc.HideWindow(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

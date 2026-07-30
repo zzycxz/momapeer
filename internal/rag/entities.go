@@ -582,6 +582,7 @@ type JobRow struct {
 	DoneChunks  int
 	ErrorMsg    string
 	ContentHash string // sha256 of chunked body; used for change-based dedup
+	StatKey     string // "size:mtime" of the source file; cheap re-import dedup
 	NodePrompt  string // persisted so Resume restores the original prompt
 	EdgePrompt  string
 	CreatedAt   time.Time
@@ -605,10 +606,20 @@ func (s *Store) CreateJob(j JobRow, chunkTexts []string) (string, error) {
 	if j.ID == "" {
 		j.ID = fmt.Sprintf("job_%d", nowTS.UnixNano())
 	}
-	if _, err := tx.Exec(`INSERT INTO rag_jobs (id, collection, path, rel_path, root_path, is_dir, status, total_chunks, done_chunks, error_msg, content_hash, node_prompt, edge_prompt, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(collection, path) DO UPDATE SET id=excluded.id, status=excluded.status, total_chunks=excluded.total_chunks, done_chunks=0, error_msg=NULL, content_hash=excluded.content_hash, node_prompt=excluded.node_prompt, edge_prompt=excluded.edge_prompt, updated_at=excluded.updated_at`,
-		j.ID, normalizeCollection(j.Collection), j.Path, j.RelPath, j.RootPath, boolToInt(j.IsDir), j.Status, len(chunkTexts), j.ErrorMsg, j.ContentHash, j.NodePrompt, j.EdgePrompt, now, now); err != nil {
+	if _, err := tx.Exec(`INSERT INTO rag_jobs (id, collection, path, rel_path, root_path, is_dir, status, total_chunks, done_chunks, error_msg, content_hash, stat_key, node_prompt, edge_prompt, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(collection, path) DO UPDATE SET
+			id=excluded.id,
+			status=excluded.status,
+			total_chunks=excluded.total_chunks,
+			done_chunks=0,
+			error_msg=NULL,
+			content_hash=excluded.content_hash,
+			stat_key=excluded.stat_key,
+			node_prompt=excluded.node_prompt,
+			edge_prompt=excluded.edge_prompt,
+			updated_at=excluded.updated_at`,
+		j.ID, normalizeCollection(j.Collection), j.Path, j.RelPath, j.RootPath, boolToInt(j.IsDir), j.Status, len(chunkTexts), j.ErrorMsg, j.ContentHash, j.StatKey, j.NodePrompt, j.EdgePrompt, now, now); err != nil {
 		return "", err
 	}
 	// Reset chunks for this job (delete-then-insert, in case of re-extract).
@@ -746,7 +757,7 @@ func (s *Store) JobsByPath(collection, path string) ([]JobRow, error) {
 func (s *Store) AllJobs() ([]JobRow, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT id, collection, path, COALESCE(rel_path,''), COALESCE(root_path,''), is_dir, status, total_chunks, done_chunks, COALESCE(error_msg,''), COALESCE(content_hash,''), COALESCE(node_prompt,''), COALESCE(edge_prompt,''), COALESCE(created_at,''), COALESCE(updated_at,'') FROM rag_jobs ORDER BY updated_at DESC`)
+	rows, err := s.db.Query(`SELECT id, collection, path, COALESCE(rel_path,''), COALESCE(root_path,''), is_dir, status, total_chunks, done_chunks, COALESCE(error_msg,''), COALESCE(content_hash,''), COALESCE(stat_key,''), COALESCE(node_prompt,''), COALESCE(edge_prompt,''), COALESCE(created_at,''), COALESCE(updated_at,'') FROM rag_jobs ORDER BY updated_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -840,6 +851,24 @@ func (s *Store) JobContentHashForPath(collection, path string) (string, error) {
 	return h.String, err
 }
 
+// JobStatKeyForPath returns the stored stat_key ("size:mtime") for the job
+// matching a collection+path (empty if no job or no key). Used by the cheap
+// re-import dedup: if the file's on-disk size+mtime are unchanged, the body is
+// guaranteed identical, so we skip the expensive readDoc (markitdown/OCR) and
+// re-extraction entirely. This is the first-line dedup; content_hash is the
+// second-line (catches edits that don't change the stat key).
+func (s *Store) JobStatKeyForPath(collection, path string) (string, error) {
+	collection = normalizeCollection(collection)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var h sql.NullString
+	err := s.db.QueryRow(`SELECT stat_key FROM rag_jobs WHERE collection = ? AND path = ?`, collection, path).Scan(&h)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return h.String, err
+}
+
 // ChunksByPath returns the ordered list of chunk bodies for a given
 // collection+path by reading from FTS5. Used by Pipeline.Resume to rehydrate
 // chunk text that is not persisted on rag_chunks (only status is).
@@ -875,7 +904,7 @@ func (s *Store) ChunksByPath(collection, path string) ([]string, error) {
 func (s *Store) ResumableJobs() ([]JobRow, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT id, collection, path, COALESCE(rel_path,''), COALESCE(root_path,''), is_dir, status, total_chunks, done_chunks, COALESCE(error_msg,''), COALESCE(content_hash,''), COALESCE(node_prompt,''), COALESCE(edge_prompt,''), COALESCE(created_at,''), COALESCE(updated_at,'') FROM rag_jobs WHERE status IN (?, ?)`, JobPending, JobExtracting)
+	rows, err := s.db.Query(`SELECT id, collection, path, COALESCE(rel_path,''), COALESCE(root_path,''), is_dir, status, total_chunks, done_chunks, COALESCE(error_msg,''), COALESCE(content_hash,''), COALESCE(stat_key,''), COALESCE(node_prompt,''), COALESCE(edge_prompt,''), COALESCE(created_at,''), COALESCE(updated_at,'') FROM rag_jobs WHERE status IN (?, ?)`, JobPending, JobExtracting)
 	if err != nil {
 		return nil, err
 	}
@@ -889,14 +918,16 @@ func scanJobs(rows *sql.Rows) ([]JobRow, error) {
 		var j JobRow
 		var isDir int
 		var created, updated string
-		var contentHash, nodePrompt, edgePrompt sql.NullString
-		// content_hash/node_prompt/edge_prompt may be NULL on v1-migrated rows;
-		// COALESCE in the queries handles it, but scan into NullString for safety.
-		if err := rows.Scan(&j.ID, &j.Collection, &j.Path, &j.RelPath, &j.RootPath, &isDir, &j.Status, &j.TotalChunks, &j.DoneChunks, &j.ErrorMsg, &contentHash, &nodePrompt, &edgePrompt, &created, &updated); err != nil {
+		var contentHash, statKey, nodePrompt, edgePrompt sql.NullString
+		// content_hash/stat_key/node_prompt/edge_prompt may be NULL on older
+		// rows; COALESCE in the queries handles it, but scan into NullString
+		// for safety.
+		if err := rows.Scan(&j.ID, &j.Collection, &j.Path, &j.RelPath, &j.RootPath, &isDir, &j.Status, &j.TotalChunks, &j.DoneChunks, &j.ErrorMsg, &contentHash, &statKey, &nodePrompt, &edgePrompt, &created, &updated); err != nil {
 			continue
 		}
 		j.IsDir = isDir != 0
 		j.ContentHash = contentHash.String
+		j.StatKey = statKey.String
 		j.NodePrompt = nodePrompt.String
 		j.EdgePrompt = edgePrompt.String
 		j.Collection = normalizeCollection(j.Collection)

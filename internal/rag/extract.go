@@ -310,6 +310,26 @@ func (p *Pipeline) EnqueuePaths(collection string, paths []string, nodePrompt, e
 // enqueueFile imports one file into FTS5 + creates an extraction job + queues
 // chunk tasks. Returns "" if the file can't be read (skipped, not an error).
 func (p *Pipeline) enqueueFile(collection, root, fpath, nodePrompt, edgePrompt string, force bool) (string, error) {
+	// 0. Cheap stat-based dedup (runs BEFORE the expensive readDoc): if a prior
+	// job already completed AND the file's on-disk size+mtime are unchanged,
+	// the body is guaranteed identical — skip re-reading (no markitdown/OCR
+	// subprocess, no CMD flash) and re-extraction entirely. This is what makes
+	// re-importing a folder containing already-extracted files a no-op instead
+	// of resetting every done job back to pending. Content-hash dedup (below)
+	// is the second line: it catches edits that keep size+mtime stable (rare)
+	// or files whose extractor output is nondeterministic (e.g. markitdown on
+	// the SAME PDF producing slightly different text on a second pass — the
+	// stat key matches so we never even reach that nondeterministic read).
+	if !force {
+		if jobID, status, _, _, qerr := p.store.JobStatusForPath(collection, fpath); qerr == nil && jobID != "" && status == JobDone {
+			if statKey, serr := fileStatKey(fpath); serr == nil {
+				if prevKey, kerr := p.store.JobStatKeyForPath(collection, fpath); kerr == nil && prevKey != "" && prevKey == statKey {
+					p.logf("rag: skip re-extract %s (job %s done, file size+mtime unchanged)", fpath, jobID)
+					return jobID, nil
+				}
+			}
+		}
+	}
 	// 1. Read document once (markitdown for binary formats, direct read for text).
 	body, ext, err := readDoc(fpath)
 	if err != nil {
@@ -323,8 +343,11 @@ func (p *Pipeline) enqueueFile(collection, root, fpath, nodePrompt, edgePrompt s
 	if n == 0 {
 		return "", nil // nothing to extract
 	}
-	// 2b. Dedup: compute a content hash over the chunked body and skip
+	// 2b. Content-hash dedup: compute a hash over the chunked body and skip
 	// re-extraction when a prior job already completed with the SAME hash.
+	// This is the fallback when the stat key differs (file was touched) but the
+	// extracted body is actually identical — e.g. a re-save that didn't change
+	// content, or a nondeterministic extractor whose output happened to match.
 	// Using a hash (not chunk count) catches content edits that don't change
 	// the chunk count (e.g. a few characters added within a 1200-char chunk).
 	// FTS5 (above) is already refreshed so text search stays current either way.
@@ -342,6 +365,12 @@ func (p *Pipeline) enqueueFile(collection, root, fpath, nodePrompt, edgePrompt s
 			}
 		}
 	}
+	// Capture the stat key for THIS version of the file so the next re-import
+	// can short-circuit at step 0. Computed after readDoc so it reflects the
+	// exact bytes we extracted (mtime may have rolled forward during a slow
+	// markitdown run, but size is stable; together they remain a reliable
+	// "is this the same file?" signal for the common re-import case).
+	statKey, _ := fileStatKey(fpath)
 	rel := relPath(root, fpath)
 	isDir := isDirPath(root)
 	jobID, err := p.store.CreateJob(JobRow{
@@ -352,6 +381,7 @@ func (p *Pipeline) enqueueFile(collection, root, fpath, nodePrompt, edgePrompt s
 		IsDir:       isDir,
 		Status:      JobPending,
 		ContentHash: contentHash,
+		StatKey:     statKey,
 		NodePrompt:  nodePrompt,
 		EdgePrompt:  edgePrompt,
 	}, chunks)
@@ -664,6 +694,22 @@ func relPath(root, fpath string) string {
 func isDirPath(root string) bool {
 	info, err := os.Stat(root)
 	return err == nil && info.IsDir()
+}
+
+// fileStatKey returns a cheap "is this the same file?" fingerprint
+// ("size:mtimeNanos") for re-import dedup. It is intentionally NOT a content
+// hash — it exists so we can short-circuit BEFORE the expensive readDoc
+// (markitdown/OCR subprocess). size+mtime together are a reliable sameness
+// signal on all major OSes: a content edit changes size or mtime, and a pure
+// mtime touch (e.g. re-save) leaves size stable but bumps mtime — both are
+// caught. Returns "" + error if the file can't be statted (caller treats that
+// as "no stat key available" and falls through to content-hash dedup).
+func fileStatKey(fpath string) (string, error) {
+	fi, err := os.Stat(fpath)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d:%d", fi.Size(), fi.ModTime().UnixNano()), nil
 }
 
 // noopExtractor is a no-op Extractor for tests / when no LLM is configured.

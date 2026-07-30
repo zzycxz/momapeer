@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/zzycxz/momapeer/internal/rag"
+	"github.com/zzycxz/momapeer/internal/proc"
 )
 
 const (
@@ -92,6 +93,7 @@ func (s *HEService) Start() error {
 		"--port", fmt.Sprintf("%d", s.port),
 		"--host", "127.0.0.1",
 	)
+	proc.HideWindow(s.cmd)
 	s.cmd.Stdout = os.Stdout
 	s.cmd.Stderr = os.Stderr
 

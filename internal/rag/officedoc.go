@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+
+	"github.com/zzycxz/momapeer/internal/proc"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -142,6 +144,7 @@ func readPDFWithOCR(path string) (string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, python, script, path)
+	proc.HideWindow(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

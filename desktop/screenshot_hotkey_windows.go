@@ -4,7 +4,7 @@ package main
 // feature: when the user presses the configured hotkey (default Ctrl+Shift+S)
 // ANYWHERE on their desktop — even with MoMAPeer minimized — we:
 //   1. Capture the full screen via the existing Win32 BitBlt screen capture.
-//   2. Send the image to the configured VLM model (default qwen/qwen3.6-27b)
+//   2. Send the image to the configured VLM model (default qwen/qwen3.5-397b-a17b)
 //      for recognition, via a one-shot provider call (rate-limited, background).
 //   3. Reply with the result via the IM bot gateway (feishu/QQ/WeChat) AND
 //      surface an in-app toast so the user sees it without switching apps.
@@ -193,7 +193,7 @@ func (h *hotkeyManager) onHotkey() {
 		}
 		model := cfg.Cowork.ScreenshotVLMModel
 		if model == "" {
-			model = "qwen/qwen3.6-27b"
+			model = "qwen/qwen3.5-397b-a17b"
 		}
 		result, err := recognizeScreenshot(ctx, model, b64)
 		if err != nil {
@@ -383,7 +383,7 @@ func recognizeScreenshot(ctx context.Context, modelRef, imageB64 string) (string
 	return strings.TrimSpace(b.String()), nil
 }
 
-// resolveModelEntry finds the provider entry for a model ref like "qwen/qwen3.6-27b".
+// resolveModelEntry finds the provider entry for a model ref like "qwen/qwen3.5-397b-a17b".
 func resolveModelEntry(modelRef string) (*config.ProviderEntry, error) {
 	cfg, err := config.Load()
 	if err != nil {

@@ -1,7 +1,8 @@
 // KnowledgeRefBar appears at the bottom of the graph canvas when selection mode
 // is active and items are selected. Shows selected count and "use for" button.
 
-import { X, ChevronRight } from "lucide-react";
+import { X, ChevronRight, GripHorizontal } from "lucide-react";
+import { useDraggable } from "../../hooks/useDraggable";
 
 export interface KnowledgeRefBarProps {
   selectedEntities: string[];
@@ -16,11 +17,23 @@ export function KnowledgeRefBar({
   onClear,
   onUseFor,
 }: KnowledgeRefBarProps) {
+  const { position, isDragging, handleMouseDown } = useDraggable();
   const total = selectedEntities.length + selectedRelations.length;
   if (total === 0) return null;
 
   return (
-    <div className="rag-refbar">
+    <div 
+      className="rag-refbar"
+      style={{ 
+        transform: `translate(calc(-50% + ${position.x}px), ${position.y}px)`,
+        cursor: isDragging ? 'grabbing' : 'grab'
+      }}
+      onMouseDown={handleMouseDown}
+      onTouchStart={handleMouseDown}
+    >
+      <div style={{ position: "absolute", top: "-10px", left: "50%", transform: "translateX(-50%)", color: "var(--fg-faint)", opacity: 0.5 }}>
+        <GripHorizontal size={14} />
+      </div>
       <div className="rag-refbar__info">
         <span className="rag-refbar__count">
           已选 {selectedEntities.length} 个实体 · {selectedRelations.length} 条关系

@@ -385,7 +385,7 @@ func sendSMTP(cfg config.SMTPConfig, to, cc, bcc []string, msg []byte) error {
 	addr := net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Port))
 	recipients := append(append(append([]string{}, to...), cc...), bcc...)
 
-	if cfg.UseTLS {
+	if cfg.UseTLS || cfg.EncryptionMode == "tls" || cfg.Port == 465 {
 		// Implicit TLS: wrap the whole connection.
 		tlsCfg := &tls.Config{ServerName: cfg.Host}
 		conn, err := tls.Dial("tcp", addr, tlsCfg)

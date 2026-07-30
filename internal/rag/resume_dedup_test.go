@@ -312,3 +312,109 @@ func TestResumeFeedsOriginalTextNotBigram(t *testing.T) {
 		}
 	}
 }
+
+// TestReimportFolderPreservesDoneJobs reproduces the user-reported bug: a
+// folder has 5 files, 3 are extracted (done); re-importing the folder (now 7
+// files) must NOT reset the 3 done jobs back to pending. The stat-key dedup
+// (size+mtime unchanged) short-circuits before readDoc, so done files are
+// skipped wholesale. Only the 2 genuinely-new files get enqueued.
+func TestReimportFolderPreservesDoneJobs(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "rag.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	p := NewPipeline(store, noopExtractor{}, DefaultPipelineConfig(), nil)
+	p.SetLogger(func(format string, args ...any) {})
+
+	// Three files in the initial import.
+	f1 := filepath.Join(dir, "a.md")
+	f2 := filepath.Join(dir, "b.md")
+	f3 := filepath.Join(dir, "c.md")
+	writeFile(t, f1, "# A\n\ncontent one for a.")
+	writeFile(t, f2, "# B\n\ncontent two for b.")
+	writeFile(t, f3, "# C\n\ncontent three for c.")
+
+	jids, err := p.EnqueuePaths("c1", []string{f1, f2, f3}, "", "", false)
+	if err != nil || len(jids) != 3 {
+		t.Fatalf("initial import: err=%v jobs=%v", err, jids)
+	}
+	// Mark all three done (simulate completed extraction).
+	for _, jid := range jids {
+		if err := store.SetJobStatus(jid, JobDone); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Re-import the SAME three files (no writeFile in between → size+mtime
+	// unchanged). Every done job must be preserved.
+	jids2, err := p.EnqueuePaths("c1", []string{f1, f2, f3}, "", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Dedup returns the same job IDs (no new jobs created).
+	if len(jids2) != 3 {
+		t.Fatalf("re-import of unchanged files should return 3 jobs, got %d", len(jids2))
+	}
+	for _, fpath := range []string{f1, f2, f3} {
+		_, status, _, _, err := store.JobStatusForPath("c1", fpath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status != JobDone {
+			t.Errorf("re-imported unchanged file %s: status=%q want %q", fpath, status, JobDone)
+		}
+	}
+}
+
+// TestReimportFolderAddsNewFilesOnly verifies the companion case: re-importing
+// a folder that now contains extra files enqueues ONLY the new ones; existing
+// done jobs are untouched.
+func TestReimportFolderAddsNewFilesOnly(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "rag.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	p := NewPipeline(store, noopExtractor{}, DefaultPipelineConfig(), nil)
+	p.SetLogger(func(format string, args ...any) {})
+
+	f1 := filepath.Join(dir, "a.md")
+	f2 := filepath.Join(dir, "b.md")
+	writeFile(t, f1, "# A\n\ncontent for a.")
+	writeFile(t, f2, "# B\n\ncontent for b.")
+	jids, err := p.EnqueuePaths("c1", []string{f1, f2}, "", "", false)
+	if err != nil || len(jids) != 2 {
+		t.Fatalf("initial import: err=%v jobs=%v", err, jids)
+	}
+	for _, jid := range jids {
+		store.SetJobStatus(jid, JobDone)
+	}
+
+	// A genuinely new file is added to the folder.
+	f3 := filepath.Join(dir, "c.md")
+	writeFile(t, f3, "# C\n\nbrand new content for c.")
+
+	// Re-import all three. f1+f2 should dedup-skip (done + unchanged); only
+	// f3 is new.
+	if _, err := p.EnqueuePaths("c1", []string{f1, f2, f3}, "", "", false); err != nil {
+		t.Fatal(err)
+	}
+	// f1, f2 stay done; f3 is pending (newly enqueued).
+	_, s1, _, _, _ := store.JobStatusForPath("c1", f1)
+	_, s2, _, _, _ := store.JobStatusForPath("c1", f2)
+	_, s3, _, _, _ := store.JobStatusForPath("c1", f3)
+	if s1 != JobDone {
+		t.Errorf("f1 status=%q want done (should be preserved)", s1)
+	}
+	if s2 != JobDone {
+		t.Errorf("f2 status=%q want done (should be preserved)", s2)
+	}
+	if s3 != JobPending {
+		t.Errorf("f3 status=%q want pending (newly enqueued)", s3)
+	}
+}

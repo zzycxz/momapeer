@@ -115,6 +115,7 @@ CREATE TABLE IF NOT EXISTS rag_jobs (
 	done_chunks   INTEGER DEFAULT 0,
 	error_msg     TEXT,
 	content_hash  TEXT,
+	stat_key      TEXT,
 	node_prompt   TEXT,
 	edge_prompt   TEXT,
 	created_at    TEXT,
@@ -190,7 +191,7 @@ CREATE INDEX IF NOT EXISTS idx_entity_emb_collection ON rag_entity_embeddings(co
 // ragSchemaVersion is the current schema version. Bump this whenever a migration
 // step is added to ragMigrations below. PRAGMA user_version tracks the version
 // on disk so existing databases upgrade forward without manual intervention.
-var ragSchemaVersion = 6
+var ragSchemaVersion = 7
 
 // ragMigrations maps a target version → the statements to run when upgrading
 // FROM version-1 TO that version. Each step runs inside a transaction; SQLite
@@ -239,6 +240,15 @@ var ragMigrations = map[int][]string{
 	// 5.0 = neutral for backfilled rows that predate the strength prompt.
 	6: {
 		"ALTER TABLE rag_relations ADD COLUMN strength REAL DEFAULT 5.0",
+	},
+	// Version 7: rag_jobs gains a stat_key column ("size:mtime" of the source
+	// file). This powers a cheap re-import dedup that runs BEFORE the expensive
+	// readDoc (markitdown/OCR) call: if size+mtime are unchanged, the body is
+	// identical and we skip re-reading + re-extraction entirely. Catches the
+	// "re-import a folder containing already-extracted files" case without
+	// burning a markitdown subprocess (which was flashing CMD windows).
+	7: {
+		"ALTER TABLE rag_jobs ADD COLUMN stat_key TEXT",
 	},
 }
 

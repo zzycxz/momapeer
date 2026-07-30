@@ -682,23 +682,35 @@ func renderStringArray(ss []string) string {
 func renderSMTPFields(b *strings.Builder, s SMTPConfig) {
 	if s.Host != "" {
 		fmt.Fprintf(b, "host = %q\n", s.Host)
+	} else {
+		b.WriteString("# host = \"smtp.example.com\"\n")
 	}
 	if s.Port != 0 {
 		fmt.Fprintf(b, "port = %d   # 465 implicit TLS, 587 STARTTLS, 25 plain\n", s.Port)
+	} else {
+		b.WriteString("# port = 465   # 465 implicit TLS, 587 STARTTLS, 25 plain\n")
 	}
 	if s.From != "" {
 		fmt.Fprintf(b, "from = %q   # sender address\n", s.From)
+	} else {
+		b.WriteString("# from = \"you@example.com\"   # sender address\n")
 	}
 	if s.Username != "" {
 		fmt.Fprintf(b, "username = %q\n", s.Username)
+	} else {
+		b.WriteString("# username = \"you@example.com\"\n")
 	}
 	if s.PasswordEnv != "" {
 		fmt.Fprintf(b, "password_env = %q   # env var name holding the password (not the password itself)\n", s.PasswordEnv)
+	} else {
+		b.WriteString("# password_env = \"SMTP_PASS\"   # env var name holding the password (not the password itself)\n")
 	}
 	if s.EncryptionMode != "" {
 		fmt.Fprintf(b, "encryption_mode = %q   # tls | starttls | none\n", s.EncryptionMode)
 	} else if s.UseTLS {
 		b.WriteString("use_tls = true   # deprecated: prefer encryption_mode\n")
+	} else {
+		b.WriteString("# use_tls = true   # enable implicit SSL (required by most 465 ports)\n")
 	}
 }
 
@@ -707,18 +719,28 @@ func renderSMTPFields(b *strings.Builder, s SMTPConfig) {
 func renderIMAPFields(b *strings.Builder, m IMAPConfig) {
 	if m.Host != "" {
 		fmt.Fprintf(b, "host = %q\n", m.Host)
+	} else {
+		b.WriteString("# host = \"imap.example.com\"\n")
 	}
 	if m.Port != 0 {
 		fmt.Fprintf(b, "port = %d   # 993 implicit TLS, 143 STARTTLS/plain\n", m.Port)
+	} else {
+		b.WriteString("# port = 993   # 993 implicit TLS, 143 STARTTLS/plain\n")
 	}
 	if m.Username != "" {
 		fmt.Fprintf(b, "username = %q\n", m.Username)
+	} else {
+		b.WriteString("# username = \"you@example.com\"\n")
 	}
 	if m.PasswordEnv != "" {
 		fmt.Fprintf(b, "password_env = %q   # env var name holding the password\n", m.PasswordEnv)
+	} else {
+		b.WriteString("# password_env = \"IMAP_PASS\"\n")
 	}
 	if m.SkipTLSVerify {
 		fmt.Fprintf(b, "skip_tls_verify = %v   # skip cert verification (self-signed/corporate CAs)\n", m.SkipTLSVerify)
+	} else {
+		b.WriteString("# skip_tls_verify = false   # skip cert verification (self-signed/corporate CAs)\n")
 	}
 }
 

@@ -303,7 +303,7 @@ export function RagPanel() {
           style={{ padding: "6px 12px", borderRadius: "6px" }}
         >
           {selectionMode ? <MousePointer2 size={14} /> : <BoxSelect size={14} />}
-          <span>框选节点</span>
+          <span>多选节点</span>
         </button>
         <div style={{ width: "1px", background: "var(--border-soft)", margin: "6px 2px" }} />
         <button
