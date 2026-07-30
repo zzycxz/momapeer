@@ -18,6 +18,8 @@ RequestExecutionLevel user
 !include "MUI2.nsh"
 
 !define MUI_ABORTWARNING
+!define MUI_ICON "..\build\windows\icon.ico"
+!define MUI_UNICON "..\build\windows\icon.ico"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
@@ -44,6 +46,9 @@ Section "Install"
   SetOutPath "$PROFILE\.momapeer"
   File /r "..\..\.momapeer\*.*"
 
+  ; Create Desktop Shortcut
+  CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
+
   ; Create uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
@@ -62,8 +67,10 @@ Section "Install"
 SectionEnd
 
 Section "Uninstall"
-  Delete "$INSTDIR\${APP_EXE}"
   Delete "$INSTDIR\uninstall.exe"
+  Delete "$INSTDIR\${APP_EXE}"
+  Delete "$DESKTOP\${APP_NAME}.lnk"
+  
   RMDir "$INSTDIR"
 
   Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
