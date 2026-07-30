@@ -12,8 +12,6 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-
-	"github.com/zzycxz/momapeer/internal/proc"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -26,6 +24,7 @@ import (
 	pdflib "github.com/ledongthuc/pdf"
 
 	"github.com/zzycxz/momapeer/internal/docconv"
+	"github.com/zzycxz/momapeer/internal/proc"
 )
 
 // cjkSpaceRe matches a space between two CJK characters.

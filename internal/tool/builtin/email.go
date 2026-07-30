@@ -26,10 +26,12 @@ import (
 // go-imap once read use-cases are clear; for now the office "send a report /
 // notification" path is covered.
 //
-// The SMTP config (host/port/credentials) comes from config.Cowork.SMTP (the
-// TOML table is [cowork.smtp] — nested under cowork, NOT a top-level [smtp]),
-// injected at boot via SetEmailConfig. When unset, email_send returns a clear
-// config error rather than failing opaquely at the socket.
+// The SMTP config (host/port/credentials) comes from the [[cowork.email_accounts]]
+// multi-account list, injected at boot via SetEmailAccounts. The legacy
+// config.Cowork.SMTP single-account table ([cowork.smtp], nested under cowork)
+// is kept only as a fallback via globalEmailConfig. When no account resolves,
+// email_send returns a clear config error rather than failing opaquely at the
+// socket.
 
 var globalEmailConfig *config.SMTPConfig
 
@@ -106,8 +108,11 @@ func buildPlainTextMessage(from string, to []string, subject, body string) []byt
 
 var globalIMAPConfig *config.IMAPConfig
 
-// SetIMAPConfig injects inbound-mail settings for email_read/search. Called
-// from boot.go; nil disables the read tools (they return a config error).
+// SetIMAPConfig injects the legacy single-account inbound-mail settings for
+// email_read/search. This is a legacy fallback — boot.go injects the
+// multi-account config via SetEmailAccounts instead; globalIMAPConfig is kept
+// only for configs that haven't migrated. nil disables the read tools (they
+// return a config error).
 func SetIMAPConfig(c *config.IMAPConfig) { globalIMAPConfig = c }
 
 // emailAccounts holds the multi-mailbox config injected at boot (and refreshed

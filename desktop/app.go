@@ -1806,7 +1806,7 @@ func (a *App) PickWorkspace() (string, error) {
 	}
 	a.mu.RUnlock()
 	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title:            "Choose working folder",
+		Title:            "选择工作文件夹",
 		DefaultDirectory: dialogDefaultDirectory(cur),
 	})
 	if err != nil || dir == "" {

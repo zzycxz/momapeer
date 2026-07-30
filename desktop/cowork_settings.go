@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -666,7 +667,15 @@ func saveCoworkEnv(m map[string]string) error {
 	}
 	var b strings.Builder
 	b.WriteString("# coWork secrets — managed by the settings panel. Do not edit by hand.\n")
-	for key, val := range m {
+	// Sort keys for deterministic output so repeated saves don't produce
+	// meaningless diffs (map iteration order is randomized in Go).
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		val := m[key]
 		b.WriteString(key + "=" + val + "\n")
 		// Mirror into the live process env so tools see it immediately.
 		os.Setenv(key, val)

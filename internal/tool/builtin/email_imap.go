@@ -784,7 +784,7 @@ func (emailReadTool) Execute(ctx context.Context, args json.RawMessage) (string,
 		if err != nil {
 			return "", fmt.Errorf("download attachments: %w", err)
 		}
-		return formatMessages(msgs) + fmt.Sprintf("\n%saved %d attachment(s) to %s", "", saved, p.SaveAttachments), nil
+		return formatMessages(msgs) + fmt.Sprintf("\nsaved %d attachment(s) to %s", saved, p.SaveAttachments), nil
 	}
 	return formatMessages(msgs), nil
 }
@@ -862,7 +862,7 @@ func formatMessages(msgs []EmailMessage) string {
 				if j > 0 {
 					fmt.Fprintf(&b, ", ")
 				}
-				fmt.Fprintf(&b, "%s (%dKB)", a.Name, a.Size/1024+1)
+				fmt.Fprintf(&b, "%s (%dKB)", a.Name, (a.Size+1023)/1024)
 			}
 			fmt.Fprintf(&b, "\n")
 		}

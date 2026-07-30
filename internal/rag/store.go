@@ -959,10 +959,10 @@ func (s *Store) DeleteCollectionTree(name string) error {
 }
 
 // readDoc reads a file and returns its text + an extension hint for chunking.
-// Phase 3 supports text-like formats (txt, md, code, csv, json, html). Binary
-// Office formats (docx/xlsx/pdf) are handled by the doc_* tools later; here we
-// return an error so the caller can fall back to those.
-// ReadDoc reads a document file and returns its text content and extension.
+// Text-like formats (txt, md, code, csv, json, html) are parsed inline; binary
+// Office formats (docx/xlsx/pptx/pdf) go through docconv/markitdown with a Go
+// fallback. ReadDoc reads a document file and returns its text content and
+// extension.
 func ReadDoc(path string) (string, string, error) {
 	return readDoc(path)
 }

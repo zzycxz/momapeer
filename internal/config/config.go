@@ -113,8 +113,8 @@ type NotificationsConfig struct {
 	AskRequest      bool `toml:"ask_request"`
 }
 
-// UIThemeStyle normalizes ui.theme_style. Empty means "pick the default style
-// for the resolved light/dark shell".
+// UITheme normalizes ui.theme (dark/light/auto). Empty or unrecognized falls
+// back to "auto", which follows the OS shell preference.
 func (c *Config) UITheme() string {
 	switch strings.ToLower(strings.TrimSpace(c.UI.Theme)) {
 	case "dark":
@@ -460,9 +460,11 @@ type BotConfig struct {
 	Connections []BotConnectionConfig `toml:"connections"`
 }
 
-// CoworkConfig holds coWork (office) profile settings. BrowserPath overrides
-// the auto-detected Chromium-based browser; when empty, browser_* tools probe
-// the standard Chrome/Edge/Brave install locations and fall back to CHROME_PATH.
+// CoworkConfig holds coWork (office) profile settings: browser path, PPT
+// generation, email (SMTP/IMAP), RAG/knowledge base, screenshot recognition,
+// hotkeys, and the Hyper-Extract service. BrowserPath overrides the
+// auto-detected Chromium-based browser; when empty, browser_* tools probe the
+// standard Chrome/Edge/Brave install locations and fall back to CHROME_PATH.
 // Users set this when the browser isn't in a standard location — the agent
 // surfaces a clear error guiding them to fill [cowork] browser_path.
 type CoworkConfig struct {
@@ -486,11 +488,11 @@ type CoworkConfig struct {
 	// coordinates, so most slides don't need per-step VLM perception. Empty = no
 	// template, the CUA builds from a blank deck.
 	PPTActiveTemplate string `toml:"ppt_active_template"`
-	// PPTMode selects how the ppt-wizard skill builds decks. "" / "template"
-	// (default) uses PPTActiveTemplate when set, falling back to a blank deck;
-	// "blank" always builds from scratch. The desktop cowork settings panel
-	// exposes this as a dropdown so the user can override the template-driven
-	// flow without clearing PPTActiveTemplate.
+	// PPTMode selects how the ppt-wizard skill builds decks. "fast" (default
+	// when empty) generates in one pass with no rework; "validate" generates,
+	// then checks and reworks on issues. The desktop cowork settings panel
+	// exposes this as a dropdown; PPTActiveTemplate still selects the template
+	// used in either mode.
 	PPTMode string `toml:"ppt_mode"`
 	// SMTP configures outbound email (email_send). All fields required to enable
 	// sending; empty SMTPHost disables email_send (it returns a config error).
@@ -543,9 +545,9 @@ type CoworkConfig struct {
 	// focused. Default "Ctrl+Shift+S".
 	ScreenshotHotkey string `toml:"screenshot_hotkey"`
 	// ScreenshotVLMModel is the model used for screenshot recognition. Default
-	// "qwen/qwen3.6-27b" (lightweight multimodal). Alternative: "qwen/qwen3.5-
-	// 397b-a17b". This is the SINGLE place all image-recognition config lives
-	// — set it once in the cowork settings page.
+	// "qwen/qwen3.5-397b-a17b" (heavy multimodal). Alternative: "qwen/qwen3.6-
+	// 27b" (lightweight). This is the SINGLE place all image-recognition config
+	// lives — set it once in the cowork settings page.
 	ScreenshotVLMModel string `toml:"screenshot_vlm_model"`
 
 	// EStopHotkey is the global EMERGENCY-STOP hotkey for coWork desktop
@@ -564,7 +566,7 @@ type CoworkConfig struct {
 // across ALL providers via a decorator, so main-agent + subagent + RAG
 // extraction + IM bot responses all share the same per-API-key RPM quota.
 //
-// RPM reflects the user's real API-key rate limit (MoMA defaults to 5/min;
+// RPM reflects the user's real API-key rate limit (MoMA defaults to 60/min;
 // higher tiers or other providers may allow more). Leave at 0 to disable
 // rate limiting entirely (unlimited, backward-compatible).
 //

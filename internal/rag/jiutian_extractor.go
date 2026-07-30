@@ -18,6 +18,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/zzycxz/momapeer/internal/jiutian"
 )
@@ -270,18 +271,26 @@ func resolveKey(envName string) string {
 	return strings.TrimSpace(os.Getenv(envName))
 }
 
-func truncateChunk(s string, max int) string {
+// truncateAtByte returns s truncated to at most max bytes, then appends "…".
+// It backs up to a UTF-8 rune boundary so it never cuts a multibyte CJK char in
+// half (which would emit invalid UTF-8 / mojibake to the model).
+func truncateAtByte(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max] + "…"
+	n := max
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "…"
+}
+
+func truncateChunk(s string, max int) string {
+	return truncateAtByte(s, max)
 }
 
 func truncateStr(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
+	return truncateAtByte(s, n)
 }
 
 // stripCodeFence removes ```json ... ``` wrappers that some models add despite
