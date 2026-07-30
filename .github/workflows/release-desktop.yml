@@ -75,7 +75,7 @@ jobs:
         run: |
           Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20231128/llvm-mingw-20231128-ucrt-x86_64.zip" -OutFile llvm-mingw.zip
           Expand-Archive llvm-mingw.zip -DestinationPath C:\llvm-mingw
-          echo "C:\llvm-mingw\llvm-mingw-20231128-ucrt-x86_64\bin" >> $env:GITHUB_PATH
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\llvm-mingw\llvm-mingw-20231128-ucrt-x86_64\bin"
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -120,8 +120,8 @@ jobs:
         run: |
           UPX_FLAG=""
           if command -v upx &> /dev/null; then UPX_FLAG="-upx"; fi
-          wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }} -ldflags "-s -w -X main.version=${{ steps.version.outputs.semver }}" $UPX_FLAG -v 2 > wails_build.log 2>&1
-          if [ $? -ne 0 ]; then echo "Wails build failed"; exit 1; fi
+          wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }} -ldflags "-s -w -X main.version=${{ steps.version.outputs.semver }}" $UPX_FLAG -v 2 | tee wails_build.log
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then echo "Wails build failed"; exit 1; fi
 
       - name: Build Wails App (Others)
         if: matrix.platform != 'windows/arm64'
@@ -130,8 +130,8 @@ jobs:
         run: |
           UPX_FLAG=""
           if command -v upx &> /dev/null; then UPX_FLAG="-upx"; fi
-          wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }} -ldflags "-s -w -X main.version=${{ steps.version.outputs.semver }}" $UPX_FLAG -v 2 > wails_build.log 2>&1
-          if [ $? -ne 0 ]; then
+          wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }} -ldflags "-s -w -X main.version=${{ steps.version.outputs.semver }}" $UPX_FLAG -v 2 | tee wails_build.log
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
             echo "Wails build failed"
             exit 1
           fi
