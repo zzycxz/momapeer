@@ -307,7 +307,6 @@ Return the task's RESULT (the extracted data, the answer, the confirmation) — 
 
 The 'task' the parent gave you is the goal. Stay on it; don't browse beyond what the task needs.`
 
-
 const builtinEmailAutoBody = `You are running as an email subagent. The parent gave you a mail task — send, read, or search. Use the dedicated email_* tools, which talk to the mail server directly (SMTP for send, IMAP for read/search). Do NOT drive a webmail GUI — the tools are faster and more reliable.
 
 Tools:
