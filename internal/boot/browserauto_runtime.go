@@ -137,15 +137,15 @@ func runBrowserAuto(ctx context.Context, cfg *config.Config, req builtin.Browser
 	// launched, so there is exactly one shared instance. The model/base_url/key
 	// come from the resolved provider entry above.
 	stream, err := client.RunStream(ctx, browseruse.RunRequest{
-		Goal:        req.Goal,
-		URL:         req.URL,
-		CDPURL:      handle.WSURL,
-		MaxSteps:    maxSteps,
-		Model:       modelName,
+		Goal:         req.Goal,
+		URL:          req.URL,
+		CDPURL:       handle.WSURL,
+		MaxSteps:     maxSteps,
+		Model:        modelName,
 		ProviderKind: providerKind,
-		BaseURL:     baseURL,
-		APIKeyEnv:   apiKeyEnv,
-		Proxy:       req.Proxy,
+		BaseURL:      baseURL,
+		APIKeyEnv:    apiKeyEnv,
+		Proxy:        req.Proxy,
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("sidecar /run: %w", err)

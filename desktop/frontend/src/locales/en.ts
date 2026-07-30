@@ -1779,9 +1779,12 @@ export const en = {
   "cowork.browserViewStop": "Stop",
   "cowork.browserViewStopping": "Stopping…",
   "cowork.browserViewNoUrl": "Waiting for page to load…",
-  "cowork.browserViewStopped": "Browser session ended",
-  "cowork.browserViewEmpty": "No browser view yet",
-  "cowork.browserViewHint": "Ask the agent to do a web task (e.g. \"open a site and search\"); its actions will be mirrored here live.",
+  "cowork.browserViewStopped": "Session ended",
+  "cowork.browserViewEmpty": "Browser on standby",
+  "cowork.browserViewHint": "Type the web task you want the AI to complete below; once you start, its actions are mirrored here live.",
+  "cowork.browserViewGoalPlaceholder": "Describe the browsing task, e.g. open a site, search something, fill a form",
+  "cowork.browserViewStart": "Start",
+  "cowork.browserViewShortcut": "Ctrl/Cmd + Enter to start · complex tasks can be followed in the chat",
 };
 
 export type DictKey = keyof typeof en;

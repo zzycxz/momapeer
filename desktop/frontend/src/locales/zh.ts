@@ -1778,7 +1778,10 @@ export const zh: Record<DictKey, string> = {
   "cowork.browserViewStop": "停止",
   "cowork.browserViewStopping": "停止中…",
   "cowork.browserViewNoUrl": "等待页面加载…",
-  "cowork.browserViewStopped": "浏览器会话已结束",
-  "cowork.browserViewEmpty": "暂无浏览器画面",
-  "cowork.browserViewHint": "让 AI 执行浏览器任务（如「打开某网站并搜索」），它的操作过程会在此处实时显示。",
+  "cowork.browserViewStopped": "操作已结束",
+  "cowork.browserViewEmpty": "浏览器待命中",
+  "cowork.browserViewHint": "在下方输入你想让 AI 完成的浏览任务，点开始后这里会实时显示它的操作。",
+  "cowork.browserViewGoalPlaceholder": "描述你想让 AI 完成的浏览任务，例如：打开知乎搜索「AI Agent」并总结前 3 条回答",
+  "cowork.browserViewStart": "开始",
+  "cowork.browserViewShortcut": "Ctrl/Cmd + Enter 快速开始 · 复杂任务可在聊天区跟进",
 };

@@ -491,8 +491,8 @@ function GraphCanvasInner({
           sprite.position.y = -(node.val || 2) - 4; // 将文字放置在星球下方
           return sprite;
         }}
-        linkColor={() => "rgba(150,150,150,0.4)"}
-        linkWidth={1}
+        linkColor={() => "rgba(100,100,100,0.8)"}
+        linkWidth={1.5}
         onNodeClick={handleNodeClick}
         onLinkClick={handleLinkClick}
         backgroundColor="#00000000"

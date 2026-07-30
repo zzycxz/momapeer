@@ -46,8 +46,8 @@ func NewClient(port int) *Client {
 
 // HealthReport is the /health response.
 type HealthReport struct {
-	OK                 bool `json:"ok"`
-	BrowserUseAvail    bool `json:"browser_use_available"`
+	OK              bool `json:"ok"`
+	BrowserUseAvail bool `json:"browser_use_available"`
 }
 
 // Health checks whether the server is up and the browser-use library actually
@@ -106,21 +106,21 @@ type RunRequest struct {
 type EventType string
 
 const (
-	EventThought   EventType = "thought"   // the model's reasoning text
-	EventAction    EventType = "action"    // a parsed action description
+	EventThought    EventType = "thought"    // the model's reasoning text
+	EventAction     EventType = "action"     // a parsed action description
 	EventScreenshot EventType = "screenshot" // a base64 frame (data URL)
-	EventDone      EventType = "done"       // run finished (final summary)
-	EventError     EventType = "error"      // run failed (final)
+	EventDone       EventType = "done"       // run finished (final summary)
+	EventError      EventType = "error"      // run failed (final)
 )
 
 // StepEvent is one SSE-delivered event from the agentic loop.
 type StepEvent struct {
-	Type    EventType `json:"type"`
-	Step    int       `json:"step,omitempty"`
-	Text    string    `json:"text,omitempty"`     // thought/action/done/error text
-	Image   string    `json:"image,omitempty"`    // data URL for screenshot events
-	URL     string    `json:"url,omitempty"`      // current page URL, when known
-	Done    bool      `json:"done,omitempty"`     // true on the terminal done/error event
+	Type  EventType `json:"type"`
+	Step  int       `json:"step,omitempty"`
+	Text  string    `json:"text,omitempty"`  // thought/action/done/error text
+	Image string    `json:"image,omitempty"` // data URL for screenshot events
+	URL   string    `json:"url,omitempty"`   // current page URL, when known
+	Done  bool      `json:"done,omitempty"`  // true on the terminal done/error event
 }
 
 // RunStream posts a run request and returns a channel of step events. The

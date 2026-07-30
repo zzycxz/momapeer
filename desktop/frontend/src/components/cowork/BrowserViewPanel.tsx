@@ -1,16 +1,16 @@
-// BrowserViewPanel is the coWork in-app browser mirror: while the
-// autonomous-browsing agent (browser_auto) drives a shared Chrome/Edge, this
-// panel shows a live CDP screencast of what it's doing — clicks, typing,
-// navigation. It does NOT drive the browser itself; it is a passive observer.
+// BrowserViewPanel is the coWork in-app browser: a one-stop surface for
+// autonomous web tasks. The user types a GOAL here ("打开淘宝搜索…"), it is
+// submitted to the active tab's agent (which calls browser_auto), and the
+// panel mirrors the agent-driven browser live via CDP screencast. So the user
+// both launches AND watches the task from one place — no need to jump back to
+// the chat composer.
 //
-// The frames arrive over the "browser:view:frame" Wails event as base64 data
-// URLs (see browser_view_app.go). We draw them on a <canvas>, scaling to fit
-// while preserving aspect ratio. The header shows the current page URL (an
-// address bar) and a Stop button to cancel a runaway run. When no run is
-// active, a placeholder prompts the user to ask the agent to browse.
+// Visual design uses the app's design tokens (styles.css): dark elevated
+// surfaces, the orange accent gradient, layered shadows — so it reads as part
+// of momapeer, not a foreign box.
 
 import { useEffect, useRef, useState } from "react";
-import { Globe, Square } from "lucide-react";
+import { Globe, Play, Square, Sparkles } from "lucide-react";
 
 import { app, onBrowserViewFrame, type BrowserViewFrame } from "../../lib/bridge";
 import { useT } from "../../lib/i18n";
@@ -20,6 +20,13 @@ import { useT } from "../../lib/i18n";
 // so a brief pause (e.g. a slow page load) doesn't flicker the placeholder.
 const STALE_MS = 5000;
 
+// Example goals surfaced as one-click chips to teach the user what works.
+const EXAMPLE_GOALS = [
+  "打开 example.com 并截图",
+  "搜索今天的新闻头条",
+  "查一下北京明天的天气",
+];
+
 export function BrowserViewPanel() {
   const t = useT();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -27,8 +34,9 @@ export function BrowserViewPanel() {
   const [lastFrame, setLastFrame] = useState<BrowserViewFrame | null>(null);
   const [frameDims, setFrameDims] = useState<{ w: number; h: number } | null>(null);
   const [currentURL, setCurrentURL] = useState("");
-  const [isStale, setIsStale] = useState(false);
+  const [isStale, setIsStale] = useState(true);
   const [stopping, setStopping] = useState(false);
+  const [goal, setGoal] = useState("");
 
   useEffect(() => {
     // Hidden <img> decodes each data URL; onload we blit it onto the canvas.
@@ -70,53 +78,122 @@ export function BrowserViewPanel() {
 
   const hasLive = lastFrame && !isStale;
 
+  // Submit the goal to the active tab's agent. The agent reads it as a normal
+  // turn and invokes browser_auto; the screencast then mirrors the run into
+  // this panel automatically. Empty tabID routes to the active tab.
+  const handleSubmit = async () => {
+    const trimmed = goal.trim();
+    if (!trimmed) return;
+    try {
+      await app.SubmitToTab("", trimmed);
+      setGoal("");
+    } catch {
+      // best-effort; the panel just won't start streaming
+    }
+  };
+
   const handleStop = async () => {
     setStopping(true);
     try {
       await app.StopBrowserAuto();
     } catch {
-      // best-effort; the panel just stops updating
+      // best-effort
     } finally {
       setStopping(false);
     }
   };
 
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Ctrl/Cmd+Enter submits; plain Enter inserts a newline (goals are often
+    // multi-line). Matches the main composer's convention.
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      void handleSubmit();
+    }
+  };
+
   return (
     <div
-      className="cowork-main__transcript"
       style={{
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
-        padding: "16px",
-        gap: "12px",
+        height: "100%",
+        background: "var(--bg)",
+        gap: 0,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-        <Globe size={16} />
-        <strong>{t("cowork.browserView") || "浏览器实时画面"}</strong>
-        {hasLive ? (
-          <span style={{ fontSize: 12, color: "var(--text-muted, #888)" }}>
-            {t("cowork.browserViewLive") || "· 正在跟随 AI 操作"}
-          </span>
-        ) : (
-          <span style={{ fontSize: 12, color: "var(--text-muted, #888)" }}>
-            {t("cowork.browserViewIdle") || "· 空闲"}
-          </span>
-        )}
+      {/* Header: title + live/idle status + stop. */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "10px 14px",
+          borderBottom: "1px solid var(--border-soft)",
+          flexShrink: 0,
+        }}
+      >
+        <div
+          style={{
+            width: 26,
+            height: 26,
+            borderRadius: 7,
+            background: "var(--grad)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+            boxShadow: "var(--shadow-1)",
+          }}
+        >
+          <Globe size={15} color="var(--accent-fg)" />
+        </div>
+        <strong style={{ fontSize: "var(--text-base)" }}>
+          {t("cowork.browserView") || "浏览器"}
+        </strong>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+            fontSize: "var(--text-xs)",
+            color: hasLive ? "var(--ok)" : "var(--fg-faint)",
+            marginLeft: 2,
+          }}
+        >
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              background: hasLive ? "var(--ok)" : "var(--fg-faint)",
+              boxShadow: hasLive ? "0 0 6px var(--ok)" : "none",
+            }}
+          />
+          {hasLive
+            ? t("cowork.browserViewLive") || "正在操作"
+            : t("cowork.browserViewIdle") || "空闲"}
+        </span>
         {hasLive && (
           <button
             onClick={handleStop}
             disabled={stopping}
-            title={t("cowork.browserViewStop") || "停止当前浏览任务"}
+            className="ghost-btn"
+            title={t("cowork.browserViewStop") || "停止"}
             style={{
               marginLeft: "auto",
               display: "inline-flex",
               alignItems: "center",
-              gap: 4,
-              padding: "4px 10px",
-              fontSize: 12,
+              gap: 5,
+              padding: "5px 11px",
+              fontSize: "var(--text-sm)",
+              border: "1px solid var(--danger)",
+              color: "var(--danger)",
+              background: "transparent",
+              borderRadius: 6,
               cursor: stopping ? "default" : "pointer",
+              opacity: stopping ? 0.6 : 1,
             }}
           >
             <Square size={12} />
@@ -127,83 +204,197 @@ export function BrowserViewPanel() {
         )}
       </div>
 
-      {/* Address bar: shows the page the agent is currently on. Read-only —
-          the panel observes, it does not navigate. */}
+      {/* Address bar: shows the page the agent is currently on (read-only). */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 6,
-          padding: "5px 10px",
-          background: "var(--surface-2, #222)",
-          border: "1px solid var(--border, #333)",
-          borderRadius: 6,
-          fontSize: 12,
-          color: currentURL ? "var(--text, #ddd)" : "var(--text-muted, #888)",
-          fontFamily: "monospace",
-          overflow: "hidden",
-          whiteSpace: "nowrap",
-          textOverflow: "ellipsis",
+          gap: 7,
+          margin: "10px 14px 0",
+          padding: "6px 11px",
+          background: "var(--bg-elev)",
+          border: "1px solid var(--border-soft)",
+          borderRadius: 7,
+          fontSize: "var(--text-sm)",
+          color: currentURL ? "var(--fg-dim)" : "var(--fg-faint)",
+          fontFamily: "var(--font-code, monospace)",
           flexShrink: 0,
         }}
       >
-        <Globe size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+        <Globe size={12} style={{ opacity: 0.55, flexShrink: 0 }} />
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {currentURL || (t("cowork.browserViewNoUrl") || "等待页面加载…")}
         </span>
       </div>
 
+      {/* Viewport: the live screencast canvas, or an inviting placeholder when idle. */}
       <div
         style={{
           flex: 1,
           minHeight: 0,
+          margin: "10px 14px 0",
+          borderRadius: 10,
+          border: "1px solid var(--border-soft)",
+          background: "var(--bg-soft)",
+          overflow: "hidden",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          border: "1px solid var(--border, #333)",
-          borderRadius: 8,
-          background: "var(--surface, #1a1a1a)",
-          overflow: "hidden",
           position: "relative",
         }}
       >
         {/* Hidden decoder image; the visible surface is the canvas. */}
-        <img
-          ref={imgRef}
-          onLoad={onImgLoad}
-          alt=""
-          style={{ display: "none" }}
-        />
+        <img ref={imgRef} onLoad={onImgLoad} alt="" style={{ display: "none" }} />
         {hasLive ? (
           <canvas
             ref={canvasRef}
-            style={{
-              maxWidth: "100%",
-              maxHeight: "100%",
-              objectFit: "contain",
-            }}
+            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
           />
         ) : (
           <div
             style={{
-              color: "var(--text-muted, #888)",
+              color: "var(--fg-faint)",
               textAlign: "center",
-              padding: 24,
-              maxWidth: 360,
+              padding: 28,
+              maxWidth: 380,
             }}
           >
-            <Globe size={32} style={{ opacity: 0.4, marginBottom: 8 }} />
-            <div style={{ marginBottom: 4 }}>
-              {lastFrame
-                ? t("cowork.browserViewStopped") || "浏览器会话已结束"
-                : t("cowork.browserViewEmpty") || "暂无浏览器画面"}
+            <div
+              style={{
+                width: 52,
+                height: 52,
+                margin: "0 auto 14px",
+                borderRadius: 14,
+                background: "var(--accent-soft)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Globe size={26} style={{ color: "var(--accent)" }} />
             </div>
-            <div style={{ fontSize: 12, opacity: 0.7 }}>
+            <div
+              style={{
+                color: "var(--fg-dim)",
+                fontSize: "var(--text-base)",
+                marginBottom: 6,
+              }}
+            >
+              {lastFrame
+                ? t("cowork.browserViewStopped") || "操作已结束"
+                : t("cowork.browserViewEmpty") || "浏览器待命中"}
+            </div>
+            <div style={{ fontSize: "var(--text-sm)", lineHeight: 1.6 }}>
               {t("cowork.browserViewHint") ||
-                "让 AI 执行浏览器任务（如「打开某网站并搜索」），它会在此处实时显示操作过程。"}
+                "在下方输入你想让 AI 完成的浏览任务，点开始后这里会实时显示它的操作。"}
             </div>
           </div>
         )}
+      </div>
+
+      {/* Composer: the user's entry point — type a goal, press start. */}
+      <div style={{ padding: "10px 14px 14px", flexShrink: 0 }}>
+        <div
+          style={{
+            position: "relative",
+            border: "1px solid var(--border)",
+            borderRadius: 9,
+            background: "var(--bg-elev)",
+            boxShadow: "var(--shadow-1)",
+            transition: "border-color .15s",
+          }}
+        >
+          <textarea
+            value={goal}
+            onChange={(e) => setGoal(e.target.value)}
+            onKeyDown={onKeyDown}
+            rows={2}
+            placeholder={
+              t("cowork.browserViewGoalPlaceholder") ||
+              "描述你想让 AI 完成的浏览任务，例如：打开知乎搜索「AI Agent」并总结前 3 条回答"
+            }
+            style={{
+              width: "100%",
+              background: "transparent",
+              border: "none",
+              outline: "none",
+              resize: "none",
+              padding: "10px 12px",
+              paddingRight: 44,
+              color: "var(--fg)",
+              fontSize: "var(--text-base)",
+              fontFamily: "inherit",
+              lineHeight: 1.5,
+            }}
+          />
+          <button
+            onClick={handleSubmit}
+            disabled={!goal.trim()}
+            title={t("cowork.browserViewStart") || "开始"}
+            style={{
+              position: "absolute",
+              right: 7,
+              bottom: 7,
+              width: 30,
+              height: 30,
+              borderRadius: 7,
+              border: "none",
+              background: goal.trim() ? "var(--grad)" : "var(--bg-elev-2)",
+              color: goal.trim() ? "var(--accent-fg)" : "var(--fg-faint)",
+              cursor: goal.trim() ? "pointer" : "default",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: goal.trim() ? "var(--shadow-1)" : "none",
+            }}
+          >
+            <Play size={15} fill="currentColor" />
+          </button>
+        </div>
+
+        {/* One-click example goals, shown only before the first run. */}
+        {!hasLive && !goal.trim() && (
+          <div
+            style={{
+              display: "flex",
+              gap: 7,
+              marginTop: 9,
+              flexWrap: "wrap",
+            }}
+          >
+            {EXAMPLE_GOALS.map((g) => (
+              <button
+                key={g}
+                onClick={() => setGoal(g)}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                  padding: "4px 10px",
+                  fontSize: "var(--text-xs)",
+                  color: "var(--fg-dim)",
+                  background: "var(--bg-elev)",
+                  border: "1px solid var(--border-soft)",
+                  borderRadius: 14,
+                  cursor: "pointer",
+                }}
+              >
+                <Sparkles size={11} style={{ color: "var(--accent)", opacity: 0.8 }} />
+                {g}
+              </button>
+            ))}
+          </div>
+        )}
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: "var(--text-2xs)",
+            color: "var(--fg-faint)",
+            textAlign: "center",
+          }}
+        >
+          {t("cowork.browserViewShortcut") || "Ctrl/Cmd + Enter 快速开始 · 复杂任务可在聊天区跟进"}
+        </div>
       </div>
     </div>
   );
