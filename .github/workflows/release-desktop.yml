@@ -73,11 +73,13 @@ jobs:
         if: matrix.platform == 'windows/arm64'
         shell: pwsh
         run: |
-          $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-x86_64.zip"
+          $ver = "20260728"
+          $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$ver/llvm-mingw-$ver-ucrt-x86_64.zip"
           Invoke-WebRequest -Uri $url -OutFile "llvm-mingw.zip"
           Expand-Archive llvm-mingw.zip -DestinationPath C:\
-          $dir = (Get-ChildItem C:\llvm-mingw-* -Directory | Select-Object -First 1).FullName
-          echo "$dir\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\llvm-mingw-$ver-ucrt-x86_64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          # Verify cross-compiler is available
+          & "C:\llvm-mingw-$ver-ucrt-x86_64\bin\aarch64-w64-mingw32-gcc.exe" --version
 
       - name: Setup Go
         uses: actions/setup-go@v6
