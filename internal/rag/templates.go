@@ -277,11 +277,11 @@ func ListTemplates(heClient *HEClient) []TemplateInfo {
 				if _, exists := builtinMap[t.Name]; !exists && t.Available {
 					ef := make([]FieldMeta, len(t.EntityFields))
 					for i, f := range t.EntityFields {
-						ef[i] = FieldMeta{Name: f.Name, Description: f.Description}
+						ef[i] = FieldMeta(f)
 					}
 					rf := make([]FieldMeta, len(t.RelationFields))
 					for i, f := range t.RelationFields {
-						rf[i] = FieldMeta{Name: f.Name, Description: f.Description}
+						rf[i] = FieldMeta(f)
 					}
 					out = append(out, TemplateInfo{
 						Name:           t.Name,

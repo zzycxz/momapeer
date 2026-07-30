@@ -90,6 +90,12 @@ type IMPusher interface {
 	Push(ctx context.Context, dest, text string) error
 }
 
+// ErrIMOffline is returned by an IMPusher when the bot gateway isn't running.
+// deliverOutput treats it as a "skipped" delivery (with a clear reason shown to
+// the user) rather than a hard failure — the bot may simply not be started yet.
+// Implementations wrap/return it via errors.Is so callers don't string-match.
+var ErrIMOffline = errors.New("IM gateway offline (bot not started)")
+
 // EmailSender delivers a scheduled-task result via SMTP. account selects the
 // named mailbox to send from (empty = default); to is the recipient (or
 // "to;subject"); the desktop app supplies one backed by the same multi-account
@@ -459,6 +465,13 @@ func (s *Scheduler) deliverOutput(pusher IMPusher, emailer EmailSender, notifier
 		defer cancel()
 		text := fmt.Sprintf("[%s] %s\n\n%s", t.Name, t.Expression, result)
 		if err := pusher.Push(ctx, t.OutputDest, text); err != nil {
+			// ErrIMOffline = bot not started. Treat as skipped (not a hard
+			// failure) so the user sees "bot 未启动" instead of a scary error,
+			// and the task isn't marked as failed.
+			if errors.Is(err, ErrIMOffline) {
+				s.logf("scheduler: IM push skipped — bot offline")
+				return deliverResult{status: deliverSkipped, reason: "IM 网关未连接（bot 未启动）"}
+			}
 			s.logf("scheduler: IM push to %s failed: %v", t.OutputDest, err)
 			return deliverResult{status: deliverFailed, reason: "IM 推送失败：" + err.Error()}
 		}
@@ -562,13 +575,9 @@ func splitEmailDest(dest string) (to, subject string) {
 	return dest, ""
 }
 
-// appendFile appends text to a file, creating it if needed. Best-effort.
-func appendFile(path, text string) {
-	_ = appendFileE(path, text)
-}
-
-// appendFileE is like appendFile but returns the error so callers can surface a
-// delivery failure instead of silently swallowing it.
+// appendFileE appends text to a file, creating it if needed, returning the
+// error so callers can surface a delivery failure instead of silently
+// swallowing it.
 func appendFileE(path, text string) error {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {

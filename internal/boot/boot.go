@@ -1341,15 +1341,17 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		GoalJudge: func(ctx context.Context, prov provider.Provider, transcript []provider.Message, condition string) agent.GoalVerdict {
 			return agent.GoalJudgeWithRetry(ctx, prov, transcript, condition, 0)
 		},
-		// RAGContextFn: auto-retrieve knowledge-base context for each user
-		// message and inject it as a preamble — so the agent always has
-		// knowledge-base facts available without needing to call rag_search.
-		RAGContextFn: func(ctx context.Context, query string) string {
-			// AutoSearch returns raw knowledge-base snippets that may carry
-			// prompt-injection text from imported documents. Wrap them so the
-			// model treats the auto-injected context as DATA, never commands —
-			// this is the main-chat injection path and must be fenced.
-			return builtin.WrapUntrusted("rag", builtin.AutoSearch(ctx, query))
+		// RAGContextFn: auto-retrieve knowledge-base context for a user message
+		// and inject it as a preamble. collection scopes the search to one
+		// knowledge-base collection (the user's Composer dropdown selection);
+		// when it's "" the controller skips the call entirely (opt-out). The
+		// returned snippets may carry prompt-injection text from imported docs,
+		// so they're wrapped so the model treats them as DATA, never commands.
+		RAGContextFn: func(ctx context.Context, query, collection string) string {
+			if collection == "" {
+				return "" // user opted out ("不使用")
+			}
+			return builtin.WrapUntrusted("rag", builtin.AutoSearch(ctx, query, collection))
 		},
 	}
 	if classifier != nil {
@@ -1894,23 +1896,6 @@ func profileName(p *config.Profile) string {
 		return config.ProfileDev
 	}
 	return strings.TrimSpace(p.Name)
-}
-
-// isSkillDisabledByName reports whether name appears in a DisabledNames slice
-// (case-insensitive via SkillNameKey). Used to keep the skills index in sync with
-// a profile's additive disables without going through cfg.IsSkillDisabled (which
-// only knows the config-level set).
-func isSkillDisabledByName(disabled []string, name string) bool {
-	key := config.SkillNameKey(name)
-	if key == "" {
-		return false
-	}
-	for _, d := range disabled {
-		if config.SkillNameKey(d) == key {
-			return true
-		}
-	}
-	return false
 }
 
 // PluginSpecs maps configured plugin entries to plugin.Spec, expanding ${VAR}
