@@ -253,16 +253,16 @@ export function RagPanel() {
             </div>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, maxWidth: 480, textAlign: "center" }}>
               <h3 style={{ fontSize: 17, fontWeight: 600, color: "var(--fg)", margin: 0 }}>
-                {activeCollection ? `当前分类「${activeCollection}」暂无文稿` : "知识库首页 · 准备建图"}
+                {activeCollection ? t("cowork.ragEmptyInCollection", { collection: activeCollection }) : t("cowork.ragHomeReady")}
               </h3>
               <p style={{ fontSize: 13, color: "var(--fg-dim)", margin: 0, lineHeight: 1.5 }}>
-                {t("cowork.ragDropToStart")}，系统将在后台自动构建 FTS5 全文检索与 Embedding 语义检索双引擎索引，并依托高精度 LLM 深度分析生成您的可视化实体图谱。
+                {t("cowork.ragBuildDesc")}
               </p>
             </div>
             <div style={{ padding: "6px 14px", borderRadius: 20, background: "var(--bg-soft)", border: "1px solid var(--border-soft)", fontSize: 11.5, color: "var(--fg-faint)" }}>
               {supportedFormats.length > 0
-                ? `⚡ 支持 ${supportedFormats.join(" / ")}`
-                : "⚡ 支持 md / docx / pdf / xlsx / csv / 代码 等多样化支持"}
+                ? t("cowork.ragSupportFormats", { formats: supportedFormats.join(" / ") })
+                : t("cowork.ragSupportFormatsDefault")}
             </div>
             <button
               type="button"
@@ -285,7 +285,7 @@ export function RagPanel() {
               }}
             >
               <FolderPlus size={16} />
-              <span>选择导入资产...</span>
+              <span>{t("cowork.ragImportAssets")}</span>
             </button>
           </div>
         )}
@@ -299,21 +299,21 @@ export function RagPanel() {
         <button
           className={`rag-toolbar__btn ${selectionMode ? "rag-toolbar__btn--active" : ""}`}
           onClick={() => setSelectionMode(!selectionMode)}
-          title={selectionMode ? "退出框选模式" : "开启框选节点模式"}
+          title={selectionMode ? t("cowork.ragExitSelect") : t("cowork.ragEnterSelect")}
           style={{ padding: "6px 12px", borderRadius: "6px" }}
         >
           {selectionMode ? <MousePointer2 size={14} /> : <BoxSelect size={14} />}
-          <span>多选节点</span>
+          <span>{t("cowork.ragMultiSelect")}</span>
         </button>
         <div style={{ width: "1px", background: "var(--border-soft)", margin: "6px 2px" }} />
         <button
           className="rag-toolbar__btn"
           onClick={() => window.dispatchEvent(new CustomEvent("rag:fit-view"))}
-          title="居中视图（缩放到全部节点）"
+          title={t("cowork.ragCenterView")}
           style={{ padding: "6px 12px", borderRadius: "6px" }}
         >
           <Maximize2 size={14} />
-          <span>居中</span>
+          <span>{t("cowork.ragCenter")}</span>
         </button>
       </div>
 

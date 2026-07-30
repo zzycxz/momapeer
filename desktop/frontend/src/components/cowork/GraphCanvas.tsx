@@ -255,24 +255,28 @@ function GraphCanvasInner({
 
   // Highlight-node event listener (Center camera).
   useEffect(() => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
     const handler = (e: Event) => {
       const name = (e as CustomEvent).detail?.name;
       if (!name) return;
       setHighlightedName(name);
-      setTimeout(() => {
+      timers.push(setTimeout(() => {
         const match = fgData.nodes.find((n: any) => n.label === name);
         if (match && fgRef.current) {
           fgRef.current.cameraPosition(
             { x: match.x, y: match.y, z: match.z + 200 },
-            match, 
-            1500 
+            match,
+            1500
           );
         }
-      }, 80);
-      setTimeout(() => setHighlightedName(null), 2500);
+      }, 80));
+      timers.push(setTimeout(() => setHighlightedName(null), 2500));
     };
     window.addEventListener("rag:highlight-node", handler);
-    return () => window.removeEventListener("rag:highlight-node", handler);
+    return () => {
+      window.removeEventListener("rag:highlight-node", handler);
+      timers.forEach((id) => clearTimeout(id));
+    };
   }, [fgData]);
 
   // Fit-view event listener (triggered by toolbar button).
@@ -421,11 +425,11 @@ function GraphCanvasInner({
             <span className="rag-graph__empty-hint" style={{ marginTop: "12px" }}>{t("cowork.ragGraphExtractingHint")}</span>
           ) : stalledSecs < 120 ? (
             <span className="rag-graph__empty-hint" style={{ marginTop: "12px", color: "var(--fg-dim)" }}>
-              ⏳ 当前文档较长，正在提取中…
+              {t("cowork.ragGraphExtractingLong")}
             </span>
           ) : (
             <span className="rag-graph__empty-hint" style={{ marginTop: "12px", color: "color-mix(in srgb, orange 70%, var(--fg-dim))" }}>
-              ⚠️ 当前块响应超时中，完成后将自动继续下一块
+              {t("cowork.ragGraphChunkTimeout")}
             </span>
           )}
           <style>{`
@@ -446,8 +450,8 @@ function GraphCanvasInner({
       <div className="rag-graph__empty" style={{ padding: "40px", textAlign: "center" }}>
         <span style={{ fontSize: "16px", fontWeight: 600, color: "var(--fg)" }}>{t("cowork.ragGraphEmpty")}</span>
         <span className="rag-graph__empty-hint" style={{ marginTop: "12px", maxWidth: "420px", lineHeight: 1.5, color: "var(--fg-dim)" }}>
-          {docCount === 0 
-            ? "当前集合中暂无文件文档，请先通过左侧【导入】添加对应格式文件后，点击【深度提取】即可自研构建知识图谱。" 
+          {docCount === 0
+            ? t("cowork.ragGraphEmptyDoc")
             : t("cowork.ragGraphEmptyHint")}
         </span>
       </div>

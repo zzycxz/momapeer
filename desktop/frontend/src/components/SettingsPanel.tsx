@@ -2032,7 +2032,7 @@ function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) 
               />
             </SettingsField>
 
-            <SettingsField label={"模型域名"}>
+            <SettingsField label={t("settings.modelDomain")}>
               <input
                 className="mem-input"
                 placeholder={t("settings.jiutianDomainHint")}
@@ -4339,16 +4339,16 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
         setMailStatus(m => ({ ...m, [skey]: "idle" }));
       } else if (r.ok) {
         setMailStatus(m => ({ ...m, [skey]: "ok" }));
-        setMailMessage(m => ({ ...m, [skey]: r.message || "连接正常" }));
+        setMailMessage(m => ({ ...m, [skey]: r.message || t("cowork.mailProbeOk") }));
       } else {
         setMailStatus(m => ({ ...m, [skey]: "error" }));
-        setMailMessage(m => ({ ...m, [skey]: r.message || "连接失败" }));
+        setMailMessage(m => ({ ...m, [skey]: r.message || t("cowork.mailProbeFail") }));
       }
     } catch {
       // ProbeMailAccount resolves rather than rejects on failure, but defend
       // against a transport error so the dot doesn't get stuck on "checking".
       setMailStatus(m => ({ ...m, [skey]: "error" }));
-      setMailMessage(m => ({ ...m, [skey]: "检测请求失败" }));
+      setMailMessage(m => ({ ...m, [skey]: t("cowork.mailProbeError") }));
     }
   };
   // commitMailThenProbe: flush the latest draft (via ref — an onBlur right after
@@ -4528,7 +4528,7 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
         </OptionalModule>
 
         {/* ── PPT 生成 ── */}
-        <OptionalModule title={t("cowork.ppt")} description="通过 SVG 路径生成专业 PPT，支持模板、多种布局、质量检查" enabled={pptOn} onToggle={togglePpt}>
+        <OptionalModule title={t("cowork.ppt")} description={t("cowork.pptDescFull")} enabled={pptOn} onToggle={togglePpt}>
           <div className="optional-module__controls">
             <div className="set-input-browse">
               <select
@@ -4536,7 +4536,7 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
                 value={draft.pptActiveTemplate}
                 onChange={e => setDraft(d => { const n = { ...d, pptActiveTemplate: e.target.value }; commitDraft(n); return n; })}
               >
-                <option value="">— 选择模板 —</option>
+                <option value="">{t("cowork.pptSelectTemplate")}</option>
                 {(draft.pptTemplates ?? []).map(tpl => (
                   <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
                 ))}
@@ -4547,19 +4547,19 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
                 disabled={busy}
                 onClick={() => void openTemplateDir()}
               >
-                打开模板目录
+                {t("cowork.pptOpenTemplateDir")}
               </button>
             </div>
             <div style={{ marginTop: "12px" }}>
-              <label style={{ fontSize: "12px", color: "#666", marginBottom: "4px", display: "block" }}>生成模式</label>
+              <label style={{ fontSize: "12px", color: "#666", marginBottom: "4px", display: "block" }}>{t("cowork.pptGenMode")}</label>
               <select
                 className="mem-input"
                 value={draft.pptMode || "fast"}
                 onChange={e => setDraft(d => { const n = { ...d, pptMode: e.target.value }; commitDraft(n); return n; })}
                 style={{ width: "100%" }}
               >
-                <option value="fast">快速模式（一次生成，不返工）</option>
-                <option value="validate">校验模式（生成后检查，有问题返工）</option>
+                <option value="fast">{t("cowork.pptFastMode")}</option>
+                <option value="validate">{t("cowork.pptValidateMode")}</option>
               </select>
             </div>
           </div>
@@ -4574,7 +4574,7 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
           statusDot={mailOn ? (
             <span
               className={"mail-status-dot mail-status-dot--" + (mailStatus["__default__"] ?? "idle")}
-              title={(mailStatus["__default__"] === "error" ? mailMessage["__default__"] : (mailStatus["__default__"] === "ok" ? "连接正常" : "")) || ""}
+              title={(mailStatus["__default__"] === "error" ? mailMessage["__default__"] : (mailStatus["__default__"] === "ok" ? t("cowork.mailProbeOk") : "")) || ""}
             />
           ) : undefined}
         >
@@ -4753,7 +4753,7 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
                         </button>
                         <span
                           className={"mail-status-dot mail-status-dot--" + st}
-                          title={st === "error" ? (mailMessage[skey] || "") : (st === "ok" ? (mailMessage[skey] || "连接正常") : "")}
+                          title={st === "error" ? (mailMessage[skey] || "") : (st === "ok" ? (mailMessage[skey] || t("cowork.mailProbeOk")) : "")}
                         />
                         <span className={"cowork-mail-account__status-label cowork-mail-account__status-label--" + st}>
                           {st === "ok" ? t("cowork.mailStatusOk")

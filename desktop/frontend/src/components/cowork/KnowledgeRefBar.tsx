@@ -3,6 +3,7 @@
 
 import { X, ChevronRight, GripHorizontal } from "lucide-react";
 import { useDraggable } from "../../hooks/useDraggable";
+import { useT } from "../../lib/i18n";
 
 export interface KnowledgeRefBarProps {
   selectedEntities: string[];
@@ -18,6 +19,7 @@ export function KnowledgeRefBar({
   onUseFor,
 }: KnowledgeRefBarProps) {
   const { position, isDragging, handleMouseDown } = useDraggable();
+  const t = useT();
   const total = selectedEntities.length + selectedRelations.length;
   if (total === 0) return null;
 
@@ -36,11 +38,11 @@ export function KnowledgeRefBar({
       </div>
       <div className="rag-refbar__info">
         <span className="rag-refbar__count">
-          已选 {selectedEntities.length} 个实体 · {selectedRelations.length} 条关系
+          {t("cowork.refbarSelectedCount", { entities: selectedEntities.length, relations: selectedRelations.length })}
         </span>
         <button className="rag-refbar__clear" onClick={onClear}>
           <X size={12} />
-          <span>清除</span>
+          <span>{t("cowork.refbarClear")}</span>
         </button>
       </div>
       <div className="rag-refbar__tags">
@@ -58,7 +60,7 @@ export function KnowledgeRefBar({
         )}
       </div>
       <button className="rag-refbar__use-btn" onClick={onUseFor}>
-        <span>用于</span>
+        <span>{t("cowork.refbarUseFor")}</span>
         <ChevronRight size={14} />
       </button>
     </div>

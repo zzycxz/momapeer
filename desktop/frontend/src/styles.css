@@ -20923,9 +20923,9 @@ a[href] {
   position: relative;
 }
 
-/* Graph canvas — React Flow requires a container with explicit dimensions.
-   Use absolute inset:0 inside the relatively-positioned .rag-panel__graph
-   parent so React Flow's viewport always has a real pixel size to measure. */
+/* Graph canvas — the 3D force-graph requires a container with explicit
+   dimensions. Use absolute inset:0 inside the relatively-positioned
+   .rag-panel__graph parent so the viewport always has a real pixel size. */
 .rag-graph-canvas {
   position: absolute;
   inset: 0;
@@ -21249,7 +21249,7 @@ a[href] {
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 100;
+  z-index: var(--z-dock);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -24663,8 +24663,7 @@ a[href] {
 /* --- RAG / cowork responsive layout ---
    The knowledge-base panels (toolbar, graph, dock) were designed for wide
    screens. These breakpoints make them usable on tablets and narrow windows:
-   the toolbar wraps with a min-width search box, the dock narrows, and the
-   React Flow controls reposition so they don't overlap nodes. */
+   the toolbar wraps with a min-width search box and the dock narrows. */
 @media (max-width: 940px) {
   /* Toolbar: let the collection selector shrink and give the search box room. */
   .rag-toolbar__select { max-width: 120px; }
@@ -24678,10 +24677,6 @@ a[href] {
      they're power-user controls; the search + import buttons stay. */
   .rag-toolbar__btn[title="筛选"],
   .rag-toolbar__btn[title="选择模式"] { display: none; }
-  /* Move the React Flow controls to the bottom-left so they don't cover the
-     top toolbar area on short/narrow viewports. */
-  .rag-graph-canvas .react-flow__controls { bottom: 16px; left: 16px; top: auto; right: auto; }
-  .rag-graph-canvas .react-flow__minimap { bottom: 16px; right: 16px; }
   /* Dock: tighten padding so file trees and entity lists fit more content. */
   .cowork-dock__body { padding: 6px 4px; }
 }
@@ -24946,58 +24941,4 @@ a[href] {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
-}
-
-/* React Flow Controls Beautification */
-.react-flow__controls {
-  box-shadow: 0 4px 16px rgba(0,0,0,0.1) !important;
-  border-radius: 12px !important;
-  overflow: hidden;
-  border: 1px solid var(--border-soft) !important;
-  background: var(--bg-elev) !important;
-  display: flex;
-  flex-direction: column;
-}
-.react-flow__controls-button {
-  background: var(--bg-elev) !important;
-  border-bottom: 1px solid var(--border-soft) !important;
-  color: var(--fg) !important;
-  width: 32px !important;
-  height: 32px !important;
-  transition: background-color 0.2s ease !important;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.react-flow__controls-button:last-child {
-  border-bottom: none !important;
-}
-.react-flow__controls-button:hover {
-  background: var(--bg-soft) !important;
-}
-.react-flow__controls-button svg {
-  fill: var(--fg-dim) !important;
-}
-.react-flow__controls-button:hover svg {
-  fill: var(--fg) !important;
-}
-.rag-custom-controls button {
-  background: transparent !important;
-  border-bottom: 1px solid rgba(255,255,255,0.2) !important;
-  width: 26px !important;
-  height: 26px !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-}
-.rag-custom-controls button:last-child {
-  border-bottom: none !important;
-}
-.rag-custom-controls button svg {
-  fill: #ffffff !important;
-  width: 14px !important;
-  height: 14px !important;
-}
-.rag-custom-controls button:hover {
-  background: rgba(255,255,255,0.2) !important;
 }
