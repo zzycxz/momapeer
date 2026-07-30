@@ -17,6 +17,12 @@ import (
 
 func init() { tool.RegisterBuiltin(webSearch{}) }
 
+// webSearchErrorMaxRead caps how much of a non-200 error response body we read
+// into the returned error. A misbehaving/abusive search backend could stream
+// a huge body; without a cap that unbounded read bloats memory. (The success
+// path parses structured JSON, so it's not affected.)
+const webSearchErrorMaxRead = 8 << 10 // 8 KiB
+
 type webSearch struct {
 	proxySpec netclient.ProxySpec
 }
@@ -123,7 +129,10 @@ Render:
 		}
 		sb.WriteString("\n")
 	}
-	return sb.String(), nil
+	// Wrap as untrusted content so the model treats result titles/snippets
+	// (which are attacker-controllable web page content) as data, not
+	// instructions — same defense as web_fetch and rag_search.
+	return WrapUntrusted("web", sb.String()), nil
 }
 
 func searchBrave(ctx context.Context, client *http.Client, key, query string) ([]searchResultItem, error) {
@@ -148,7 +157,7 @@ func searchBrave(ctx context.Context, client *http.Client, key, query string) ([
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, webSearchErrorMaxRead))
 		return nil, fmt.Errorf("brave search returned status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -204,7 +213,7 @@ func searchExa(ctx context.Context, client *http.Client, key, query string) ([]s
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, webSearchErrorMaxRead))
 		return nil, fmt.Errorf("exa search returned status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -264,7 +273,7 @@ func searchLinkup(ctx context.Context, client *http.Client, key, query string) (
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, webSearchErrorMaxRead))
 		return nil, fmt.Errorf("linkup search returned status %d: %s", resp.StatusCode, string(body))
 	}
 

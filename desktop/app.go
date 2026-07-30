@@ -4183,15 +4183,16 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		}
 	} else {
 		// Another goroutine swapped this tab's controller between our RUnlock and
-		// Lock, so the concurrently-installed controller supersedes our snapshot.
-		// Rather than overwrite it (and leak the concurrent controller's host ref),
-		// roll back this attempt: discard newCtrl and release the host ref we
-		// acquired for it. The caller's model switch is a no-op this turn; the tab
-		// keeps whatever the concurrent swap produced.
+		// Lock (e.g. a concurrent rebuild from a config change), so the
+		// concurrently-installed controller supersedes our snapshot. Rather than
+		// overwrite it (and leak the concurrent controller's host ref), roll back
+		// this attempt: discard newCtrl and release the host ref we acquired for
+		// it. Surface a clear error so the user knows the switch didn't take and
+		// can retry, rather than silently no-op'ing.
 		a.mu.Unlock()
 		newCtrl.Close()
 		a.releaseSharedHost(root)
-		return nil
+		return errors.New("model switch aborted: this tab was concurrently rebuilt (e.g. by a config change); please retry")
 	}
 	tab.model = name
 	tab.effort = cloneStringPtr(effortOverride)

@@ -20,6 +20,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image/png"
+	"log/slog"
 	"strings"
 	"sync"
 	"syscall"
@@ -79,7 +80,9 @@ func (a *App) StartScreenshotHotkey() {
 	}
 	hk := &hotkeyManager{app: a, stopCh: make(chan struct{})}
 	if err := hk.register(cfg.Cowork.ScreenshotHotkey); err != nil {
-		return // hotkey taken or unsupported; feature silently off
+		slog.Warn("screenshot: hotkey registration failed (combination may be in use by another app, or unsupported); screenshot hotkey unavailable",
+			"hotkey", cfg.Cowork.ScreenshotHotkey, "err", err)
+		return
 	}
 	// Keep a handle so StopScreenshotHotkey can stop the loop on shutdown.
 	// Without this the goroutine (and its GetMessage block) leaked, since the
