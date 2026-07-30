@@ -147,20 +147,23 @@ jobs:
 
       - name: Verify Windows binary exists
         if: runner.os == 'Windows'
+        working-directory: ./desktop
+        shell: pwsh
         run: |
-          echo "Listing ./build/bin directory for debugging:"
-          dir ./build/bin
-          if not exist "./build/bin/momapeer.exe" (
-            echo "⚠️ Binary not found! Attempting to locate any exe in the directory."
-            for %%F in (./build/bin/*.exe) do (
-              echo "Found %%F, copying to expected name..."
-              copy "%%F" "./build/bin/momapeer.exe"
-            )
-          )
-          if not exist "./build/bin/momapeer.exe" (
-            echo "❌ Still missing after fallback. Failing job."
+          Write-Output "Listing ./build/bin directory for debugging:"
+          Get-ChildItem -Path ./build/bin
+          if (-not (Test-Path "./build/bin/momapeer.exe")) {
+            Write-Output "⚠️ Binary not found! Attempting to locate any exe in the directory."
+            $exeFiles = Get-ChildItem -Path ./build/bin/*.exe
+            foreach ($file in $exeFiles) {
+              Write-Output "Found $($file.Name), copying to expected name..."
+              Copy-Item $file.FullName -Destination "./build/bin/momapeer.exe"
+            }
+          }
+          if (-not (Test-Path "./build/bin/momapeer.exe")) {
+            Write-Error "❌ Still missing after fallback. Failing job."
             exit 1
-          )
+          }
 
       - name: Build NSIS Installer (Windows)
         if: runner.os == 'Windows'
