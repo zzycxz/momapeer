@@ -1147,7 +1147,7 @@ function RagDock({
                     icon: <Folder size={13} style={{ color: "var(--accent)" }} />,
                   },
                   ...collections.map((c) => ({
-                    value: c.name,
+                    value: c.path || c.name,
                     label: c.name,
                     subtitle: c.documents > 0 ? `${c.documents} 篇` : undefined,
                     indent: !!c.parent,

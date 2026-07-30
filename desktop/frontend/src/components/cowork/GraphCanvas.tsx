@@ -464,7 +464,7 @@ function GraphCanvasInner({
   }
 
   return (
-    <div className="rag-graph-canvas" style={{ background: "#0a0a0a" }} ref={containerRef}>
+    <div className="rag-graph-canvas" ref={containerRef}>
       <ForceGraph3D
         ref={fgRef}
         width={dims.width}
@@ -482,7 +482,7 @@ function GraphCanvasInner({
           sprite.position.y = -(node.val || 2) - 4; // 将文字放置在星球下方
           return sprite;
         }}
-        linkColor={() => "rgba(255,255,255,0.2)"}
+        linkColor={() => "rgba(150,150,150,0.4)"}
         linkWidth={1}
         onNodeClick={handleNodeClick}
         onLinkClick={handleLinkClick}

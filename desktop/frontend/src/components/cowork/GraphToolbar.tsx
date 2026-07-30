@@ -94,7 +94,7 @@ export function GraphToolbar({
       >
         <option value="">全部</option>
         {collections.map((c) => (
-          <option key={c.name} value={c.name}>
+          <option key={c.path || c.name} value={c.path || c.name}>
             {c.name} ({c.entities})
           </option>
         ))}

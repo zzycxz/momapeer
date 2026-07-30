@@ -110,10 +110,12 @@ export function RagPanel() {
     }
   }, [activeCollection]);
 
-  // Auto-select the first collection when only one exists.
+  // Auto-select the first collection when only one exists. Use the full path
+  // (c.path) — the leaf name alone would create a duplicate top-level collection
+  // on import instead of targeting the existing nested one.
   useEffect(() => {
     if (collections.length === 1 && !activeCollection) {
-      setActiveCollection(collections[0].name);
+      setActiveCollection(collections[0].path || collections[0].name);
     }
   }, [collections, activeCollection]);
 

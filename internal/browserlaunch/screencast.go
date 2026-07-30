@@ -65,7 +65,6 @@ type Frame struct {
 
 // screencastSession holds the running screencast state on a Handle.
 type screencastSession struct {
-	mu     sync.Mutex
 	ctx    context.Context // chromedp context (derived from the remote allocator)
 	cancel context.CancelFunc
 	stopped atomic.Bool

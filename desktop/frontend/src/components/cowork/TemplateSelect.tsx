@@ -306,12 +306,16 @@ export function TemplateSelect({ collection, collections, onCollectionChange, on
               
               const sorted = [...collections].sort((a, b) => a.name.localeCompare(b.name));
               sorted.forEach(c => {
-                const parts = c.name.split("/");
+                // Use c.path (full "工作/管理办法") for depth + value — c.name is
+                // already the leaf, so splitting it never finds nesting, and using
+                // it as the value would create a duplicate top-level collection.
+                const fullPath = c.path || c.name;
+                const parts = fullPath.split("/");
                 const depth = parts.length - 1;
-                const displayName = parts[parts.length - 1];
+                const displayName = c.name;
                 
                 opts.push({
-                  value: c.name,
+                  value: fullPath,
                   label: (
                     <span style={{ 
                       display: "flex", 

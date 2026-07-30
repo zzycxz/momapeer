@@ -69,14 +69,17 @@ export function ImportModal({
     }
   };
 
-  // Build options for CustomSelect
-  const existingNames = new Set(collections.map(c => c.name));
+  // Build options for CustomSelect. Use c.path (full "工作/管理办法") as the
+  // value — the backend stores collections by full path, so the leaf name alone
+  // would create a duplicate top-level collection instead of importing into the
+  // existing nested one.
+  const existingPaths = new Set(collections.map(c => c.path || c.name));
   
   const presetOptions = [];
-  if (!existingNames.has("个人")) {
+  if (!existingPaths.has("个人")) {
     presetOptions.push({ value: "个人", label: "个人", indent: true, subtitle: "预置二级分类", icon: <Folder size={13} style={{ color: "var(--fg-dim)" }} /> });
   }
-  if (!existingNames.has("工作")) {
+  if (!existingPaths.has("工作")) {
     presetOptions.push({ value: "工作", label: "工作", indent: true, subtitle: "预置二级分类", icon: <Folder size={13} style={{ color: "var(--fg-dim)" }} /> });
   }
 
@@ -84,7 +87,7 @@ export function ImportModal({
     { value: "", label: "默认分类 (全部)", icon: <Folder size={13} style={{ color: "var(--accent)" }} /> },
     ...presetOptions,
     ...collections.map((c) => ({
-      value: c.name,
+      value: c.path || c.name,
       label: c.name,
       subtitle: c.documents > 0 ? `${c.documents} 篇` : undefined,
       indent: !!c.parent,

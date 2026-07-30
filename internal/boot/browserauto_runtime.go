@@ -162,9 +162,10 @@ func runBrowserAuto(ctx context.Context, cfg *config.Config, req builtin.Browser
 		}
 		steps = append(steps, step)
 		if ev.Done {
-			if ev.Type == "done" {
+			switch ev.Type {
+			case "done":
 				summary = ev.Text
-			} else if ev.Type == "error" {
+			case "error":
 				// Return the steps taken + a clear error; the tool wraps it.
 				return steps, "", fmt.Errorf("agent run failed: %s", ev.Text)
 			}
