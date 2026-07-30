@@ -118,9 +118,8 @@ jobs:
           CC: aarch64-w64-mingw32-gcc
           CXX: aarch64-w64-mingw32-g++
         run: |
-          UPX_FLAG=""
-          if command -v upx &> /dev/null; then UPX_FLAG="-upx"; fi
-          wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }} -ldflags "-s -w -X main.version=${{ steps.version.outputs.semver }}" $UPX_FLAG -v 2 | tee wails_build.log
+          # UPX is disabled for windows/arm64 due to incompatibility
+          wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }} -ldflags "-s -w -X main.version=${{ steps.version.outputs.semver }}" -v 2 | tee wails_build.log
           if [ ${PIPESTATUS[0]} -ne 0 ]; then echo "Wails build failed"; exit 1; fi
 
       - name: Build Wails App (Others)
