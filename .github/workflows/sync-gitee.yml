@@ -16,7 +16,7 @@ jobs:
 
       - name: Sync to Gitee
         env:
-          GITEE_TOKEN: ${{ secrets.GITEE }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
           # Configure Gitee remote with token auth
           git remote add gitee https://zzycxz:${GITEE_TOKEN}@gitee.com/zzycxz/momapeer.git 2>/dev/null || \
@@ -31,7 +31,7 @@ jobs:
       - name: Delete remote branch on Gitee (if deleted on GitHub)
         if: github.event_name == 'delete'
         env:
-          GITEE_TOKEN: ${{ secrets.GITEE }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
           BRANCH="${{ github.event.ref }}"
           curl -X DELETE \
