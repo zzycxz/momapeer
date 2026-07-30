@@ -42,10 +42,12 @@ func manifestEndpoints() []string {
 	if channel == "canary" {
 		return []string{
 			ghReleasesBase + "/download/canary/latest.json",
+			"https://ghproxy.net/" + ghReleasesBase + "/download/canary/latest.json",
 		}
 	}
 	return []string{
 		ghReleasesBase + "/latest/download/latest.json",
+		"https://ghproxy.net/" + ghReleasesBase + "/latest/download/latest.json",
 	}
 }
 
