@@ -85,3 +85,4 @@ runs_latest.json
 
 # Scratch Go files at repo root (test_*.go) — throwaway, never commit
 /test_*.go
+*.test.exe
