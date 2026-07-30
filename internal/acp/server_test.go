@@ -256,8 +256,10 @@ func TestServeLifecycle(t *testing.T) {
 
 func TestServeCancel(t *testing.T) {
 	started := make(chan struct{})
+	blocked := make(chan struct{})
 	factory := &fakeFactory{behavior: func(ctx context.Context, _ event.Sink, _ string) error {
 		close(started)
+		close(blocked) // signal we're about to block
 		<-ctx.Done()
 		return ctx.Err()
 	}}
@@ -275,10 +277,12 @@ func TestServeCancel(t *testing.T) {
 	})
 
 	select {
-	case <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("prompt never started")
+	case <-blocked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("prompt never started blocking")
 	}
+	time.Sleep(50 * time.Millisecond) // settle into the select
+
 	client.notify("session/cancel", SessionCancelParams(nr))
 
 	select {
@@ -288,7 +292,7 @@ func TestServeCancel(t *testing.T) {
 		if pr.StopReason != StopCancelled {
 			t.Errorf("stopReason = %q, want cancelled", pr.StopReason)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("cancel did not end the prompt")
 	}
 }

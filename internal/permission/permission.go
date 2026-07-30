@@ -185,7 +185,7 @@ func subjectsFor(toolName string, args json.RawMessage) []string {
 // Mirrors the tools that get bespoke subjectsFor extraction.
 func isIrreversibleOutwardTool(toolName string) bool {
 	switch toolName {
-	case "rag_delete":
+	case "email_send", "rag_delete":
 		return true
 	}
 	return false

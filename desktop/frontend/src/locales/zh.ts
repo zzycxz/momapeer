@@ -1772,4 +1772,13 @@ export const zh: Record<DictKey, string> = {
   "settings.metricsHint": "匿名使用数据帮助改进 momapeer。",
   "cowork.expertBudget": "专家预算",
   "cowork.expertBudgetUnlimited": "无限制",
+  "cowork.browserView": "浏览器",
+  "cowork.browserViewLive": "· 正在跟随 AI 操作",
+  "cowork.browserViewIdle": "· 空闲",
+  "cowork.browserViewStop": "停止",
+  "cowork.browserViewStopping": "停止中…",
+  "cowork.browserViewNoUrl": "等待页面加载…",
+  "cowork.browserViewStopped": "浏览器会话已结束",
+  "cowork.browserViewEmpty": "暂无浏览器画面",
+  "cowork.browserViewHint": "让 AI 执行浏览器任务（如「打开某网站并搜索」），它的操作过程会在此处实时显示。",
 };

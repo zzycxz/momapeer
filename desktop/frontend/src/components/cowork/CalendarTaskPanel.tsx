@@ -27,8 +27,24 @@ const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
 const HOURS = Array.from({ length: 14 }, (_, i) => i + 8);
 const COLORS = ["#FF4444", "#4488FF", "#44BB44", "#FF8800", "#AA44FF", "#FF44AA", "#44CCCC", "#888888"];
 
+// colorForEvent picks a color for an event. User-set color wins; otherwise we
+// auto-classify by tags/source so the calendar reads at a glance: holidays=red,
+// work=blue, personal=green, agent-created=purple, etc. Falls back to a stable
+// hash of the title so the same event always gets the same color.
 function colorForEvent(e: CalendarEventView): string {
-  return e.color || COLORS[0];
+  if (e.color) return e.color;
+  // Tag-based auto-coloring (first matching tag wins).
+  const tags = (e.tags ?? []).map(t => t.toLowerCase());
+  const source = (e.source ?? "").toLowerCase();
+  if (tags.includes("节假日") || tags.includes("holiday")) return "#FF4444"; // red
+  if (tags.includes("工作") || tags.includes("work") || tags.includes("例会")) return "#4488FF"; // blue
+  if (tags.includes("个人") || tags.includes("personal")) return "#44BB44"; // green
+  if (source === "agent") return "#AA44FF"; // purple
+  if (source === "email") return "#FF8800"; // orange
+  // Stable hash → pick from the palette so identical titles stay consistent.
+  let h = 0;
+  for (let i = 0; i < e.title.length; i++) h = (h * 31 + e.title.charCodeAt(i)) | 0;
+  return COLORS[Math.abs(h) % COLORS.length];
 }
 function isSameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
@@ -165,6 +181,19 @@ export function CalendarTaskPanel() {
   const closeCreateMenu = () => setCreateMode(undefined);
   const chooseCreateTask = () => { setCreateMode(null); setEditingTask(null); setPresetTemplate(null); setTaskFormOpen(true); };
   const chooseTemplate = (tpl: TemplateView) => { setCreateMode(null); setEditingTask(null); setPresetTemplate(tpl); setTaskFormOpen(true); };
+  // ICS export/import via native file dialog.
+  const handleExport = async () => {
+    try {
+      const r = await app.ExportCalendarDialog();
+      if (r) showToast(r, "info");
+    } catch (e) { showToast(`导出失败：${e}`, "error"); }
+  };
+  const handleImport = async () => {
+    try {
+      const r = await app.ImportCalendarDialog();
+      if (r) { showToast(r, "info"); void refreshEvents(); }
+    } catch (e) { showToast(`导入失败：${e}`, "error"); }
+  };
 
   return (
     <div className="cowork-calendar-task">
@@ -186,8 +215,8 @@ export function CalendarTaskPanel() {
             <Search size={14} />
             <input type="text" placeholder="搜索..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void handleSearch(); }} />
           </div>
-          <button className="btn btn--icon" title="导出（即将推出）" disabled style={{ opacity: 0.4, cursor: "not-allowed" }}><Download size={14} /></button>
-          <button className="btn btn--icon" title="导入（即将推出）" disabled style={{ opacity: 0.4, cursor: "not-allowed" }}><Upload size={14} /></button>
+          <button className="btn btn--icon" title="导出日历 (.ics)" onClick={() => void handleExport()}><Download size={14} /></button>
+          <button className="btn btn--icon" title="导入日历 (.ics)" onClick={() => void handleImport()}><Upload size={14} /></button>
           <div className="cowork-calendar-task__create-wrap">
             <button className="btn btn--primary btn--small" onClick={openCreateMenu}><Plus size={14} /> 新建</button>
             {createMode === null && (

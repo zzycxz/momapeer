@@ -457,7 +457,11 @@ func builtinSkills() []Skill {
 			RunAs:       RunSubagent,
 			// browser_* tools are registered under cowork in boot.go but hidden from
 			// the main loop's schema. This subagent reaches them via FilterRegistry.
-			AllowedTools: []string{"browser_open", "browser_navigate", "browser_click", "browser_type", "browser_scroll", "browser_extract", "browser_screenshot", "browser_evaluate", "browser_snapshot", "browser_select_option", "browser_wait", "web_search", "web_fetch", "read_file", "write_file"},
+			// browser_auto is the autonomous-browsing entry point (browser-use
+			// sidecar): use it for multi-step web tasks instead of hand-driving
+			// browser_click/browser_type. The explicit tools remain for precise
+			// single actions on known elements.
+			AllowedTools: []string{"browser_auto", "browser_open", "browser_navigate", "browser_click", "browser_type", "browser_scroll", "browser_extract", "browser_screenshot", "browser_evaluate", "browser_snapshot", "browser_select_option", "browser_wait", "web_search", "web_fetch", "read_file", "write_file"},
 		},
 		{
 			Name:         "computer-auto",

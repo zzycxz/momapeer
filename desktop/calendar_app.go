@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -273,7 +274,13 @@ func (a *App) UpdateCalendarEvent(in CalendarEventInput) (CalendarEventView, err
 	if len(in.Tags) > 0 {
 		e.Tags = in.Tags
 	}
-	if in.OutputMode != "" {
+	// "none" clears push routing back to toast-only; otherwise non-empty
+	// overwrites. (Empty = leave unchanged.)
+	if strings.EqualFold(strings.TrimSpace(in.OutputMode), "none") {
+		e.OutputMode = ""
+		e.OutputDest = ""
+		e.OutputAccount = ""
+	} else if in.OutputMode != "" {
 		e.OutputMode = in.OutputMode
 	}
 	if in.OutputDest != "" {
@@ -382,6 +389,45 @@ func (a *App) ImportCalendarEvents(path string) (string, error) {
 	}
 	a.calendarChanged()
 	return fmt.Sprintf("imported %d events from %s", imported, path), nil
+}
+
+// ExportCalendarDialog opens a save-file dialog, then exports all events to the
+// chosen .ics path. Returns the result message (or "" if the user cancelled).
+func (a *App) ExportCalendarDialog() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("app not ready")
+	}
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "导出日历",
+		DefaultFilename: "calendar.ics",
+		Filters: []runtime.FileFilter{{DisplayName: "iCalendar (*.ics)", Pattern: "*.ics"}},
+	})
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return "", nil // user cancelled
+	}
+	return a.ExportCalendarEvents(path)
+}
+
+// ImportCalendarDialog opens an open-file dialog, then imports events from the
+// chosen .ics file. Returns the result message (or "" if cancelled).
+func (a *App) ImportCalendarDialog() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("app not ready")
+	}
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:  "导入日历",
+		Filters: []runtime.FileFilter{{DisplayName: "iCalendar (*.ics)", Pattern: "*.ics"}},
+	})
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return "", nil // user cancelled
+	}
+	return a.ImportCalendarEvents(path)
 }
 
 // GetChineseHolidays returns Chinese public holidays for the given year.

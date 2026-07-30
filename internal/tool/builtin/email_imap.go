@@ -486,7 +486,7 @@ func extractTextPreview(raw []byte) string {
 		ct := part.Header.Get("Content-Type")
 		if strings.HasPrefix(ct, "text/plain") {
 			data, _ := io.ReadAll(part.Body)
-			return truncatePreview(strings.TrimSpace(string(data)), 2000)
+			return truncatePreview(strings.TrimSpace(decodeBodyCharset(data, ct)), 2000)
 		}
 	}
 	// No text/plain found — fall back to first text part (html) stripped.
@@ -501,8 +501,48 @@ func extractTextPreview(raw []byte) string {
 			ct := part.Header.Get("Content-Type")
 			if strings.HasPrefix(ct, "text/") {
 				data, _ := io.ReadAll(part.Body)
-				return truncatePreview(strings.TrimSpace(stripHTMLText(string(data))), 500)
+				return truncatePreview(strings.TrimSpace(stripHTMLText(decodeBodyCharset(data, ct))), 500)
 			}
+		}
+	}
+	return ""
+}
+
+// decodeBodyCharset converts a mail body part from its declared charset to
+// UTF-8. go-message's mail.Reader undoes Content-Transfer-Encoding (base64/QP)
+// but does NOT transcode charsets, so a GBK-encoded body (common in 139.com /
+// China Mobile mail) would arrive as raw GBK bytes and render as mojibake. We
+// parse the charset from the Content-Type header and run it through the same
+// x/text decoder used for RFC 2047 headers. UTF-8 / unknown charsets pass
+// through unchanged (UTF-8 needs no conversion; unknown is better left raw than
+// mis-decoded).
+func decodeBodyCharset(data []byte, contentType string) string {
+	charset := parseCharsetFromContentType(contentType)
+	if charset == "" || strings.EqualFold(charset, "utf-8") || strings.EqualFold(charset, "us-ascii") {
+		return string(data) // already UTF-8 or ASCII — no conversion needed
+	}
+	dec := charsetToDecoder(charset)
+	if dec == nil {
+		return string(data) // unrecognized charset — leave raw (don't guess wrong)
+	}
+	utf8, _, err := transform.String(dec, string(data))
+	if err != nil {
+		return string(data) // decode failed — fall back to raw bytes
+	}
+	return utf8
+}
+
+// parseCharsetFromContentType extracts the charset parameter value from a
+// Content-Type header like "text/plain; charset=gbk" → "gbk". Returns "" when
+// absent. Quotes are stripped.
+func parseCharsetFromContentType(ct string) string {
+	// Split on ";" and look for a charset=... part.
+	for _, part := range strings.Split(ct, ";") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(strings.ToLower(part), "charset=") {
+			val := strings.TrimSpace(part[len("charset="):])
+			val = strings.Trim(val, `"'`)
+			return val
 		}
 	}
 	return ""

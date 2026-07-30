@@ -87,7 +87,7 @@ func (calendarTool) Schema() json.RawMessage {
   "recurrence_end":{"type":"string","description":"Recurrence end date '2026-12-31' (default +1 year)"},
   "reminders":{"type":"array","items":{"type":"integer"},"description":"Reminder minutes before event, e.g. [15, 5]"},
   "tags":{"type":"array","items":{"type":"string"},"description":"Tags for categorization"},
-  "output_mode":{"type":"string","enum":["","im","email"],"description":"Route reminders beyond desktop toast: 'im' pushes to output_dest (platform:chatID), 'email' sends via output_account to output_dest (recipient). Empty = toast only. Only takes effect with reminders set."},
+  "output_mode":{"type":"string","enum":["","im","email","none"],"description":"Route reminders beyond desktop toast: 'im' pushes to output_dest (platform:chatID), 'email' sends via output_account to output_dest (recipient). Empty = toast only (default). On update, pass 'none' to CLEAR existing push routing back to toast-only. Only takes effect with reminders set."},
   "output_dest":{"type":"string","description":"IM destination 'platform:chatID' (or 'platform:chatType:chatID' for QQ groups) when output_mode='im'; recipient email when output_mode='email'."},
   "output_account":{"type":"string","description":"Named mailbox to send from when output_mode='email' (empty = default account)."},
   "since":{"type":"string","description":"List/search start boundary: '2026-07-07' or 'today' or 'this_week'"},
@@ -295,9 +295,14 @@ func calendarUpdate(p calendarParams) (string, error) {
 	if len(p.Tags) > 0 {
 		e.Tags = p.Tags
 	}
-	// Output routing: non-empty values overwrite. To clear push routing an
-	// update must pass output_mode explicitly — see the tool schema.
-	if p.OutputMode != "" {
+	// Output routing: non-empty values overwrite. Pass "none" for output_mode
+	// to CLEAR push routing back to toast-only (the default). output_dest /
+	// output_account are cleared alongside when output_mode is cleared.
+	if strings.EqualFold(strings.TrimSpace(p.OutputMode), "none") {
+		e.OutputMode = ""
+		e.OutputDest = ""
+		e.OutputAccount = ""
+	} else if p.OutputMode != "" {
 		e.OutputMode = p.OutputMode
 	}
 	if p.OutputDest != "" {

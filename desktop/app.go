@@ -30,6 +30,8 @@ import (
 	"github.com/zzycxz/momapeer/internal/agent"
 	"github.com/zzycxz/momapeer/internal/boot"
 	"github.com/zzycxz/momapeer/internal/bot"
+	"github.com/zzycxz/momapeer/internal/browserlaunch"
+	"github.com/zzycxz/momapeer/internal/browseruse"
 	"github.com/zzycxz/momapeer/internal/builtinmcp"
 	calendarpkg "github.com/zzycxz/momapeer/internal/calendar"
 	"github.com/zzycxz/momapeer/internal/config"
@@ -123,6 +125,11 @@ type App struct {
 	ragExtractor ragpkg.Extractor
 	// heService manages the Hyper-Extract Python server lifecycle.
 	heService *HEService
+	// buService manages the browser-use Python sidecar (autonomous browsing).
+	buService *BrowserUseService
+	// browserView powers the in-app browser panel: owns a launched browser
+	// handle and streams CDP screencast frames to the frontend.
+	browserView *browserView
 	// expertStore + expertOrchestrator power the 专家团 (expert-team) panel:
 	// multi-model collaboration with persistent team rosters.
 	expertStore        *expertspkg.Store
@@ -308,7 +315,7 @@ func (a *App) workspaceMediaMiddleware() func(http.Handler) http.Handler {
 // NewApp constructs the bound object. Tabs are restored in startup from the
 // last session's desktop-tabs.json.
 func NewApp() *App {
-	return &App{tabs: map[string]*WorkspaceTab{}, mediaTokens: newMediaTokenStore(), botInstalls: map[string]*botInstallSession{}, expertRuns: map[string]*expertRunState{}}
+	return &App{tabs: map[string]*WorkspaceTab{}, mediaTokens: newMediaTokenStore(), botInstalls: map[string]*botInstallSession{}, expertRuns: map[string]*expertRunState{}, browserView: &browserView{}}
 }
 
 func (a *App) bootContext() context.Context {
@@ -497,6 +504,37 @@ func (a *App) initRAG() {
 	} else {
 		slog.Info("Hyper-Extract script not found — HE extraction unavailable")
 	}
+
+	// Start the browser-use autonomous-browsing sidecar (optional — failure is
+	// non-fatal). Disabled by config ([cowork] browser_use_enabled=false) or if
+	// the script is absent. The sidecar is lazy in effect: even when started,
+	// it only does work when browser_auto posts a /run.
+	if cfgCowork, cerr := config.Load(); cerr == nil && cfgCowork.Cowork.BrowserUseEnabled {
+		buScript := FindBrowserUseScript()
+		if buScript != "" {
+			a.buService = NewBrowserUseService(cfgCowork.Cowork.BrowserUsePython, buScript, cfgCowork.Cowork.BrowserUsePort)
+			if err := a.buService.Start(); err != nil {
+				slog.Warn("browser-use sidecar not started", "err", err)
+				a.buService = nil
+			}
+		} else {
+			slog.Info("browser-use script not found — autonomous browsing unavailable (browseruse_server.py)")
+		}
+	}
+
+	// Wire the browser_auto runtime hooks into boot. The client provider is
+	// resolved lazily (returns nil until the sidecar is ready), and the panel
+	// sink attaches a screencast to the in-app browser view. These are set once
+	// at startup; boot.Build's injected runtime reads them at tool-exec time.
+	boot.SetBrowserUseClientProvider(func() *browseruse.Client {
+		if a.buService == nil || !a.buService.IsReady() {
+			return nil
+		}
+		return a.buService.Client()
+	})
+	boot.SetBrowserViewSink(func(ctx context.Context, handle *browserlaunch.Handle) {
+		a.startBrowserViewForHandle(handle)
+	})
 
 	// Try to wire the global RPM budget into the extractor now. restoreOrBuildTabs
 	// runs concurrently (started earlier as a goroutine), so globalBudget may or
@@ -891,6 +929,11 @@ func (a *App) shutdown(context.Context) {
 	if a.heService != nil {
 		a.heService.Stop()
 	}
+	// Stop the browser-use sidecar and tear down the browser-view panel.
+	if a.buService != nil {
+		a.buService.Stop()
+	}
+	a.stopBrowserView()
 	// Save window geometry synchronously from Go so it's persisted even if the
 	// frontend's beforeunload promise hasn't resolved yet.
 	a.saveWindowStateSync()

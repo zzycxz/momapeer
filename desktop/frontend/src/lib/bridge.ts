@@ -226,6 +226,9 @@ export interface AppBindings {
   SaveExportFile(path: string, payload: string, base64Encoded: boolean): Promise<void>;
   AttachDropped(path: string): Promise<DroppedItem>;
   AttachmentDataURL(path: string): Promise<string>;
+  // StopBrowserAuto cancels the in-flight autonomous-browsing run and tears
+  // down the live browser view. Bound to the browser panel's Stop button.
+  StopBrowserAuto(): Promise<void>;
   Models(): Promise<ModelInfo[]>;
   SetModel(name: string): Promise<void>;
   ModelsForTab(tabID: string): Promise<ModelInfo[]>;
@@ -709,6 +712,33 @@ export function onExpertsCollab(cb: (e: CollabEvent) => void): () => void {
 export function onExpertsChanged(cb: () => void): () => void {
   if (realApp() && typeof window !== "undefined" && window.runtime) {
     return window.runtime.EventsOn("experts:changed", () => cb());
+  }
+  return () => {};
+}
+
+// BrowserViewFrame is one screencast frame pushed from the Go host while the
+// autonomous-browsing agent drives the shared browser. DataURL is a renderable
+// image; the panel draws it on a <canvas>/<img>.
+export interface BrowserViewFrame {
+  dataUrl: string;
+  width?: number;
+  height?: number;
+  url?: string;
+}
+
+// onBrowserViewFrame subscribes to the live browser mirror. Returns an
+// unsubscribe function (or a no-op outside the desktop runtime).
+export function onBrowserViewFrame(cb: (f: BrowserViewFrame) => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("browser:view:frame", (...data: unknown[]) => {
+      const f = (data?.[0] ?? {}) as Partial<BrowserViewFrame>;
+      cb({
+        dataUrl: f.dataUrl ?? "",
+        width: f.width,
+        height: f.height,
+        url: f.url,
+      });
+    });
   }
   return () => {};
 }
@@ -2476,6 +2506,7 @@ function makeMockApp(): AppBindings {
     async AttachmentDataURL(_path: string) {
       return "data:image/png;base64,iVBORw0KGgo=";
     },
+    async StopBrowserAuto() {},
         async Models() {
           const active = mockTabs.find((tab) => tab.active) ?? mockTabs[0];
           const current = mockTabModelRef(active);

@@ -250,6 +250,7 @@ function TodayView() {
   const [tasks, setTasks] = useState<TaskView[] | null>(null);
   const [probe, setProbe] = useState<MailProbeResult | null>(null);
   const [inbox, setInbox] = useState<InboxItem[] | null>(null);
+  const [holidays, setHolidays] = useState<CalendarEventView[]>([]);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(() => {
@@ -263,7 +264,7 @@ function TodayView() {
       next.getDate(),
     ).padStart(2, "0")}`;
 
-    // 1. 优先快加载：日程与任务（本地数据，几乎 0 延迟）
+    // 1. 优先快加载：日程、任务、节假日（本地数据，几乎 0 延迟）
     Promise.all([
       (app as unknown as { ListCalendarEvents: (s: string, b: string) => Promise<CalendarEventView[]> })
         .ListCalendarEvents(since, before)
@@ -271,9 +272,13 @@ function TodayView() {
       (app as unknown as { ListScheduledTasks: () => Promise<TaskView[]> })
         .ListScheduledTasks()
         .catch(() => [] as TaskView[]),
-    ]).then(([evs, tks]) => {
+      (app as unknown as { GetChineseHolidays?: (year: number) => Promise<CalendarEventView[]> })
+        .GetChineseHolidays?.(now.getFullYear())
+        .catch(() => [] as CalendarEventView[]) ?? Promise.resolve([] as CalendarEventView[]),
+    ]).then(([evs, tks, hols]) => {
       setEvents(evs);
       setTasks(tks);
+      setHolidays(hols);
     });
 
     // 2. 异步慢加载：邮件探针与 50 封邮件列表（远程请求）
@@ -315,6 +320,23 @@ function TodayView() {
     .sort((a, b) => a.ts - b.ts)
     .slice(0, 3);
 
+  // Holiday hint: is today a holiday? If not, find the next upcoming one so
+  // the user sees "距 XX节还有 N 天" in the briefing.
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const todayHoliday = holidays.find((h) => {
+    const hs = new Date(h.start);
+    const he = new Date(h.end);
+    return (now >= hs && now < he) || h.start === todayStr;
+  });
+  const nextHoliday = !todayHoliday
+    ? holidays
+        .filter((h) => new Date(h.start) > now)
+        .sort((a, b) => a.start.localeCompare(b.start))[0]
+    : undefined;
+  const daysToNext = nextHoliday
+    ? Math.ceil((new Date(nextHoliday.start).getTime() - nowMs) / 86400000)
+    : 0;
+
   const mailOk = probe?.status === "ok";
   const unreadCount = inbox?.length ?? 0;
 
@@ -332,6 +354,12 @@ function TodayView() {
             <div>2. <Mail size={13} style={{ color: "#58a6ff", margin: "0 2px", verticalAlign: "middle" }} />待处理未读件 {unreadCount} 封。</div>
             <div>3. ☕ 当前时段暂无紧迫议程。</div>
             <div>4. 🤖 请点击下方按钮，获取昨日邮件工作总结。</div>
+            {todayHoliday && (
+              <div style={{ color: "#f85149", fontWeight: 600 }}>🎉 今天是「{todayHoliday.title}」假期，祝您节日愉快！</div>
+            )}
+            {!todayHoliday && nextHoliday && daysToNext <= 14 && (
+              <div style={{ color: "#f0883e" }}>📅 距「{nextHoliday.title}」还有 {daysToNext} 天。</div>
+            )}
           </div>
           <div className="cowork-today__briefing-actions">
             <button 

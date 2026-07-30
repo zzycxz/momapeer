@@ -88,7 +88,7 @@ func TestServeEndpoints(t *testing.T) {
 	if err != nil || resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("plan = %v / status %d", err, resp.StatusCode)
 	}
-	if c := ctrl.Compose("x"); !strings.Contains(c, "Plan mode") {
+	if c := ctrl.Compose("x"); !strings.Contains(c, "【计划】") {
 		t.Error("/plan {on:true} should have enabled plan mode (Compose would prepend the marker)")
 	}
 

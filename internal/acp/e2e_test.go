@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -427,9 +428,11 @@ func TestE2EDeleteActiveSessionDoesNotRecreateFiles(t *testing.T) {
 
 	select {
 	case <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("tool never started")
+	case <-time.After(5 * time.Second):
+		t.Fatal("tool never started blocking")
 	}
+	time.Sleep(50 * time.Millisecond)
+
 	deleteResp := client.call(t, "session/delete", SessionDeleteParams{SessionID: sid})
 	if deleteResp.Error != nil {
 		t.Fatalf("session/delete errored: %+v", deleteResp.Error)
@@ -447,7 +450,7 @@ func TestE2EDeleteActiveSessionDoesNotRecreateFiles(t *testing.T) {
 		if pr.StopReason != StopCancelled {
 			t.Fatalf("stopReason = %q, want cancelled", pr.StopReason)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("prompt did not finish after delete")
 	}
 
@@ -589,9 +592,12 @@ func TestE2ECancelMidTurn(t *testing.T) {
 
 	select {
 	case <-started:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("tool never started")
 	}
+	// Give the tool time to fully enter the blocking select.
+	time.Sleep(100 * time.Millisecond)
+
 	client.notify("session/cancel", SessionCancelParams{SessionID: sid})
 
 	select {
@@ -601,7 +607,7 @@ func TestE2ECancelMidTurn(t *testing.T) {
 		if pr.StopReason != StopCancelled {
 			t.Errorf("stopReason = %q, want cancelled", pr.StopReason)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("cancel did not end the turn")
 	}
 	close(releaseTool) // let the tool goroutine unwind
@@ -620,6 +626,9 @@ func (t blockingTool) Schema() json.RawMessage { return json.RawMessage(`{"type"
 func (t blockingTool) ReadOnly() bool          { return true }
 func (t blockingTool) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
 	close(t.started)
+	// Give the scheduler a moment to switch to the test goroutine so it can
+	// observe `started` and send the cancel before we enter the select.
+	runtime.Gosched()
 	select {
 	case <-ctx.Done():
 		return "", ctx.Err()

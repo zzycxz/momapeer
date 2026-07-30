@@ -184,6 +184,28 @@ bash_timeout_seconds = 120   # foreground safety cap; set 0 for no tool-local ca
 # # surfaces a clear error (and a browser_set_path tool) when nothing is found.
 # browser_path = ""
 #
+# # Autonomous web browsing (browser_auto). A Python browser-use sidecar runs an
+# # agent that perceives the page and clicks/types/navigates itself to complete a
+# # goal end-to-end. It connects to a system Chrome/Edge (the same one the
+# # browser_* tools use) — no separate browser is downloaded. OPT-IN by default
+# # (the sidecar needs `pip install browser-use` + a provider client first): set
+# # browser_use_enabled = true once your environment is ready. Leave false to
+# # keep the low-level browser_* tools without the autonomous sidecar.
+# browser_use_enabled   = false
+# # Python interpreter that runs the sidecar. Empty = "python" (Windows) /
+# # "python3" (others). In the packaged build this resolves to the bundled
+# # runtime. Point it at your dev interpreter during prototype testing.
+# browser_use_python    = ""
+# # Port for the sidecar HTTP server (default 18901, distinct from HE's 18900).
+# browser_use_port      = 0
+# # Provider model ref for the agentic loop (e.g. "openai/gpt-4o"). Empty = fall
+# # back to vlm_model, then the main agent model. A vision-capable model is
+# # strongly recommended — the loop reads screenshots/accessibility trees.
+# browser_use_model     = ""
+# # Cap on the number of agent steps. 0 = let the sidecar pick a bound. Lower =
+# # cheaper/faster, higher = more complex multi-page tasks.
+# browser_use_max_steps = 0
+#
 # # PPT generation: handled by the ppt-auto skill, which operates WPS 演示 as a
 # # human would (screen perception → click → type → save). Requires WPS Office
 # # installed. No additional server or Python setup needed — just run

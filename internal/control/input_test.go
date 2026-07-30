@@ -463,11 +463,13 @@ func TestRunTurnAutoPlanClassifierFallback(t *testing.T) {
 	runner := &fakeTurnRunner{}
 	c := New(Options{AutoPlan: "on", Classifier: classifier, Runner: runner})
 
-	if err := c.runTurn(context.Background(), "实现 README 文档更新"); err != nil {
+	// Input must score >= 3 to trigger heuristic auto-plan (threshold raised from 2).
+	// "实现" (complexIntent) + "重构" (complexIntent) + "多个文件" (multiSurface) = 3
+	if err := c.runTurn(context.Background(), "实现 issue #123: 重构 README 文档更新，涉及多个文件"); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.inputs) != 1 || !strings.HasPrefix(runner.inputs[0], PlanModeMarker) {
-		t.Fatalf("score 2 should fall back to heuristic auto-plan, inputs=%q", runner.inputs)
+		t.Fatalf("should fall back to heuristic auto-plan, inputs=%q", runner.inputs)
 	}
 	if classifier.calls != 1 {
 		t.Fatalf("classifier calls = %d, want 1", classifier.calls)
@@ -479,7 +481,7 @@ func TestRunTurnAutoPlanTypedNilClassifierFallsBack(t *testing.T) {
 	runner := &fakeTurnRunner{}
 	c := New(Options{AutoPlan: "on", Classifier: classifier, Runner: runner})
 
-	if err := c.runTurn(context.Background(), "实现 README 文档更新"); err != nil {
+	if err := c.runTurn(context.Background(), "实现 issue #123: 重构 README 文档更新，涉及多个文件"); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.inputs) != 1 || !strings.HasPrefix(runner.inputs[0], PlanModeMarker) {

@@ -1773,6 +1773,15 @@ export const en = {
   "settings.metricsHint": "Anonymous usage data helps improve momapeer.",
   "cowork.expertBudget": "Expert budget",
   "cowork.expertBudgetUnlimited": "Unlimited",
+  "cowork.browserView": "Browser",
+  "cowork.browserViewLive": "· following the agent",
+  "cowork.browserViewIdle": "· idle",
+  "cowork.browserViewStop": "Stop",
+  "cowork.browserViewStopping": "Stopping…",
+  "cowork.browserViewNoUrl": "Waiting for page to load…",
+  "cowork.browserViewStopped": "Browser session ended",
+  "cowork.browserViewEmpty": "No browser view yet",
+  "cowork.browserViewHint": "Ask the agent to do a web task (e.g. \"open a site and search\"); its actions will be mirrored here live.",
 };
 
 export type DictKey = keyof typeof en;

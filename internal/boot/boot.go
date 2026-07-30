@@ -643,6 +643,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		// the network spec; auto/env modes fall back to a probe via ProxyURLFor
 		// (chromedp needs one concrete --proxy-server URL, not a per-request func).
 		builtin.SetBrowserLaunchOptions(cfg.Cowork.BrowserHeadless, cfg.Cowork.BrowserUserDataDir, resolveBrowserProxyURL(proxySpec))
+		// Autonomous browsing (browser_auto): inject a runtime that launches the
+		// shared browser, mirrors it to the in-app panel (if a desktop sink is
+		// registered), and drives the Python browser-use sidecar. The sidecar
+		// client + browser-launch are owned here; the desktop registers an
+		// optional screencast sink so the panel can mirror the agent's browser.
+		builtin.SetBrowserAutoRuntime(buildBrowserAutoRuntime(cfg, opts))
 		// Hybrid RAG: when an embedding model is configured, inject an embedder so
 		// rag_search reranks FTS5 hits with semantic similarity. Empty model =
 		// FTS5-only (the default, works offline).

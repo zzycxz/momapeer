@@ -4529,18 +4529,6 @@ a[href] {
     display: none;
   }
 
-  /* At narrow widths the knowledge-base switcher collapses to icon-only so it
-     doesn't crowd the toolbar alongside model + approval. The full label still
-     shows inside the dropdown menu. */
-  .composer-meta__control--kb {
-    flex: 0 0 32px;
-    width: 32px;
-    max-width: 32px;
-  }
-  .composer-meta__control--kb .modelsw__label {
-    display: none;
-  }
-
   .composer-meta__control--more {
     display: inline-flex;
     flex: 0 0 78px;
@@ -5241,13 +5229,6 @@ a[href] {
 /* Indent nested collections (those with a parent path) for hierarchy. */
 .kbsw__item--nested .modelsw__model {
   padding-left: 12px;
-}
-/* The "不使用" opt-out row gets a divider beneath so it reads as a distinct
-   group from the collection list, not just another peer item. */
-.kbsw__item--off {
-  border-bottom: 1px solid var(--border);
-  border-radius: 7px 7px 0 0;
-  margin-bottom: 2px;
 }
 
 /* ── approval modal ──────────────────────────────────────────────────────── */

@@ -71,6 +71,7 @@ func BrowserTools() []tool.Tool {
 		browserUploadFile{},
 		browserSetPath{},
 		browserWait{},
+		browserAuto{},
 	}
 }
 

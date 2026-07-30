@@ -97,6 +97,7 @@ export function TaskCard({
         {task.nextRun && (
           <span className="cowork-task-card__nextrun">
             {t("cowork.automationNextRun")}: {task.nextRun}
+            <span className="cowork-task-card__countdown">{relativeCountdown(task.nextRun)}</span>
           </span>
         )}
       </div>
@@ -135,6 +136,22 @@ export function TaskCard({
       )}
     </div>
   );
+}
+
+// relativeCountdown turns a "2006-01-02 15:04" nextRun into a compact relative
+// hint like "3小时后" / "2天后" / "已过期". Computed once at render; not a live
+// ticking timer (good enough for a card that refreshes on data reload).
+function relativeCountdown(nextRun: string): string {
+  const t = new Date(nextRun.replace(/-/g, "/")).getTime();
+  if (isNaN(t)) return "";
+  const diff = t - Date.now();
+  if (diff < 0) return "（已过期）";
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `（${mins}分钟后）`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `（${hours}小时后）`;
+  const days = Math.floor(hours / 24);
+  return `（${days}天后）`;
 }
 
 function deliveryLabel(t: Translator, mode: string): string {

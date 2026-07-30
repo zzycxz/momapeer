@@ -3370,6 +3370,10 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		m.finalizeStreamed()
 		m.chooser = newChooser(e.Ask)
 
+	case event.Phase:
+		m.finalizeStreamed()
+		m.commitLine(dim("  [" + e.Text + "]"))
+
 	case event.MCPSurfaceReady:
 		if m.ctrl != nil {
 			m.host = m.ctrl.Host()

@@ -560,6 +560,30 @@ type CoworkConfig struct {
 	// HEPort is the port for the Hyper-Extract Python server. Default 0 means
 	// use the built-in default (18900).
 	HEPort int `toml:"he_port"`
+	// BrowserUseEnabled controls whether the browser-use autonomous-browsing
+	// sidecar is wired up. When false (the zero-value DEFAULT), browser_auto
+	// returns a clear "disabled" error and no Python sidecar is started. This
+	// is intentionally opt-in: the sidecar needs the browser-use Python package
+	// installed (and a provider client), so users who haven't set that up are
+	// not bothered by startup failures. Set browser_use_enabled = true once
+	// the environment is ready.
+	BrowserUseEnabled bool `toml:"browser_use_enabled"`
+	// BrowserUsePython overrides the Python interpreter used to run the
+	// browser-use sidecar. Empty = "python" (Windows) / "python3" (other). In
+	// the packaged build this resolves to the bundled runtime's python.exe.
+	BrowserUsePython string `toml:"browser_use_python"`
+	// BrowserUsePort is the port for the browser-use sidecar. Default 0 means
+	// use the built-in default (18901, distinct from HE's 18900).
+	BrowserUsePort int `toml:"browser_use_port"`
+	// BrowserUseModel is the provider model ref the sidecar uses for the
+	// agentic loop (e.g. "openai/gpt-4o"). Empty = fall back to VLMModel, then
+	// the main agent model. A strong vision-capable model is strongly
+	// recommended — the loop reads screenshots/accessibility trees.
+	BrowserUseModel string `toml:"browser_use_model"`
+	// BrowserUseMaxSteps caps the agentic loop. Default 0 means let the sidecar
+	// pick a sensible bound. Set lower for cheaper/faster runs, higher for
+	// complex multi-page tasks.
+	BrowserUseMaxSteps int `toml:"browser_use_max_steps"`
 }
 
 // LLMConfig holds the global LLM request budget (rate limiting). It applies

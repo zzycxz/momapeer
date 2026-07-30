@@ -403,12 +403,12 @@ func (s *service) sessionPrompt(ctx context.Context, raw json.RawMessage) (any, 
 	sess.persistAfterTurn(text)
 
 	stop := StopEndTurn
-	if runErr != nil {
-		if runCtx.Err() != nil {
-			stop = StopCancelled
-		} else {
-			stop = StopError
-		}
+	if runCtx.Err() != nil {
+		// Context was cancelled (user cancel or timeout) — report as cancelled
+		// regardless of whether RunTurn swallowed the error.
+		stop = StopCancelled
+	} else if runErr != nil {
+		stop = StopError
 	}
 	res := SessionPromptResult{StopReason: stop}
 	if sess.transcript != "" {
