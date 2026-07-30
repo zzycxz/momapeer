@@ -145,6 +145,23 @@ jobs:
         working-directory: ./desktop/build/bin
         run: mv ${{ matrix.binary_name }} ${{ matrix.artifact }}
 
+      - name: Verify Windows binary exists
+        if: runner.os == 'Windows'
+        run: |
+          echo "Listing ./build/bin directory for debugging:"
+          dir ./build/bin
+          if not exist "./build/bin/momapeer.exe" (
+            echo "⚠️ Binary not found! Attempting to locate any exe in the directory."
+            for %%F in (./build/bin/*.exe) do (
+              echo "Found %%F, copying to expected name..."
+              copy "%%F" "./build/bin/momapeer.exe"
+            )
+          )
+          if not exist "./build/bin/momapeer.exe" (
+            echo "❌ Still missing after fallback. Failing job."
+            exit 1
+          )
+
       - name: Build NSIS Installer (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -161,7 +178,7 @@ jobs:
           $arch = "${{ matrix.platform }}".Replace("windows/", "")
           $setupName = "momapeer-setup-$ver-$arch.exe"
           if (Test-Path "build\bin\momapeer-setup.exe") {
-            Rename-Item "build\bin\momapeer-setup.exe" "build\bin\$setupName"
+            Rename-Item "build\bin\momapeer-setup.exe" "$setupName"
           } else {
             Write-Error "NSIS installer not created"
             exit 1

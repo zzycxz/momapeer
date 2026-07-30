@@ -9,7 +9,7 @@
 
 ; Installer attributes
 Name "${APP_NAME} ${APP_VERSION}"
-OutFile "build\bin\momapeer-setup.exe"
+OutFile "..\build\bin\momapeer-setup.exe"
 InstallDir "$LOCALAPPDATA\${APP_NAME}"
 InstallDirRegKey HKCU "Software\${APP_NAME}" ""
 RequestExecutionLevel user
@@ -34,7 +34,7 @@ Section "Install"
   SetOutPath "$INSTDIR"
 
   ; Main executable
-  File "build\bin\${APP_EXE}"
+  File "..\build\bin\${APP_EXE}"
 
   ; Create uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
