@@ -24,7 +24,7 @@ const (
 	cgRepo  = "colbymchenry/codegraph"
 
 	officialMirrorBase         = "" // No CDN mirror; download directly from GitHub
-	officialMainlandMirrorBase = "https://ghp.ci/https://github.com/colbymchenry/codegraph/releases/download"
+	officialMainlandMirrorBase = "https://mirror.ghproxy.com/https://github.com/colbymchenry/codegraph/releases/download"
 	perSourceDownloadTimeout   = 60 * time.Second
 
 	renameAttempts = 5
