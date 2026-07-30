@@ -17,16 +17,20 @@ jobs:
       - name: Sync to Gitee
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          GIT_LFS_SKIP_PUSH: 1
         run: |
           # Configure Gitee remote with token auth
           git remote add gitee https://oauth2:${GITEE_TOKEN}@gitee.com/zzycxz/momapeer.git 2>/dev/null || \
             git remote set-url gitee https://oauth2:${GITEE_TOKEN}@gitee.com/zzycxz/momapeer.git
 
-          # Push all branches (skip LFS - Gitee free doesn't support it)
-          git push gitee --all --force
+          # Disable LFS for this push (Gitee free doesn't support LFS)
+          # This prevents git from trying to upload LFS objects
+          git lfs install --local --skip-smudge --skip-repo
+          export GIT_LFS_SKIP_PUSH=1
 
-          # Push all tags
+          # Push main branch
+          git push gitee main --force
+
+          # Push tags
           git push gitee --tags --force
 
       - name: Delete remote branch on Gitee (if deleted on GitHub)
