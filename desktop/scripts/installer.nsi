@@ -18,7 +18,6 @@ RequestExecutionLevel user
 !include "MUI2.nsh"
 
 !define MUI_ABORTWARNING
-!define MUI_ICON "build\windows\icon.ico"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
@@ -37,9 +36,10 @@ Section "Install"
   ; Main executable
   File "build\bin\${APP_EXE}"
 
-  ; Skills directory
+  ; Skills directory (if exists)
   SetOutPath "$INSTDIR\.momapeer\skills"
-  File /r "build\bin\.momapeer\skills\*"
+  IfFileExists "build\bin\.momapeer\skills\*" 0 +2
+    File /r "build\bin\.momapeer\skills\*"
 
   ; Create uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
