@@ -62,6 +62,7 @@ import { DocPreview } from "./DocPreview";
 import { TemplateSelect } from "./TemplateSelect";
 import { RagNode } from "./RagNode";
 import { ImportModal } from "./ImportModal";
+import { ConfirmModal } from "../ConfirmModal";
 
 // PALETTE (Bp) is the fallback color list for calendar events without an
 // explicit color. The original bundle uses a small CSS-var palette; index 0 is
@@ -677,6 +678,9 @@ function RagDock({
   const [showImportModal, setShowImportModal] = useState(false);
   const [importTargetCol, setImportTargetCol] = useState("");
   const [allExpanded, setAllExpanded] = useState(true);
+  // Pending delete-collection confirmation (null = closed). Replaces the native
+  // window.confirm() with an app-styled modal.
+  const [deleteTarget, setDeleteTarget] = useState<{ name: string; path: string } | null>(null);
 
   // 当在分类查询框中打字时，自动将含匹配分支的父目录加至展开集合，让层级在视觉上一目了然
   useEffect(() => {
@@ -1088,10 +1092,7 @@ function RagDock({
                           </button>
                           <button className="rag-dock__collection-delete" title="删除" onClick={(e) => {
                             e.stopPropagation();
-                            if (window.confirm(`删除"${node.name}"及其全部文档？`)) {
-                              (app as unknown as { RagDeleteCollection: (n: string) => Promise<void> })
-                                .RagDeleteCollection(node.path).then(() => refreshCollections()).catch(() => {});
-                            }
+                            setDeleteTarget({ name: node.name, path: node.path });
                           }}>
                             <Trash2 size={12} />
                           </button>
@@ -1368,6 +1369,20 @@ function RagDock({
           refreshCollections();
         }}
       />
+      {deleteTarget && (
+        <ConfirmModal
+          title={`删除"${deleteTarget.name}"`}
+          message="该分类及其全部文档、已抽取的知识图谱将被永久删除，此操作不可撤销。"
+          onConfirm={() => {
+            const path = deleteTarget.path;
+            (app as unknown as { RagDeleteCollection: (n: string) => Promise<void> })
+              .RagDeleteCollection(path)
+              .then(() => refreshCollections())
+              .catch(() => {});
+          }}
+          onClose={() => setDeleteTarget(null)}
+        />
+      )}
     </aside>
   );
 }

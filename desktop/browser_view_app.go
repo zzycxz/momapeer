@@ -32,9 +32,9 @@ type BrowserViewFrame struct {
 
 // browserViewSession holds the launched browser + its screencast subscription.
 type browserViewSession struct {
-	handle  *browserlaunch.Handle
-	cancel  context.CancelFunc
-	doneCh  chan struct{}
+	handle *browserlaunch.Handle
+	cancel context.CancelFunc
+	doneCh chan struct{}
 }
 
 // browserView owns the live browser-view session on the App.

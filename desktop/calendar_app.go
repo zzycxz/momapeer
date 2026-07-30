@@ -400,7 +400,7 @@ func (a *App) ExportCalendarDialog() (string, error) {
 	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
 		Title:           "导出日历",
 		DefaultFilename: "calendar.ics",
-		Filters: []runtime.FileFilter{{DisplayName: "iCalendar (*.ics)", Pattern: "*.ics"}},
+		Filters:         []runtime.FileFilter{{DisplayName: "iCalendar (*.ics)", Pattern: "*.ics"}},
 	})
 	if err != nil {
 		return "", err
@@ -418,7 +418,7 @@ func (a *App) ImportCalendarDialog() (string, error) {
 		return "", fmt.Errorf("app not ready")
 	}
 	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title:  "导入日历",
+		Title:   "导入日历",
 		Filters: []runtime.FileFilter{{DisplayName: "iCalendar (*.ics)", Pattern: "*.ics"}},
 	})
 	if err != nil {

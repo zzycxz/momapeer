@@ -355,6 +355,15 @@ function GraphCanvasInner({
         onSelectionChange(newEntities, selectedRelations);
       } else {
         onNodeClick(node.label, node.collection || "");
+        // 自动将 3D 相机飞越并对焦到该节点（即局部放大效果）
+        if (fgRef.current) {
+          // 将相机推近到该节点的 z+150 距离，并使其镜头（lookAt）对准该节点
+          fgRef.current.cameraPosition(
+            { x: node.x, y: node.y, z: node.z + 150 },
+            node,
+            1200 // 飞越时长 1.2 秒
+          );
+        }
       }
     },
     [selectionMode, selectedEntities, selectedRelations, onNodeClick, onSelectionChange],
