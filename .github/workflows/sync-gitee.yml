@@ -17,12 +17,13 @@ jobs:
       - name: Sync to Gitee
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GIT_LFS_SKIP_PUSH: 1
         run: |
           # Configure Gitee remote with token auth
           git remote add gitee https://oauth2:${GITEE_TOKEN}@gitee.com/zzycxz/momapeer.git 2>/dev/null || \
             git remote set-url gitee https://oauth2:${GITEE_TOKEN}@gitee.com/zzycxz/momapeer.git
 
-          # Push all branches
+          # Push all branches (skip LFS - Gitee free doesn't support it)
           git push gitee --all --force
 
           # Push all tags
