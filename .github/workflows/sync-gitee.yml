@@ -22,10 +22,7 @@ jobs:
           git remote add gitee https://oauth2:${GITEE_TOKEN}@gitee.com/zzycxz/momapeer.git 2>/dev/null || \
             git remote set-url gitee https://oauth2:${GITEE_TOKEN}@gitee.com/zzycxz/momapeer.git
 
-          # Disable LFS for Gitee push (Gitee free doesn't support LFS)
-          git lfs install --skip-smudge --local
-
-          # Push all branches (without LFS objects)
+          # Push all branches
           git push gitee --all --force
 
           # Push all tags

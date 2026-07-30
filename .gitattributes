@@ -1,13 +1,10 @@
 # Go sources: force LF so Windows checkouts stay gofmt-clean locally (CI runs
 # gofmt on Linux; without this, Windows devs see every file flagged by `gofmt -l`
-# due to CRLF, which ci.yml works around by skipping the step on Windows).
+# due to CRLF, and ci.yml works around by skipping the step on Windows).
 *.go    text eol=lf
 *.mod   text eol=lf
 *.sum   text eol=lf
 .githooks/** text eol=lf
 benchmarks/**/*.sh text eol=lf
-.momapeer/skills/**/*.dll filter=lfs diff=lfs merge=lfs -text
-.momapeer/skills/**/*.pyd filter=lfs diff=lfs merge=lfs -text
-.momapeer/skills/**/*.zip filter=lfs diff=lfs merge=lfs -text
-.momapeer/skills/**/*.pptx filter=lfs diff=lfs merge=lfs -text
-.momapeer/skills/**/*.svg filter=lfs diff=lfs merge=lfs -text
+# LFS rules removed: Python runtime (.dll/.pyd) was removed from git tracking.
+# Skills SVG/PPTX files are small enough for regular git.
