@@ -10,6 +10,18 @@ allowed-tools: bash, read_file, write_file, edit_file, grep, todo_write, image_u
 
 根据用户主题和PPT模板，生成专业演示文稿，输出为 `.pptx` 文件。
 
+## ⚠️ 前置条件：Python 运行时
+
+本 skill 需要独立的 Python 运行时（`<skill_dir>/python/runtime/python.exe`）。
+
+**首次使用前，请确保运行时已安装：**
+
+1. 检查 `<skill_dir>/python/runtime/python.exe` 是否存在
+2. 如果不存在，运行 `<skill_dir>/setup_python.bat` 获取安装指引
+3. 或手动从 Python 官网下载嵌入式版本，解压到 `<skill_dir>/python/runtime/`
+
+运行时不依赖系统 Python，是独立的嵌入式版本。
+
 ## 你会收到什么 / 要产出什么
 
 - **输入**：一个主题（如"企业数字化转型方案"），可选附带源文档（PDF/DOCX 等）和页数/风格要求。

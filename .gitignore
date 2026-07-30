@@ -24,15 +24,23 @@
 .codegraph/
 .env
 .env.local
+**/.env
+**/.env.local
+.agents/
 .idea/
 .npm/
 .pnpm-store/
 .vscode/
+.zcode/
 /.claude/
 /.momapeer.zip
 /.momapeer/*
 !/.momapeer/skills/
 !/.momapeer/skills/**
+# Exclude Python runtime (56MB+ of platform-specific binaries)
+/.momapeer/skills/*/python/runtime/
+__pycache__/
+*.pyc
 /bin/
 /cua-replay-trace/
 /cua-test.txt
