@@ -37,13 +37,11 @@ jobs:
             apt_deps: ''
             build_args: ''
 
-          - os: windows-latest
-            platform: windows/arm64
-            artifact: momapeer-windows-arm64.exe
-            binary_name: momapeer.exe
-            setup_artifact: momapeer-setup-*-arm64.exe
-            apt_deps: ''
-            build_args: ''
+          # Windows ARM64 disabled: LLVM-MinGW cross-compilation unreliable in CI.
+          # Re-enable when GitHub Actions provides native ARM64 Windows runners.
+          # - os: windows-latest
+          #   platform: windows/arm64
+          #   artifact: momapeer-windows-arm64.exe
 
           - os: ubuntu-22.04
             platform: linux/amd64
@@ -69,15 +67,7 @@ jobs:
         if: runner.os == 'macOS'
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
-      - name: Setup LLVM-MinGW (Windows ARM64)
-        if: matrix.platform == 'windows/arm64'
-        shell: pwsh
-        run: |
-          $ver = "20260616"
-          $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$ver/llvm-mingw-$ver-ucrt-x86_64.zip"
-          Invoke-WebRequest -Uri $url -OutFile "llvm-mingw.zip"
-          Expand-Archive llvm-mingw.zip -DestinationPath C:\
-          echo "C:\llvm-mingw-$ver-ucrt-x86_64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      # LLVM-MinGW setup removed: Windows ARM64 disabled (cross-compilation unreliable).
 
       - name: Setup Go
         uses: actions/setup-go@v6
