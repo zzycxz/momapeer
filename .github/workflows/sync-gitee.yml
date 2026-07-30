@@ -16,7 +16,7 @@ jobs:
 
       - name: Strip LFS history to bypass Gitee limits
         run: |
-          pip install git-filter-repo
+          pipx install git-filter-repo
           # 1. 移除整个历史中的 .gitattributes 文件
           git filter-repo --force --path .gitattributes --invert-paths
           # 2. 修改所有 LFS 指针文件的二进制特征，让 Gitee 识别为普通文本
