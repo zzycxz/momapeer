@@ -121,7 +121,7 @@ func (p calendarIMPusher) Push(ctx context.Context, dest, text string) error {
 type calendarEmailSender struct{}
 
 func (calendarEmailSender) Send(ctx context.Context, account, to, subject, body string) error {
-	return builtin.SendPlainTextAs(account, to, subject, body)
+	return builtin.SendPlainTextAs(ctx, account, to, subject, body)
 }
 
 // calendarChanged emits a Wails event so the frontend refreshes.

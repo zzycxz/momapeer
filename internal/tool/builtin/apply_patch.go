@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	fileenc "github.com/zzycxz/momapeer/internal/fileutil/encoding"
 	"github.com/zzycxz/momapeer/internal/tool"
 )
 
@@ -315,6 +316,7 @@ func (a applyPatch) Execute(ctx context.Context, args json.RawMessage) (string, 
 		oldContent string
 		newContent string
 		changeType string // "add", "update", "delete", "move"
+		enc        fileenc.Kind // detected encoding to preserve on write (update/move)
 	}
 	var changes []fileChange
 
@@ -350,7 +352,7 @@ func (a applyPatch) Execute(ctx context.Context, args json.RawMessage) (string, 
 			if _, err := os.Stat(filePath); err != nil {
 				return "", fmt.Errorf("apply_patch verify: cannot update %s: %w", filePath, err)
 			}
-			oldContent, _, err := readFileEncoded(filePath)
+			oldContent, enc, err := readFileEncoded(filePath)
 			if err != nil {
 				return "", fmt.Errorf("apply_patch verify: read %s: %w", filePath, err)
 			}
@@ -378,6 +380,7 @@ func (a applyPatch) Execute(ctx context.Context, args json.RawMessage) (string, 
 					}
 					return ""
 				}()],
+				enc: enc,
 			})
 		}
 	}
@@ -397,9 +400,9 @@ func (a applyPatch) Execute(ctx context.Context, args json.RawMessage) (string, 
 			summary = append(summary, fmt.Sprintf("A %s", c.path))
 
 		case "update":
-			enc, _, _ := readFileEncoded(c.path) // re-read for encoding
-			_ = enc
-			if err := writeFileEncoded(c.path, c.newContent, 0); err != nil {
+			// Preserve the original file's encoding (GBK/UTF-16/etc.) on write —
+			// re-encoding to UTF-8 would silently corrupt non-UTF-8 sources.
+			if err := writeFileEncoded(c.path, c.newContent, c.enc); err != nil {
 				return "", fmt.Errorf("write %s: %w", c.path, err)
 			}
 			summary = append(summary, fmt.Sprintf("M %s", c.path))
@@ -409,7 +412,8 @@ func (a applyPatch) Execute(ctx context.Context, args json.RawMessage) (string, 
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return "", fmt.Errorf("mkdir %s: %w", dir, err)
 			}
-			if err := writeFileEncoded(c.movePath, c.newContent, 0); err != nil {
+			// Carry the source file's encoding to the destination.
+			if err := writeFileEncoded(c.movePath, c.newContent, c.enc); err != nil {
 				return "", fmt.Errorf("write %s: %w", c.movePath, err)
 			}
 			os.Remove(c.path)

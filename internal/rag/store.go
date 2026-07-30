@@ -590,8 +590,8 @@ func (s *Store) ImportText(collection, virtualPath, text string) (int, error) {
 		return 0, err
 	}
 	for i, c := range chunks {
-		if _, err := tx.Exec("INSERT INTO rag_fts (collection, path, chunk, body) VALUES (?, ?, ?, ?)",
-			collection, virtualPath, i, c); err != nil {
+		if _, err := tx.Exec("INSERT INTO rag_fts (collection, path, chunk, body, body_raw) VALUES (?, ?, ?, ?, ?)",
+			collection, virtualPath, i, expandCJKBigrams(c), c); err != nil {
 			return 0, err
 		}
 	}

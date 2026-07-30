@@ -300,5 +300,5 @@ func formatGlobResults(paths []string) string {
 	}
 	more := len(paths) - globMaxResults
 	return strings.Join(paths[:globMaxResults], "\n") +
-		fmt.Sprintf("\n... (%d more", more)
+		fmt.Sprintf("\n... (%d more)", more)
 }

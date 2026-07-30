@@ -325,7 +325,7 @@ func (a *App) emitSchedulerChanged() {
 type schedulerEmailSender struct{}
 
 func (schedulerEmailSender) Send(ctx context.Context, account, to, subject, body string) error {
-	return builtin.SendPlainTextAs(account, to, subject, body)
+	return builtin.SendPlainTextAs(ctx, account, to, subject, body)
 }
 
 // schedulerNotifier implements scheduler.Notifier by emitting a "scheduler:notice"

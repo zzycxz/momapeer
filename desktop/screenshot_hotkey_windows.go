@@ -52,6 +52,7 @@ var (
 	procUnregisterHotKey = user32DLL.NewProc("UnregisterHotKey")
 	procCreateWindowEx   = user32DLL.NewProc("CreateWindowExW")
 	procDefWindowProc    = user32DLL.NewProc("DefWindowProcW")
+	procDestroyWindow    = user32DLL.NewProc("DestroyWindow")
 	procGetMessage       = user32DLL.NewProc("GetMessageW")
 	procPeekMessage      = user32DLL.NewProc("PeekMessageW")
 	procTranslateMessage = user32DLL.NewProc("TranslateMessage")
@@ -218,6 +219,11 @@ func (h *hotkeyManager) Stop() {
 		close(h.stopCh)
 		if h.app.screenshotHwnd != 0 {
 			procUnregisterHotKey.Call(uintptr(h.app.screenshotHwnd), uintptr(hotkeyID))
+			// Destroy the message-only window so repeated stop/start cycles don't
+			// leak HWNDs (the OS reclaims them at exit, but a long-lived process
+			// toggling the screenshot feature could accumulate many).
+			procDestroyWindow.Call(uintptr(h.app.screenshotHwnd))
+			h.app.screenshotHwnd = 0
 		}
 	})
 }

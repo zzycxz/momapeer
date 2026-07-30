@@ -4182,7 +4182,16 @@ func (a *App) SetModelForTab(tabID, name string) error {
 			a.releaseSharedHost(root) // drop the old controller's reference
 		}
 	} else {
-		tab.Ctrl = newCtrl
+		// Another goroutine swapped this tab's controller between our RUnlock and
+		// Lock, so the concurrently-installed controller supersedes our snapshot.
+		// Rather than overwrite it (and leak the concurrent controller's host ref),
+		// roll back this attempt: discard newCtrl and release the host ref we
+		// acquired for it. The caller's model switch is a no-op this turn; the tab
+		// keeps whatever the concurrent swap produced.
+		a.mu.Unlock()
+		newCtrl.Close()
+		a.releaseSharedHost(root)
+		return nil
 	}
 	tab.model = name
 	tab.effort = cloneStringPtr(effortOverride)

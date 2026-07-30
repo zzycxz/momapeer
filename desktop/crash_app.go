@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"runtime"
 	"time"
+	"unicode/utf8"
 )
 
 // crash_app.go is the crash/feedback reporting surface. Reports are sent only on
@@ -41,7 +42,14 @@ func (a *App) ReportCrash(kind, detail string) error {
 		return fmt.Errorf("empty report")
 	}
 	if len(detail) > maxCrashDetailBytes {
-		detail = detail[:maxCrashDetailBytes]
+		// Truncate at a rune boundary so we never emit invalid UTF-8 (slicing
+		// mid-multibyte would corrupt CJK text and turn json.Marshal's output
+		// into U+FFFD replacement noise — the original crash text matters most).
+		n := maxCrashDetailBytes
+		for n > 0 && !utf8.RuneStart(detail[n]) {
+			n--
+		}
+		detail = detail[:n]
 	}
 	c, err := httpClient()
 	if err != nil {

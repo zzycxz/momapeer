@@ -273,6 +273,8 @@ func (s *Store) PruneDanglingRelations(collection string) (int, error) {
 // CountEntities returns the number of entities in a collection.
 func (s *Store) CountEntities(collection string) (int, error) {
 	collection = normalizeCollection(collection)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM rag_entities WHERE collection = ?`, collection).Scan(&n)
 	return n, err
@@ -281,6 +283,8 @@ func (s *Store) CountEntities(collection string) (int, error) {
 // CountRelations returns the number of relations in a collection.
 func (s *Store) CountRelations(collection string) (int, error) {
 	collection = normalizeCollection(collection)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM rag_relations WHERE collection = ?`, collection).Scan(&n)
 	return n, err
@@ -295,6 +299,8 @@ type EntityWithRelCount struct {
 // TopEntities returns the N entities with the most relations in a collection.
 func (s *Store) TopEntities(collection string, limit int) ([]EntityWithRelCount, error) {
 	collection = normalizeCollection(collection)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	rows, err := s.db.Query(`
 		SELECT e.name, e.name_raw, e.type, e.description, e.sources,
 			   (SELECT COUNT(*) FROM rag_relations r WHERE r.collection = e.collection AND (r.source = e.name OR r.target = e.name)) AS rel_count
@@ -423,6 +429,8 @@ func (s *Store) RecalcRelationCounts(collection string) error {
 
 func (s *Store) TopRelations(collection string, limit int) ([]Relation, error) {
 	collection = normalizeCollection(collection)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	rows, err := s.db.Query(`
 		SELECT source, target, type, description, sources
 		FROM rag_relations
@@ -1507,6 +1515,8 @@ func (h *pairHeap) push(p struct {
 func (s *Store) EntityExists(collection, name string) (int64, bool) {
 	collection = normalizeCollection(collection)
 	name = normalizeName(name)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var id int64
 	err := s.db.QueryRow(`SELECT id FROM rag_entities WHERE collection = ? AND name = ?`, collection, name).Scan(&id)
 	if err != nil {
@@ -1518,6 +1528,8 @@ func (s *Store) EntityExists(collection, name string) (int64, bool) {
 // AllEntitiesWithEmbeddings returns entity IDs that already have embeddings for a given model.
 func (s *Store) EntityEmbeddingStatus(collection, model string) (map[int64]bool, error) {
 	collection = normalizeCollection(collection)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	rows, err := s.db.Query(`SELECT entity_id FROM rag_entity_embeddings WHERE collection = ? AND model = ?`, collection, model)
 	if err != nil {
 		return nil, err

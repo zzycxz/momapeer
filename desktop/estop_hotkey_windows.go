@@ -193,6 +193,10 @@ func (e *estopManager) Stop() {
 		close(e.stopCh)
 		if e.hwnd != 0 {
 			procUnregisterHotKey.Call(uintptr(e.hwnd), uintptr(estopHotkeyID))
+			// Destroy the message-only window to avoid leaking HWNDs across
+			// repeated stop/start cycles of the estop feature.
+			procDestroyWindow.Call(uintptr(e.hwnd))
+			e.hwnd = 0
 		}
 	})
 }

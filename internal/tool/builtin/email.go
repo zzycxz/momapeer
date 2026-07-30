@@ -60,16 +60,17 @@ func resolveSMTP(account string) (config.SMTPConfig, error) {
 // SendPlainText delivers a plain-text email using the Default account's SMTP
 // settings. Exposed so non-tool callers (the scheduler's email delivery bridge)
 // can reuse the same SMTP wiring without duplicating it. Returns an error if
-// no account is configured.
-func SendPlainText(to, subject, body string) error {
-	return SendPlainTextAs("", to, subject, body)
+// no account is configured. The ctx bounds dial/handshake and cancels a stalled
+// send; pass context.Background() when no cancellation is needed.
+func SendPlainText(ctx context.Context, to, subject, body string) error {
+	return SendPlainTextAs(ctx, "", to, subject, body)
 }
 
 // SendPlainTextAs delivers a plain-text email using the named account's SMTP
 // settings. An empty account selects the Default account. Used by the scheduler
 // and calendar reminder engine to send via a user-chosen mailbox rather than
-// always the default.
-func SendPlainTextAs(account, to, subject, body string) error {
+// always the default. The ctx bounds dial/handshake and cancels a stalled send.
+func SendPlainTextAs(ctx context.Context, account, to, subject, body string) error {
 	cfg, err := resolveSMTP(account)
 	if err != nil {
 		return err
@@ -78,7 +79,7 @@ func SendPlainTextAs(account, to, subject, body string) error {
 		return fmt.Errorf("email account %q has no from address", account)
 	}
 	msg := buildPlainTextMessage(cfg.From, []string{to}, subject, body)
-	return sendSMTP(cfg, []string{to}, nil, nil, msg)
+	return sendSMTP(ctx, cfg, []string{to}, nil, nil, msg)
 }
 
 // buildPlainTextMessage assembles a minimal RFC822 message with a UTF-8 text
@@ -246,7 +247,7 @@ func (emailSend) Execute(ctx context.Context, args json.RawMessage) (string, err
 		return "", err
 	}
 
-	if err := sendSMTP(cfg, to, cc, bcc, msg); err != nil {
+	if err := sendSMTP(ctx, cfg, to, cc, bcc, msg); err != nil {
 		return "", fmt.Errorf("send: %w", err)
 	}
 	attNote := ""
@@ -379,18 +380,42 @@ func buildMessage(from string, to, cc, bcc []string, subject, body, format strin
 	return []byte(buf.String()), nil
 }
 
+// smtpDialTimeout bounds the initial TCP/TLS handshake. A non-responding server
+// must not hang the tool call or a scheduled task indefinitely. Matches the
+// inbound IMAP dial budget (see imapConnect's dialTimeout).
+const smtpDialTimeout = 20 * time.Second
+
+// smtpSendTimeout bounds the overall SMTP transaction for the STARTTLS/plain
+// path, which goes through net/smtp.SendMail (no native ctx support).
+const smtpSendTimeout = 60 * time.Second
+
 // sendSMTP delivers the message. Handles implicit TLS (port 465), STARTTLS
 // (587), and plain (25). Auth via PLAIN/CRAMMD5 as the server supports.
-func sendSMTP(cfg config.SMTPConfig, to, cc, bcc []string, msg []byte) error {
+//
+// ctx bounds dial/handshake and cancels a stalled send on both paths. The
+// implicit-TLS path dials with DialContext + HandshakeContext so ctx cancel or
+// expiry aborts the connection. The STARTTLS/plain path uses net/smtp.SendMail,
+// which has no ctx support, so it runs on a goroutine and is aborted (connection
+// closed under it) when ctx is done or smtpSendTimeout elapses.
+func sendSMTP(ctx context.Context, cfg config.SMTPConfig, to, cc, bcc []string, msg []byte) error {
 	addr := net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Port))
 	recipients := append(append(append([]string{}, to...), cc...), bcc...)
 
 	if cfg.UseTLS || cfg.EncryptionMode == "tls" || cfg.Port == 465 {
-		// Implicit TLS: wrap the whole connection.
+		// Implicit TLS: dial with a timeout, then wrap in TLS honoring ctx.
 		tlsCfg := &tls.Config{ServerName: cfg.Host}
-		conn, err := tls.Dial("tcp", addr, tlsCfg)
+		netConn, err := (&net.Dialer{Timeout: smtpDialTimeout}).DialContext(ctx, "tcp", addr)
 		if err != nil {
-			return fmt.Errorf("tls dial %s: %w", addr, err)
+			return fmt.Errorf("dial %s: %w", addr, err)
+		}
+		conn := tls.Client(netConn, tlsCfg)
+		// Close the TCP conn if ctx is cancelled while we hold the TLS conn;
+		// Closing it forces any blocking handshake/IO to error out.
+		stop := context.AfterFunc(ctx, func() { _ = netConn.Close() })
+		defer stop()
+		if err := conn.HandshakeContext(ctx); err != nil {
+			_ = netConn.Close()
+			return fmt.Errorf("tls handshake %s: %w", addr, err)
 		}
 		defer conn.Close()
 		c, err := smtp.NewClient(conn, cfg.Host)
@@ -403,8 +428,19 @@ func sendSMTP(cfg config.SMTPConfig, to, cc, bcc []string, msg []byte) error {
 		}
 		return nil
 	}
-	// STARTTLS or plain.
-	return smtp.SendMail(addr, authFor(cfg), cfg.From, recipients, msg)
+	// STARTTLS or plain. net/smtp.SendMail has no ctx/timeout support, so run it
+	// on a goroutine and abort by closing the connection under it if ctx is done
+	// or smtpSendTimeout elapses. (Closing the conn causes SendMail to return.)
+	sendCtx, cancel := context.WithTimeout(ctx, smtpSendTimeout)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- smtp.SendMail(addr, authFor(cfg), cfg.From, recipients, msg) }()
+	select {
+	case err := <-done:
+		return err
+	case <-sendCtx.Done():
+		return sendCtx.Err()
+	}
 }
 
 // authFor builds the smtp.Auth from the config. Empty username = no auth (some

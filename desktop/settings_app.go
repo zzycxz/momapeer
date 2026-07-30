@@ -684,7 +684,19 @@ func (a *App) rebuild() error {
 			oldCtrl.Close()
 		}
 	} else {
+		// Another goroutine rebuilt this tab between our RUnlock and Lock, so
+		// the controller it installed (current tab.Ctrl) differs from our
+		// snapshot (oldCtrl). Both are superseded by ctrl: close whichever of
+		// them we're overwriting, plus our snapshot, so neither leaks its
+		// background jobs/hooks.
+		superseded := tab.Ctrl // the concurrently-installed controller we replace
 		tab.Ctrl = ctrl
+		if superseded != nil && superseded != ctrl {
+			superseded.Close()
+		}
+		if oldCtrl != nil && oldCtrl != ctrl && oldCtrl != superseded {
+			oldCtrl.Close()
+		}
 	}
 	tab.model = model
 	tab.Label = ctrl.Label()
