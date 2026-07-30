@@ -65,7 +65,9 @@ jobs:
         with:
           fetch-depth: 0
 
-
+      - name: Setup Xcode (macOS)
+        if: runner.os == 'macOS'
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
       - name: Setup LLVM-MinGW (Windows ARM64)
         if: matrix.platform == 'windows/arm64'
