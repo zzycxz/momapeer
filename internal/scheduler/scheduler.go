@@ -69,11 +69,11 @@ type ScheduledTask struct {
 	// shared workspace root; the agent prompt may reference it. Color/Location
 	// render the task on the calendar grid. These were previously sent by the
 	// UI form but dropped because they had no backing struct field.
-	OutputDir       string `json:"output_dir,omitempty"`
-	Color           string `json:"color,omitempty"`
-	Location        string `json:"location,omitempty"`
-	LastDeliverErr  string `json:"last_deliver_err,omitempty"`  // "" if last delivery succeeded / was skipped
-	LastDeliverAt   time.Time `json:"last_deliver_at,omitempty"` // when the most recent delivery was attempted
+	OutputDir      string    `json:"output_dir,omitempty"`
+	Color          string    `json:"color,omitempty"`
+	Location       string    `json:"location,omitempty"`
+	LastDeliverErr string    `json:"last_deliver_err,omitempty"` // "" if last delivery succeeded / was skipped
+	LastDeliverAt  time.Time `json:"last_deliver_at,omitempty"`  // when the most recent delivery was attempted
 }
 
 // Runner is the bridge to a controller: the scheduler calls Run with the task's
@@ -168,18 +168,18 @@ func (s *Store) save(tasks []ScheduledTask) error {
 // Scheduler owns the task store and the firing goroutine. Create once per app
 // (desktop), call Start to begin firing, SetRunner to bind a controller bridge.
 type Scheduler struct {
-	store       *Store
-	historyPath string
-	mu          sync.Mutex
-	tasks       []ScheduledTask
-	history     []RunRecord // newest last; capped at historyMax
+	store         *Store
+	historyPath   string
+	mu            sync.Mutex
+	tasks         []ScheduledTask
+	history       []RunRecord // newest last; capped at historyMax
 	runner        Runner
 	imPusher      IMPusher
 	emailer       EmailSender
 	notifier      Notifier
 	accountProber AccountProber
 	stopCh        chan struct{}
-	logf        func(format string, args ...any)
+	logf          func(format string, args ...any)
 }
 
 const historyMax = 100
@@ -532,10 +532,10 @@ func (s *Scheduler) deliverOutput(pusher IMPusher, emailer EmailSender, notifier
 type deliverStatus int
 
 const (
-	deliverNone   deliverStatus = iota // no delivery configured (store-only)
-	deliverOK                          // delivered successfully
-	deliverSkipped                     // bridge missing / dest empty (config issue)
-	deliverFailed                      // attempted but errored
+	deliverNone    deliverStatus = iota // no delivery configured (store-only)
+	deliverOK                           // delivered successfully
+	deliverSkipped                      // bridge missing / dest empty (config issue)
+	deliverFailed                       // attempted but errored
 )
 
 // deliverResult is what deliverOutput reports back so the caller can record

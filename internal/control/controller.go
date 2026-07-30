@@ -84,8 +84,8 @@ type Controller struct {
 	startedOnce   bool                                                         // guards the one-shot SessionStart hook on first turn
 	onRemember    func(rule string) RememberResult                             // set via Options; invoked when user picks "always allow"
 	onTurnEnd     func(ctx context.Context, lastUserMsg, lastAssistant string) // set via Options; passive memory capture
-	ragContextFn  func(ctx context.Context, query, collection string) string               // set via Options; auto-retrieves knowledge-base context
-	ragScope      string                                                                 // knowledge-base collection to scope auto-injection to; "" = don't inject (guarded by c.mu)
+	ragContextFn  func(ctx context.Context, query, collection string) string   // set via Options; auto-retrieves knowledge-base context
+	ragScope      string                                                       // knowledge-base collection to scope auto-injection to; "" = don't inject (guarded by c.mu)
 
 	// jobs is the session-scoped background-job manager. The agent's background
 	// tools spawn into it; Compose drains its completion notes into the next turn;
