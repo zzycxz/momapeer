@@ -1773,18 +1773,6 @@ export const en = {
   "settings.metricsHint": "Anonymous usage data helps improve momapeer.",
   "cowork.expertBudget": "Expert budget",
   "cowork.expertBudgetUnlimited": "Unlimited",
-  "cowork.browserView": "Browser",
-  "cowork.browserViewLive": "· following the agent",
-  "cowork.browserViewIdle": "· idle",
-  "cowork.browserViewStop": "Stop",
-  "cowork.browserViewStopping": "Stopping…",
-  "cowork.browserViewNoUrl": "Waiting for page to load…",
-  "cowork.browserViewStopped": "Session ended",
-  "cowork.browserViewEmpty": "Browser on standby",
-  "cowork.browserViewHint": "Type the web task you want the AI to complete below; once you start, its actions are mirrored here live.",
-  "cowork.browserViewGoalPlaceholder": "Describe the browsing task, e.g. open a site, search something, fill a form",
-  "cowork.browserViewStart": "Start",
-  "cowork.browserViewShortcut": "Ctrl/Cmd + Enter to start · complex tasks can be followed in the chat",
 };
 
 export type DictKey = keyof typeof en;

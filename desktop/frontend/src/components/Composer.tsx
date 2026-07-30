@@ -341,6 +341,7 @@ export function Composer({
   onSetEffort,
   ragScope,
   onPickRagScope,
+  showKnowledge = true,
   insertRequest,
   onInsertComplete,
   disabled,
@@ -379,6 +380,7 @@ export function Composer({
   onSetEffort: (level: string) => void;
   ragScope: string;
   onPickRagScope: (scope: string) => void;
+  showKnowledge?: boolean;
   insertRequest?: ComposerInsertRequest | null;
   onInsertComplete?: () => void;
   disabled?: boolean;
@@ -2046,9 +2048,11 @@ export function Composer({
                 <EffortSwitcher effort={effort} disabled={running} onPick={onSetEffort} />
               </div>
             )}
-            <div className="composer-meta__control composer-meta__control--kb">
-              <KnowledgeSwitcher scope={ragScope} onPick={onPickRagScope} />
-            </div>
+            {showKnowledge && (
+              <div className="composer-meta__control composer-meta__control--kb">
+                <KnowledgeSwitcher scope={ragScope} disabled={running} onPick={onPickRagScope} />
+              </div>
+            )}
             {hasEffort && (
               <div className="composer-meta__control composer-meta__control--more">
                 <Tooltip label={t("composer.moreControls")} disabled={moreMenuOpen || moreMenuClosing}>

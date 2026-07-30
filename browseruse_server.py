@@ -128,9 +128,23 @@ def build_llm(spec: RunSpec):
     is_anthropic = spec.provider_kind == "anthropic" or (
         spec.provider_kind == "" and "claude" in model.lower()
     )
+    # When a proxy is configured, build an httpx async client that routes
+    # through it, so the sidecar's LLM calls reach a gateway only reachable via
+    # the user's network proxy (e.g. a CN proxy). browser-use's ChatOpenAI /
+    # ChatAnthropic accept an http_client kwarg.
+    http_client = None
+    if spec.proxy:
+        try:
+            import httpx  # type: ignore
+
+            http_client = httpx.AsyncClient(proxy=spec.proxy)
+        except Exception:
+            http_client = None  # best-effort; fall back to direct
     if is_anthropic and "anthropic" in _llm_clients:
         _resolve_api_key(spec, "ANTHROPIC_API_KEY")
         kwargs = {"model": model} if model else {}
+        if http_client is not None:
+            kwargs["http_client"] = http_client
         return _llm_clients["anthropic"](**kwargs)
     # Default: OpenAI-compatible (covers OpenAI, Azure-compatible, 九天/MoMA, and
     # any OpenAI-compatible gateway via base_url).
@@ -141,6 +155,8 @@ def build_llm(spec: RunSpec):
             kwargs["model"] = model
         if spec.base_url:
             kwargs["base_url"] = spec.base_url
+        if http_client is not None:
+            kwargs["http_client"] = http_client
         return _llm_clients["openai"](**kwargs)
     raise RuntimeError(
         "no LLM client available (install browser-use with the desired provider)"
@@ -182,11 +198,23 @@ def run_agent_sync(spec: RunSpec, wfile) -> None:
                 raise _Cancelled()
             step = getattr(getattr(agent, "state", None), "n_steps", 0) or 0
             # Push the latest thought + action text to the stream.
+            # NOTE: browser-use's AgentBrain fields vary across versions. We read
+            # the common fields defensively so this never crashes (wrapped in
+            # try/except) and degrades to a best-effort string.
             try:
                 thoughts = agent.history.model_thoughts()
                 if thoughts:
                     last = thoughts[-1]
-                    text = getattr(last, "think", None) or getattr(last, "reasoning", None) or str(last)
+                    # AgentBrain (browser-use 0.13.x) has thinking /
+                    # evaluation_previous_goal / next_goal. Older versions used
+                    # reasoning / think. Fall through them all.
+                    text = (
+                        getattr(last, "next_goal", None)
+                        or getattr(last, "thinking", None)
+                        or getattr(last, "evaluation_previous_goal", None)
+                        or getattr(last, "reasoning", None)
+                        or getattr(last, "think", None)
+                    )
                     if text:
                         put({"type": "thought", "step": step, "text": str(text)})
             except Exception:
@@ -270,14 +298,32 @@ def run_agent_sync(spec: RunSpec, wfile) -> None:
 
 
 def _describe_action(action_obj) -> str:
-    """Render an agent action history item as a short human description."""
-    try:
-        # model_actions() returns AgentOutput-like objects; try common attrs.
-        interaction = getattr(action_obj, "interaction", None)
-        if interaction is not None:
-            return str(interaction)
-    except Exception:
-        pass
+    """Render an agent action history item as a short human description.
+
+    browser-use's model_actions() returns a list of dicts (in 0.13.x) shaped like
+    {'goto_url': {'url': '...'}} or {'click_element': {'index': 5, ...}} — one
+    action name → its params. We format it as 'name(params)'. Older versions
+    returned objects with an `interaction` attribute; we handle both.
+    """
+    # Dict form (browser-use 0.13.x): {action_name: params_dict}.
+    if isinstance(action_obj, dict):
+        parts = []
+        for name, params in action_obj.items():
+            if isinstance(params, dict) and params:
+                # Compact 'key=value' pairs, skipping empty/unset values.
+                kv = ", ".join(
+                    f"{k}={v!r}" for k, v in params.items()
+                    if v not in (None, "", [], {})
+                )
+                parts.append(f"{name}({kv})" if kv else name)
+            else:
+                parts.append(str(name))
+        return " | ".join(parts) if parts else ""
+    # Object form (older versions): try common attributes.
+    for attr in ("interaction", "action", "name"):
+        v = getattr(action_obj, attr, None)
+        if v:
+            return str(v)
     return str(action_obj)
 
 

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { BookOpen, CalendarDays, SquarePen, Users, SlidersHorizontal, Globe } from "lucide-react";
+import { BookOpen, CalendarDays, SquarePen, Users, SlidersHorizontal } from "lucide-react";
 
 import { useT } from "../lib/i18n";
 import { app, onExpertsCollab } from "../lib/bridge";
@@ -7,10 +7,9 @@ import { CalendarTaskPanel } from "../components/cowork/CalendarTaskPanel";
 import { RagPanel } from "../components/cowork/RagPanel";
 import { PreferencePanel } from "../components/cowork/PreferencePanel";
 import { ExpertPanel } from "../components/cowork/ExpertPanel";
-import { BrowserViewPanel } from "../components/cowork/BrowserViewPanel";
 import { CoworkDock } from "../components/cowork/CoworkDock";
 
-export type CoWorkPanel = "taskCenter" | "preference" | "calendarTask" | "rag" | "experts" | "browser";
+export type CoWorkPanel = "taskCenter" | "preference" | "calendarTask" | "rag" | "experts";
 
 export interface CoWorkLayoutProps {
   headerNode?: ReactNode;
@@ -194,16 +193,6 @@ export function CoWorkLayout({
               <span>{t("cowork.expert") || "专家团"}</span>
             </button>
             <button
-              className={`cowork-sidebar__item ${activePanel === "browser" ? "cowork-sidebar__item--active" : ""}`}
-              onClick={() => {
-                setActivePanel("browser");
-                if (dockOnClose) dockOnClose();
-              }}
-            >
-              <Globe size={14} />
-              <span>{t("cowork.browserView") || "浏览器"}</span>
-            </button>
-            <button
               className={`cowork-sidebar__item ${activePanel === "rag" ? "cowork-sidebar__item--active" : ""}`}
               onClick={() => setActivePanel("rag")}
             >
@@ -245,14 +234,6 @@ export function CoWorkLayout({
             conversation state survives panel switches. */}
         <div style={{ display: activePanel === "experts" ? "flex" : "none", flex: 1, minHeight: 0, flexDirection: "column" }}>
           <ExpertPanel />
-        </div>
-
-        {/* BrowserViewPanel stays mounted (hidden when inactive) so a live
-            screencast subscription isn't torn down when the user peeks at
-            another panel mid-run — otherwise frames arriving while away are
-            lost. Mirrors the ExpertPanel keep-mounted pattern. */}
-        <div style={{ display: activePanel === "browser" ? "flex" : "none", flex: 1, minHeight: 0, flexDirection: "column" }}>
-          <BrowserViewPanel />
         </div>
 
         {activePanel === "rag" && (

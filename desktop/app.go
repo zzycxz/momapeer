@@ -30,7 +30,6 @@ import (
 	"github.com/zzycxz/momapeer/internal/agent"
 	"github.com/zzycxz/momapeer/internal/boot"
 	"github.com/zzycxz/momapeer/internal/bot"
-	"github.com/zzycxz/momapeer/internal/browserlaunch"
 	"github.com/zzycxz/momapeer/internal/browseruse"
 	"github.com/zzycxz/momapeer/internal/builtinmcp"
 	calendarpkg "github.com/zzycxz/momapeer/internal/calendar"
@@ -127,9 +126,6 @@ type App struct {
 	heService *HEService
 	// buService manages the browser-use Python sidecar (autonomous browsing).
 	buService *BrowserUseService
-	// browserView powers the in-app browser panel: owns a launched browser
-	// handle and streams CDP screencast frames to the frontend.
-	browserView *browserView
 	// expertStore + expertOrchestrator power the 专家团 (expert-team) panel:
 	// multi-model collaboration with persistent team rosters.
 	expertStore        *expertspkg.Store
@@ -315,7 +311,7 @@ func (a *App) workspaceMediaMiddleware() func(http.Handler) http.Handler {
 // NewApp constructs the bound object. Tabs are restored in startup from the
 // last session's desktop-tabs.json.
 func NewApp() *App {
-	return &App{tabs: map[string]*WorkspaceTab{}, mediaTokens: newMediaTokenStore(), botInstalls: map[string]*botInstallSession{}, expertRuns: map[string]*expertRunState{}, browserView: &browserView{}}
+	return &App{tabs: map[string]*WorkspaceTab{}, mediaTokens: newMediaTokenStore(), botInstalls: map[string]*botInstallSession{}, expertRuns: map[string]*expertRunState{}}
 }
 
 func (a *App) bootContext() context.Context {
@@ -531,9 +527,6 @@ func (a *App) initRAG() {
 			return nil
 		}
 		return a.buService.Client()
-	})
-	boot.SetBrowserViewSink(func(ctx context.Context, handle *browserlaunch.Handle) {
-		a.startBrowserViewForHandle(handle)
 	})
 
 	// Try to wire the global RPM budget into the extractor now. restoreOrBuildTabs
@@ -929,11 +922,10 @@ func (a *App) shutdown(context.Context) {
 	if a.heService != nil {
 		a.heService.Stop()
 	}
-	// Stop the browser-use sidecar and tear down the browser-view panel.
+	// Stop the browser-use sidecar so it doesn't leak as an orphan on exit.
 	if a.buService != nil {
 		a.buService.Stop()
 	}
-	a.stopBrowserView()
 	// Save window geometry synchronously from Go so it's persisted even if the
 	// frontend's beforeunload promise hasn't resolved yet.
 	a.saveWindowStateSync()

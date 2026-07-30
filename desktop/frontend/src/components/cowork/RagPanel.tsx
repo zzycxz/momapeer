@@ -119,6 +119,15 @@ export function RagPanel() {
     }
   }, [collections, activeCollection]);
 
+  // Stale-selection cleanup: if the active collection is deleted (no longer in
+  // the list), reset to "" so downstream calls don't run against a dead path.
+  useEffect(() => {
+    if (activeCollection && collections.length > 0) {
+      const stillExists = collections.some((c) => (c.path || c.name) === activeCollection);
+      if (!stillExists) setActiveCollection("");
+    }
+  }, [collections, activeCollection]);
+
 
   // Drag-and-drop import.
   useEffect(() => {

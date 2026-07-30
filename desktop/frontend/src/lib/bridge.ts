@@ -226,9 +226,6 @@ export interface AppBindings {
   SaveExportFile(path: string, payload: string, base64Encoded: boolean): Promise<void>;
   AttachDropped(path: string): Promise<DroppedItem>;
   AttachmentDataURL(path: string): Promise<string>;
-  // StopBrowserAuto cancels the in-flight autonomous-browsing run and tears
-  // down the live browser view. Bound to the browser panel's Stop button.
-  StopBrowserAuto(): Promise<void>;
   Models(): Promise<ModelInfo[]>;
   SetModel(name: string): Promise<void>;
   ModelsForTab(tabID: string): Promise<ModelInfo[]>;
@@ -295,7 +292,6 @@ export interface AppBindings {
   TrustProjectHooks(): Promise<void>;
   TrustProjectHooksForRoot(projectRoot: string): Promise<void>;
   CheckCoworkBrowser(): Promise<string>;
-  BrowserViewRunning(): Promise<boolean>;
   OpenPPTTemplateDir(): Promise<void>;
   SetBotSecret(envName: string, value: string): Promise<void>;
   ClearBotSecret(envName: string): Promise<void>;
@@ -717,32 +713,7 @@ export function onExpertsChanged(cb: () => void): () => void {
   return () => {};
 }
 
-// BrowserViewFrame is one screencast frame pushed from the Go host while the
-// autonomous-browsing agent drives the shared browser. DataURL is a renderable
-// image; the panel draws it on a <canvas>/<img>.
-export interface BrowserViewFrame {
-  dataUrl: string;
-  width?: number;
-  height?: number;
-  url?: string;
-}
 
-// onBrowserViewFrame subscribes to the live browser mirror. Returns an
-// unsubscribe function (or a no-op outside the desktop runtime).
-export function onBrowserViewFrame(cb: (f: BrowserViewFrame) => void): () => void {
-  if (realApp() && typeof window !== "undefined" && window.runtime) {
-    return window.runtime.EventsOn("browser:view:frame", (...data: unknown[]) => {
-      const f = (data?.[0] ?? {}) as Partial<BrowserViewFrame>;
-      cb({
-        dataUrl: f.dataUrl ?? "",
-        width: f.width,
-        height: f.height,
-        url: f.url,
-      });
-    });
-  }
-  return () => {};
-}
 // outside the shell), so a late-injected window.go is picked up transparently.
 export const app: AppBindings = new Proxy({} as AppBindings, {
   get(_t, prop) {
@@ -2507,7 +2478,6 @@ function makeMockApp(): AppBindings {
     async AttachmentDataURL(_path: string) {
       return "data:image/png;base64,iVBORw0KGgo=";
     },
-    async StopBrowserAuto() {},
         async Models() {
           const active = mockTabs.find((tab) => tab.active) ?? mockTabs[0];
           const current = mockTabModelRef(active);
@@ -3456,7 +3426,6 @@ function makeMockApp(): AppBindings {
       }
     },
     async CheckCoworkBrowser() { return "Chrome"; },
-    async BrowserViewRunning() { return false; },
     async OpenPPTTemplateDir() {},
     async ContextPanel(_tabID: string) {
       const now = Date.now();

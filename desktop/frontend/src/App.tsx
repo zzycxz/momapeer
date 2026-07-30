@@ -2656,6 +2656,7 @@ export default function App() {
         running={state.running}
         paused={state.paused}
         collaborationMode={collaborationMode}
+        showKnowledge={coworkActive}
         toolApprovalMode={toolApprovalMode}
         goal={goal}
         cwd={state.meta?.cwd}

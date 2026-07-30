@@ -187,25 +187,64 @@ func (s *BrowserUseService) IsReady() bool {
 	return s.running && s.buAvail
 }
 
-// FindBrowserUseScript locates browseruse_server.py relative to the executable
-// (installed layout) or the cwd (dev layout). Mirrors HE's FindScript.
+// FindBrowserUseScript locates browseruse_server.py. The script lives at the
+// repo root (next to the other Python scripts: hyper_extract_server.py,
+// doc_converter.py). Resolution order:
+//  1. Beside the executable / 1-2 levels up (installed layout: build/bin → root).
+//  2. Up from the executable until a go.mod is found, then check there (handles
+//     `wails dev`, which builds the exe into a system temp dir far from the repo).
+//  3. The current working directory and its parents (go run / dev with cwd set).
 func FindBrowserUseScript() string {
-	exe, err := os.Executable()
-	if err == nil {
+	const name = "browseruse_server.py"
+	// 1. exe-relative candidates (installed build layout).
+	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
-		candidates := []string{
-			filepath.Join(dir, "browseruse_server.py"),
-			filepath.Join(dir, "..", "browseruse_server.py"),
-			filepath.Join(dir, "..", "..", "browseruse_server.py"),
-		}
-		for _, c := range candidates {
+		for _, c := range []string{
+			filepath.Join(dir, name),
+			filepath.Join(dir, "..", name),
+			filepath.Join(dir, "..", "..", name),
+		} {
 			if _, err := os.Stat(c); err == nil {
 				return c
 			}
 		}
+		// 2. Walk up from the exe to the repo root (a dir containing go.mod),
+		//    then look there. This is what makes `wails dev` (exe in %TEMP%)
+		//    find the script at the repo root.
+		if root := findRepoRootFrom(dir); root != "" {
+			if c := filepath.Join(root, name); fileExists(c) {
+				return c
+			}
+		}
 	}
-	if _, err := os.Stat("browseruse_server.py"); err == nil {
-		return "browseruse_server.py"
+	// 3. cwd and its parents (go run from the repo root, or dev shells).
+	cwd, err := os.Getwd()
+	if err == nil {
+		for d := cwd; d != ""; d = parentDir(d) {
+			if c := filepath.Join(d, name); fileExists(c) {
+				return c
+			}
+		}
 	}
 	return ""
+}
+
+// findRepoRootFrom walks up from start until it finds a directory containing
+// go.mod (momapeer's module marker), returning that directory or "".
+func findRepoRootFrom(start string) string {
+	for d := start; d != ""; d = parentDir(d) {
+		if fileExists(filepath.Join(d, "go.mod")) {
+			return d
+		}
+	}
+	return ""
+}
+
+// parentDir returns the parent of dir, or "" at the filesystem root.
+func parentDir(dir string) string {
+	p := filepath.Dir(dir)
+	if p == dir {
+		return ""
+	}
+	return p
 }

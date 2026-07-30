@@ -31,9 +31,16 @@ export function ImportModal({
   if (!isOpen) return null;
 
   const handleExecuteImport = async () => {
+    // A specific collection is REQUIRED — "全部/default" is a view scope, not
+    // an import target. The import button is disabled when empty, but defend
+    // in depth here too.
+    const chosenCollection = targetCollection.trim();
+    if (!chosenCollection) {
+      showToast("请先选择一个目标分类（不能导入到“全部”）", "error");
+      return;
+    }
     try {
       setLoading(true);
-      const chosenCollection = targetCollection.trim() || "默认分类";
 
       let paths: string[] = [];
       if (importType === "folder") {
@@ -84,15 +91,18 @@ export function ImportModal({
   }
 
   const collectionOptions = [
-    { value: "", label: "默认分类 (全部)", icon: <Folder size={13} style={{ color: "var(--accent)" }} /> },
     ...presetOptions,
-    ...collections.map((c) => ({
-      value: c.path || c.name,
-      label: c.name,
-      subtitle: c.documents > 0 ? `${c.documents} 篇` : undefined,
-      indent: !!c.parent,
-      icon: <Folder size={13} />,
-    })),
+    ...collections
+      // Exclude "default" — it's a view scope (全部), not an import target.
+      // Files must go into a real named collection (工作/管理办法, 个人/读书, …).
+      .filter((c) => (c.path || c.name) !== "default")
+      .map((c) => ({
+        value: c.path || c.name,
+        label: c.name,
+        subtitle: c.documents > 0 ? `${c.documents} 篇` : undefined,
+        indent: !!c.parent,
+        icon: <Folder size={13} />,
+      })),
   ];
 
   return (
@@ -175,7 +185,10 @@ export function ImportModal({
 
           {/* 导入目标层级指定 (Target Collection) */}
           <div className="rag-create-modal__section" style={{ gap: 8 }}>
-            <label className="rag-create-modal__label" style={{ fontWeight: 600, fontSize: 12, color: "var(--fg)" }}>导入至分类层级</label>
+            <label className="rag-create-modal__label" style={{ fontWeight: 600, fontSize: 12, color: "var(--fg)" }}>
+              导入至分类层级
+              <span style={{ fontWeight: 400, fontSize: 11, color: "var(--fg-faint)", marginLeft: 6 }}>（必选，不能导入到“全部”）</span>
+            </label>
             <CustomSelect
               value={targetCollection}
               onChange={setTargetCollection}
@@ -252,7 +265,7 @@ export function ImportModal({
             type="button"
             className="btn btn--small btn--primary"
             onClick={() => void handleExecuteImport()}
-            disabled={loading}
+            disabled={loading || !targetCollection.trim()}
             style={{ padding: "6px 16px", fontSize: 12, fontWeight: 500, display: "inline-flex", alignItems: "center", gap: 6 }}
           >
             <FolderUp size={14} />

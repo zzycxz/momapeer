@@ -38,17 +38,6 @@ func SetBrowserUseClientProvider(fn func() *browseruse.Client) {
 	browserUseClientProvider = fn
 }
 
-// browserViewSink mirrors a launched browser to the in-app panel. Set by the
-// desktop; nil in headless/CLI mode (no panel), in which case browser_auto
-// still works — just without the live visual mirror.
-var browserViewSink func(ctx context.Context, handle *browserlaunch.Handle)
-
-// SetBrowserViewSink injects the desktop's panel-attach hook. Called once at
-// desktop startup.
-func SetBrowserViewSink(fn func(ctx context.Context, handle *browserlaunch.Handle)) {
-	browserViewSink = fn
-}
-
 // buildBrowserAutoRuntime constructs the runtime closure the browser_auto tool
 // calls. It resolves the sidecar client + browser-launch at call time (not
 // build time) so a runtime that was built before the sidecar came up still
@@ -115,11 +104,15 @@ func runBrowserAuto(ctx context.Context, cfg *config.Config, req builtin.Browser
 	}
 
 	// Launch the shared browser. A fresh temp profile per run keeps sessions
-	// isolated (no cross-task cookie bleed); headless follows config so a panel
-	// mirror can avoid a second visible window.
+	// isolated (no cross-task cookie bleed) unless the user configured a
+	// persistent BrowserUserDataDir (to keep login state). The proxy routes the
+	// browser through the user's network config so the agent reaches the same
+	// sites momapeer's other traffic does (e.g. a CN proxy for GitHub).
 	handle, err := browserlaunch.Launch(ctx, browserlaunch.LaunchOptions{
-		Headless: cfg.Cowork.BrowserHeadless,
-		StartURL: req.URL,
+		Headless:    cfg.Cowork.BrowserHeadless,
+		UserDataDir: cfg.Cowork.BrowserUserDataDir,
+		Proxy:       resolveBrowserProxyURL(cfg.NetworkProxySpec()),
+		StartURL:    req.URL,
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("launch browser: %w", err)
@@ -128,14 +121,12 @@ func runBrowserAuto(ctx context.Context, cfg *config.Config, req builtin.Browser
 	slog.Info("browser_auto: launched shared browser",
 		"name", handle.BrowserName, "cdp", handle.CDPURL, "ws", handle.WSURL)
 
-	// Mirror to the in-app panel if a sink is registered.
-	if browserViewSink != nil {
-		browserViewSink(ctx, handle)
-	}
-
 	// Drive the sidecar. The cdp_url we hand it points at the browser we just
 	// launched, so there is exactly one shared instance. The model/base_url/key
-	// come from the resolved provider entry above.
+	// come from the resolved provider entry above. The proxy applies to the
+	// sidecar's LLM client (the browser got its own --proxy-server at launch) so
+	// LLM calls reach the gateway through the user's network config too.
+	llmProxy := resolveBrowserProxyURL(cfg.NetworkProxySpec())
 	stream, err := client.RunStream(ctx, browseruse.RunRequest{
 		Goal:         req.Goal,
 		URL:          req.URL,
@@ -145,11 +136,28 @@ func runBrowserAuto(ctx context.Context, cfg *config.Config, req builtin.Browser
 		ProviderKind: providerKind,
 		BaseURL:      baseURL,
 		APIKeyEnv:    apiKeyEnv,
-		Proxy:        req.Proxy,
+		Proxy:        llmProxy,
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("sidecar /run: %w", err)
 	}
+
+	// If the turn is cancelled (user clicked Stop, or the parent turn ended),
+	// tell the sidecar to /stop so the agent loop breaks at its next step hook.
+	// Without this the Python loop keeps running (billing LLM tokens, holding the
+	// single-run lock) until the deferred handle.Close() kills the browser out
+	// from under it — an orphaned run that also starves later calls with HTTP 409.
+	// We use a detached context for the Stop call so it can complete even after
+	// the turn ctx is gone.
+	stopCtx, stopCancel := context.WithCancel(context.Background())
+	defer stopCancel()
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = client.Stop(stopCtx)
+		case <-stopCtx.Done():
+		}
+	}()
 
 	var steps []builtin.BrowserAutoStep
 	var summary string

@@ -85,9 +85,6 @@ type Handle struct {
 	// exitErr holds the process exit error (nil for a clean exit).
 	exitErr error
 
-	// screencastMu guards sc (the optional live screencast session).
-	screencastMu sync.Mutex
-	sc           *screencastSession
 	// stderr captures the browser's stderr for diagnostics on launch failure.
 	stderr *lineBuffer
 }
@@ -105,6 +102,12 @@ type LaunchOptions struct {
 	// is the primary view, headless avoids a second visible window stealing
 	// focus; for local debugging set false to watch the real window.
 	Headless bool
+	// Proxy is the --proxy-server value (e.g. "http://127.0.0.1:7890"). Empty =
+	// no proxy (direct). The driven browser should reach the network the same way
+	// momapeer's other traffic does, so this mirrors the chromedp browser_* tools
+	// (see boot.go resolveBrowserProxyURL). Authenticated proxies (user:pass@)
+	// are NOT supported by --proxy-server; the caller must strip credentials.
+	Proxy string
 	// ExtraArgs are appended to the Chrome command line after the defaults.
 	ExtraArgs []string
 	// StartURL, if non-empty, is opened as the initial page.
@@ -292,9 +295,6 @@ func (h *Handle) killAndCleanup(ownTempDir bool) {
 // guards against with its wait_or_kill). The temp profile is only deleted when
 // Launch created it (ownTempDir); a user-supplied persistent dir is left intact.
 func (h *Handle) Close() error {
-	// Stop any screencast first so the chromedp listener goroutine exits before
-	// we tear down the process (otherwise it races on a dead websocket).
-	h.StopScreencast()
 	h.cancel()
 
 	if h.cmd != nil && h.cmd.Process != nil {
@@ -360,6 +360,13 @@ func buildChromeArgs(port int, userDataDir string, opts LaunchOptions) []string 
 		// Disable the "Chrome is being controlled by automated software" banner
 		// and reduce obvious automation fingerprints without full stealth.
 		"--disable-features=Translate",
+	}
+	if opts.Proxy != "" {
+		// Route the browser through the user's configured proxy so the agent
+		// reaches the same sites momapeer's other traffic does (e.g. a CN proxy
+		// for GitHub). --proxy-server takes a scheme://host:port URL; auth is not
+		// supported here (caller strips credentials).
+		args = append(args, "--proxy-server="+opts.Proxy)
 	}
 	if opts.Headless {
 		args = append(args, "--headless=new")

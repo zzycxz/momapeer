@@ -13,9 +13,11 @@ import { ANCHORED_POPOVER_CLOSE_MS, AnchoredPopover } from "./AnchoredPopover";
 // collections (path "工作/领导材料") are indented by their parent presence.
 export function KnowledgeSwitcher({
   scope,
+  disabled = false,
   onPick,
 }: {
   scope: string;
+  disabled?: boolean;
   onPick: (scope: string) => void;
 }) {
   const t = useT();
@@ -79,16 +81,21 @@ export function KnowledgeSwitcher({
   };
 
   // Display label: the selected collection's leaf name, or "知识库" when off.
+  // Display label: the selected collection's leaf name, or "知识库" when off.
+  // Fall back to a client-side leaf split when collections haven't loaded yet
+  // (lazy load fires on first menu open) so the trigger never shows the raw
+  // full path like "工作/管理办法" before the server data arrives.
   const label =
     scope === ""
       ? t("composer.knowledgeBase")
-      : collections.find((c) => c.path === scope)?.name ?? scope;
+      : collections.find((c) => c.path === scope)?.name ?? scope.split("/").pop() ?? scope;
 
   return (
     <div className="modelsw kbsw">
       <button
         ref={triggerRef}
         type="button"
+        disabled={disabled}
         className={`modelsw__trigger kbsw__trigger ${scope !== "" ? "kbsw__trigger--explicit" : ""}`}
         aria-expanded={open && !closing}
         onClick={() => (open || closing ? closeMenu() : openMenu())}
@@ -98,7 +105,7 @@ export function KnowledgeSwitcher({
         <ChevronsUpDown size={11} />
       </button>
       <AnchoredPopover
-        open={open}
+        open={open && !disabled}
         closing={closing}
         anchorRef={triggerRef}
         onClose={() => closeMenu()}
@@ -136,7 +143,7 @@ export function KnowledgeSwitcher({
                 }`}
                 onClick={() => pick(c.path || c.name)}
               >
-                <span className="modelsw__copy">
+                <span className="modelsw__copy kbsw__copy">
                   <span className="modelsw__model">{c.name}</span>
                   {c.documents > 0 && (
                     <span className="modelsw__provider" title={`${c.documents}`}>

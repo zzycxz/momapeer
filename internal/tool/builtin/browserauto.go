@@ -31,13 +31,12 @@ type BrowserAutoStep struct {
 }
 
 // BrowserAutoRunRequest is the goal-oriented request the runtime executes.
+// The LLM model/base_url/proxy are resolved from config inside the runtime
+// (runBrowserAuto), NOT carried here — this struct only holds the per-call goal.
 type BrowserAutoRunRequest struct {
 	Goal     string
 	URL      string
 	MaxSteps int
-	Model    string
-	BaseURL  string
-	Proxy    string
 }
 
 // BrowserAutoRuntime is the injected dependency. Each field is a function the

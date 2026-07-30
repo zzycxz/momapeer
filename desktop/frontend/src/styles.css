@@ -5230,6 +5230,17 @@ a[href] {
 .kbsw__item--nested .modelsw__model {
   padding-left: 12px;
 }
+/* Override modelsw__copy's column layout: KB rows show name + doc count on a
+   single horizontal line (name left, count right), not stacked vertically. */
+.kbsw__copy {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.kbsw__copy .modelsw__provider {
+  flex-shrink: 0;
+}
 
 /* ── approval modal ──────────────────────────────────────────────────────── */
 .modal-backdrop {
