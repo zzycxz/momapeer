@@ -207,11 +207,19 @@ func (h *hotkeyManager) onHotkey() {
 
 		// 3. Reply via IM bot (if configured) + toast.
 		h.app.emitScreenshotNotice(result, "")
-		// IM push is best-effort — the bot gateway may not be running yet.
+		// IM push is best-effort — the bot gateway may not be running yet. Pick
+		// a real destination (a connected feishu/weixin conversation) instead of
+		// a hard-coded "feishu:default", which never delivers.
 		if gw := h.app.botGW.Load(); gw != nil {
-			pushCtx, pushCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			_ = gw.Push(pushCtx, "feishu:default", "📸 截图识别结果：\n\n"+result)
-			pushCancel()
+			if dest := h.app.screenshotPushDest(); dest != "" {
+				pushCtx, pushCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				if err := gw.Push(pushCtx, dest, "📸 截图识别结果：\n\n"+result); err != nil {
+					slog.Warn("screenshot: IM push failed", "dest", dest, "err", err)
+				}
+				pushCancel()
+			} else {
+				slog.Debug("screenshot: no connected feishu/weixin conversation to push to; skipping IM push")
+			}
 		}
 	}()
 }

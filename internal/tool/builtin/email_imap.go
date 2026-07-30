@@ -723,7 +723,8 @@ func (emailReadTool) Schema() json.RawMessage {
   "account":{"type":"string","description":"邮箱账号名（[[cowork.email_accounts]] 的 name），留空=默认账号"},
   "since":{"type":"string","description":"只读这个日期之后的邮件；绝对日期 2026-06-01 或相对 7d/1w/1m（近N天/周/月）"},
   "before":{"type":"string","description":"只读这个日期之前的邮件；格式同 since"},
-  "save_attachments":{"type":"string","description":"附件下载目录（绝对路径）；留空=只列出附件名不下载"}
+  "save_attachments":{"type":"string","description":"附件下载目录（绝对路径）；留空=只列出附件名不下载"},
+  "mailbox":{"type":"string","description":"要读取的邮箱文件夹，留空=INBOX 收件箱；填 IMAP 标准名如 Sent（已发送）、Drafts（草稿）、Trash（已删除）、Junk（垃圾邮件）等"}
 },
 "required":[]
 }`)
@@ -806,7 +807,8 @@ func (emailSearchTool) Schema() json.RawMessage {
   "limit":{"type":"integer","description":"Max results (default 10)"},
   "account":{"type":"string","description":"邮箱账号名（[[cowork.email_accounts]] 的 name），留空=默认账号"},
   "since":{"type":"string","description":"只搜这个日期之后的邮件；绝对日期 2026-06-01 或相对 7d/1w/1m"},
-  "before":{"type":"string","description":"只搜这个日期之前的邮件；格式同 since"}
+  "before":{"type":"string","description":"只搜这个日期之前的邮件；格式同 since"},
+  "mailbox":{"type":"string","description":"要搜索的邮箱文件夹，留空=INBOX 收件箱；填 IMAP 标准名如 Sent（已发送）、Drafts（草稿）、Trash（已删除）、Junk（垃圾邮件）等"}
 },
 "required":[]
 }`)

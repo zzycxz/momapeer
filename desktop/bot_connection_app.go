@@ -435,6 +435,33 @@ func firstSessionRemoteID(mappings []config.BotConnectionSessionMapping) string 
 	return ""
 }
 
+// screenshotPushDest picks the best "platform:remoteID" push destination for a
+// screenshot-recognition result. It prefers a connected feishu or weixin
+// connection (qq can't be proactively messaged from the desktop) that has a
+// known conversation (a remembered SessionMappings remoteID), so the result
+// lands where the user actually talks to the bot. Returns "" when nothing
+// suitable is configured — callers should then skip the push (best-effort)
+// rather than fall back to a hard-coded "feishu:default" which never delivers
+// (the literal "default" is not a valid chatID).
+func (a *App) screenshotPushDest() string {
+	cfg, err := config.Load()
+	if err != nil {
+		return ""
+	}
+	for _, conn := range cfg.Bot.Connections {
+		if !conn.Enabled || conn.Status != "connected" {
+			continue
+		}
+		if conn.Provider != "feishu" && conn.Provider != "weixin" {
+			continue // qq etc. don't support desktop-initiated sends
+		}
+		if remote := firstSessionRemoteID(conn.SessionMappings); remote != "" {
+			return conn.Provider + ":" + remote
+		}
+	}
+	return ""
+}
+
 func (a *App) deleteBotInstall(installID string) {
 	a.mu.Lock()
 	delete(a.botInstalls, installID)
