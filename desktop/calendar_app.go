@@ -35,10 +35,10 @@ type CalendarEventView struct {
 	TaskID        string   `json:"taskId"`
 	Tags          []string `json:"tags"`
 	// Output routing for reminders (mirrors Event). Empty outputMode = toast only.
-	OutputMode    string   `json:"outputMode"`
-	OutputDest    string   `json:"outputDest"`
-	OutputAccount string   `json:"outputAccount"`
-	CreatedAt     string   `json:"createdAt"`
+	OutputMode    string `json:"outputMode"`
+	OutputDest    string `json:"outputDest"`
+	OutputAccount string `json:"outputAccount"`
+	CreatedAt     string `json:"createdAt"`
 }
 
 // CalendarEventInput is the create/update payload from the UI.
@@ -196,18 +196,18 @@ func (a *App) CreateCalendarEvent(in CalendarEventInput) (CalendarEventView, err
 	}
 
 	e := &calendar.Event{
-		Title:       in.Title,
-		Description: in.Description,
-		Location:    in.Location,
-		StartTime:   start,
-		EndTime:     end,
-		AllDay:      in.AllDay,
-		Timezone:    tz,
-		Color:       in.Color,
-		Source:      "manual",
-		Recurrence:  in.Recurrence,
-		Reminders:   in.Reminders,
-		Tags:        in.Tags,
+		Title:         in.Title,
+		Description:   in.Description,
+		Location:      in.Location,
+		StartTime:     start,
+		EndTime:       end,
+		AllDay:        in.AllDay,
+		Timezone:      tz,
+		Color:         in.Color,
+		Source:        "manual",
+		Recurrence:    in.Recurrence,
+		Reminders:     in.Reminders,
+		Tags:          in.Tags,
 		OutputMode:    in.OutputMode,
 		OutputDest:    in.OutputDest,
 		OutputAccount: in.OutputAccount,
@@ -322,25 +322,25 @@ func (a *App) SearchCalendarEvents(q string, limit int) []CalendarEventView {
 
 func eventToView(e calendar.Event) CalendarEventView {
 	v := CalendarEventView{
-		ID:          e.ID,
-		Title:       e.Title,
-		Description: e.Description,
-		Location:    e.Location,
-		Start:       e.StartTime.In(time.Local).Format(calTimeFmt),
-		End:         e.EndTime.In(time.Local).Format(calTimeFmt),
-		AllDay:      e.AllDay,
-		Timezone:    e.Timezone,
-		Color:       e.Color,
-		Status:      e.Status,
-		Source:      e.Source,
-		Recurrence:  e.Recurrence,
-		Reminders:   e.Reminders,
-		TaskID:      e.TaskID,
-		Tags:        e.Tags,
+		ID:            e.ID,
+		Title:         e.Title,
+		Description:   e.Description,
+		Location:      e.Location,
+		Start:         e.StartTime.In(time.Local).Format(calTimeFmt),
+		End:           e.EndTime.In(time.Local).Format(calTimeFmt),
+		AllDay:        e.AllDay,
+		Timezone:      e.Timezone,
+		Color:         e.Color,
+		Status:        e.Status,
+		Source:        e.Source,
+		Recurrence:    e.Recurrence,
+		Reminders:     e.Reminders,
+		TaskID:        e.TaskID,
+		Tags:          e.Tags,
 		OutputMode:    e.OutputMode,
 		OutputDest:    e.OutputDest,
 		OutputAccount: e.OutputAccount,
-		CreatedAt:   e.CreatedAt.Format("2006-01-02 15:04"),
+		CreatedAt:     e.CreatedAt.Format("2006-01-02 15:04"),
 	}
 	if !e.RecurrenceEnd.IsZero() {
 		v.RecurrenceEnd = e.RecurrenceEnd.Format("2006-01-02")

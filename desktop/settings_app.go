@@ -389,8 +389,8 @@ func (a *App) Settings() SettingsView {
 				Password: cfg.Network.Proxy.Password,
 			},
 		},
-		Agent:  AgentView{Temperature: cfg.Agent.Temperature, MaxSteps: cfg.Agent.MaxSteps, PlannerMaxSteps: cfg.Agent.PlannerMaxSteps, SystemPrompt: cfg.Agent.SystemPrompt, RPM: cfg.LLM.RPM},
-		Bot:    botSettingsView(cfg.Bot),
+		Agent: AgentView{Temperature: cfg.Agent.Temperature, MaxSteps: cfg.Agent.MaxSteps, PlannerMaxSteps: cfg.Agent.PlannerMaxSteps, SystemPrompt: cfg.Agent.SystemPrompt, RPM: cfg.LLM.RPM},
+		Bot:   botSettingsView(cfg.Bot),
 		Cowork: func() CoWorkSettingsView {
 			cv := coworkSettingsView(cfg.Cowork)
 			// Reflect whether email_send is in permissions.Allow (the headless

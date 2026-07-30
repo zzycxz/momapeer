@@ -234,4 +234,3 @@ func TestCoworkSessionHistoryPersistenceAndDeletion(t *testing.T) {
 		t.Fatalf("OpenProjectTab3 cowork failed: %v", err)
 	}
 }
-

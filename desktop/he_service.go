@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zzycxz/momapeer/internal/rag"
 	"github.com/zzycxz/momapeer/internal/proc"
+	"github.com/zzycxz/momapeer/internal/rag"
 )
 
 const (

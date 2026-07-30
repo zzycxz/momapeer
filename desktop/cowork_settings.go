@@ -77,12 +77,12 @@ type CoWorkSettingsView struct {
 // write-only (Password holds a freshly-typed value on save; the stored secret
 // is never echoed back). PasswordSet reports whether a secret is stored.
 type EmailAccountView struct {
-	Name          string      `json:"name"`          // stable handle tools/scheduler address
-	Default       bool        `json:"default"`       // exactly one should be true
-	SMTP          SMTPSettings `json:"smtp"`
-	IMAP          IMAPSettings `json:"imap"`
-	Password      string      `json:"password"`      // SMTP/IMAP share one password (write-only)
-	PasswordSet   bool        `json:"passwordSet"`   // reports stored secret presence
+	Name        string       `json:"name"`    // stable handle tools/scheduler address
+	Default     bool         `json:"default"` // exactly one should be true
+	SMTP        SMTPSettings `json:"smtp"`
+	IMAP        IMAPSettings `json:"imap"`
+	Password    string       `json:"password"`    // SMTP/IMAP share one password (write-only)
+	PasswordSet bool         `json:"passwordSet"` // reports stored secret presence
 }
 
 // SMTPSettings mirrors config.SMTPConfig minus the password (which lives in

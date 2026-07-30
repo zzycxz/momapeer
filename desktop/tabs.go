@@ -2970,7 +2970,7 @@ func (a *App) ListProjectTree(profile string) []ProjectNode {
 		}
 		status.status = mergeTopicStatus(status.status, activityStatusForTab(tab))
 		openTopics[key] = status
-		
+
 		summary := topicSummaries[key]
 		if summary.profile == "" && tab.profile != "" {
 			summary.profile = tab.profile

@@ -26,26 +26,26 @@ import (
 
 // TaskView is the JSON-friendly projection of scheduler.ScheduledTask for the UI.
 type TaskView struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Expression    string `json:"expression"`
-	Prompt        string `json:"prompt"`
-	Profile       string `json:"profile"`
-	Enabled       bool   `json:"enabled"`
-	OneShot       bool   `json:"oneShot"`
-	LastRun       string `json:"lastRun"` // "" if never
-	NextRun       string `json:"nextRun"` // "" if paused / one-shot fired
-	RunCount      int    `json:"runCount"`
-	LastResult    string `json:"lastResult"`
-	OutputMode    string `json:"outputMode"`
-	OutputDest    string `json:"outputDest"`
-	OutputAccount string `json:"outputAccount"` // named mailbox for "email" mode; "" = default
-	OutputDir     string `json:"outputDir"`
-	Color         string `json:"color"`
-	Location      string `json:"location"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Expression     string `json:"expression"`
+	Prompt         string `json:"prompt"`
+	Profile        string `json:"profile"`
+	Enabled        bool   `json:"enabled"`
+	OneShot        bool   `json:"oneShot"`
+	LastRun        string `json:"lastRun"` // "" if never
+	NextRun        string `json:"nextRun"` // "" if paused / one-shot fired
+	RunCount       int    `json:"runCount"`
+	LastResult     string `json:"lastResult"`
+	OutputMode     string `json:"outputMode"`
+	OutputDest     string `json:"outputDest"`
+	OutputAccount  string `json:"outputAccount"` // named mailbox for "email" mode; "" = default
+	OutputDir      string `json:"outputDir"`
+	Color          string `json:"color"`
+	Location       string `json:"location"`
 	LastDeliverErr string `json:"lastDeliverErr"` // "" if last delivery was ok / skipped
-	LastDeliverAt string `json:"lastDeliverAt"`   // "" if never delivered
-	HumanSchedule string `json:"humanSchedule"` // friendly description, e.g. "每天 18:00"
+	LastDeliverAt  string `json:"lastDeliverAt"`  // "" if never delivered
+	HumanSchedule  string `json:"humanSchedule"`  // friendly description, e.g. "每天 18:00"
 }
 
 // RunRecordView is the JSON-friendly projection of scheduler.RunRecord.
@@ -84,16 +84,16 @@ type SchedulePreview struct {
 
 // TaskInput is the create/update payload from the UI. Empty ID = create new.
 type TaskInput struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Expression string `json:"expression"`
-	Prompt     string `json:"prompt"`
-	OutputMode string `json:"outputMode"`
-	OutputDest string `json:"outputDest"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Expression    string `json:"expression"`
+	Prompt        string `json:"prompt"`
+	OutputMode    string `json:"outputMode"`
+	OutputDest    string `json:"outputDest"`
 	OutputAccount string `json:"outputAccount"`
-	OutputDir  string `json:"outputDir"`
-	Color      string `json:"color"`
-	Location   string `json:"location"`
+	OutputDir     string `json:"outputDir"`
+	Color         string `json:"color"`
+	Location      string `json:"location"`
 }
 
 const (
