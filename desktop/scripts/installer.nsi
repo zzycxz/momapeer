@@ -31,6 +31,10 @@ RequestExecutionLevel user
 !insertmacro MUI_LANGUAGE "English"
 
 Section "Install"
+  ; 强制关闭可能正在后台运行的 MoMAPeer 进程，防止文件占用报错
+  nsExec::ExecToStack 'taskkill /F /IM "${APP_EXE}"'
+  Sleep 1000 ; 等待进程彻底释放文件锁
+
   SetOutPath "$INSTDIR"
 
   ; Main executable
