@@ -36,6 +36,10 @@ Section "Install"
   ; Main executable
   File "..\build\bin\${APP_EXE}"
 
+  ; Bundle built-in skills and configs to user profile
+  SetOutPath "$PROFILE\.momapeer"
+  File /r "..\..\.momapeer\*.*"
+
   ; Create uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
