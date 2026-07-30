@@ -319,6 +319,10 @@ export const en = {
 
   // composer
   "composer.placeholder": "Message momapeer…  ( / commands · @ files · ! shell )",
+  "composer.knowledgeBase": "Knowledge",
+  "composer.knowledgeNone": "Off",
+  "composer.knowledgeEmpty": "No knowledge-base collections yet — import docs in the office view",
+  "composer.knowledgeDocCount": "{count} docs",
   "composer.normalMode": "chat mode",
   "composer.normalModeDesc": "Answer or work directly.",
   "composer.planMode": "plan mode",

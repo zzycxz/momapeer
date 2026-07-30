@@ -319,6 +319,10 @@ export const zh: Record<DictKey, string> = {
 
   // 输入框
   "composer.placeholder": "给 momapeer 发消息…  ( / 命令 · @ 文件 · ! 终端 )",
+  "composer.knowledgeBase": "知识库",
+  "composer.knowledgeNone": "不使用",
+  "composer.knowledgeEmpty": "尚无知识库分类，请在办公界面导入资料",
+  "composer.knowledgeDocCount": "{count} 篇",
   "composer.normalMode": "对话模式",
   "composer.normalModeDesc": "直接对话或执行任务。",
   "composer.planMode": "计划模式",

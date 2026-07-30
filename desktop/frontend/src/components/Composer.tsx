@@ -20,6 +20,7 @@ import { ArgMenu } from "./ArgMenu";
 import { VirtualMenu } from "./VirtualMenu";
 import { ANCHORED_POPOVER_CLOSE_MS, AnchoredPopover } from "./AnchoredPopover";
 import { EffortSwitcher } from "./EffortSwitcher";
+import { KnowledgeSwitcher } from "./KnowledgeSwitcher";
 import { ModelSwitcher } from "./ModelSwitcher";
 import { Tooltip } from "./Tooltip";
 
@@ -338,6 +339,8 @@ export function Composer({
   onClearGoal,
   onSwitchModel,
   onSetEffort,
+  ragScope,
+  onPickRagScope,
   insertRequest,
   onInsertComplete,
   disabled,
@@ -374,6 +377,8 @@ export function Composer({
   onClearGoal: () => void;
   onSwitchModel: (name: string) => void;
   onSetEffort: (level: string) => void;
+  ragScope: string;
+  onPickRagScope: (scope: string) => void;
   insertRequest?: ComposerInsertRequest | null;
   onInsertComplete?: () => void;
   disabled?: boolean;
@@ -2041,6 +2046,9 @@ export function Composer({
                 <EffortSwitcher effort={effort} disabled={running} onPick={onSetEffort} />
               </div>
             )}
+            <div className="composer-meta__control composer-meta__control--kb">
+              <KnowledgeSwitcher scope={ragScope} onPick={onPickRagScope} />
+            </div>
             {hasEffort && (
               <div className="composer-meta__control composer-meta__control--more">
                 <Tooltip label={t("composer.moreControls")} disabled={moreMenuOpen || moreMenuClosing}>

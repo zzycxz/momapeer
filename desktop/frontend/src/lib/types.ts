@@ -156,6 +156,8 @@ export interface TabMeta {
   mode: Mode;
   collaborationMode?: CollaborationMode;
   toolApprovalMode?: ToolApprovalMode;
+  // Knowledge-base collection to auto-inject ("ragScope"); "" = 不使用 (default).
+  ragScope?: string;
   goal?: string;
   goalStatus?: GoalStatus;
   startupErr?: string;
@@ -319,6 +321,8 @@ export interface Meta {
   autoApproveTools?: boolean;
   bypass?: boolean; // legacy JSON key for YOLO/full-access tool auto-approval
   toolApprovalMode?: ToolApprovalMode;
+  // Knowledge-base collection to auto-inject ("ragScope"); "" = 不使用 (default).
+  ragScope?: string;
   goal?: string;
   goalStatus?: GoalStatus;
   expertSession?: ExpertSessionMeta;

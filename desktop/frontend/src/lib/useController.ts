@@ -875,6 +875,14 @@ export function useController(getProfile?: () => string) {
     await refreshMetaForTab(activeTabId, dispatchTo);
   }, [activeTabId, dispatchTo]);
 
+  // setRagScope picks the knowledge-base collection for auto-injection (""
+  // = 不使用 / off, the default). Per-tab, persisted on the backend.
+  const setRagScope = useCallback(async (scope: string): Promise<void> => {
+    if (!activeTabId) return;
+    await app.SetRagScopeForTab(activeTabId, scope).catch(() => {});
+    await refreshMetaForTab(activeTabId, dispatchTo);
+  }, [activeTabId, dispatchTo]);
+
   const clearGoal = useCallback(async (): Promise<void> => {
     if (!activeTabId) return;
     await app.ClearGoalForTab(activeTabId).catch(() => {});
@@ -1082,7 +1090,7 @@ export function useController(getProfile?: () => string) {
   return {
     state: activeState,
     activeTabId,
-    send, runShell, steer, notice, cancel, pauseToggle, approve, answerQuestion, setCollaborationMode, setToolApprovalMode, setGoal, clearGoal,
+    send, runShell, steer, notice, cancel, pauseToggle, approve, answerQuestion, setCollaborationMode, setToolApprovalMode, setGoal, clearGoal, setRagScope,
     newSession, clearSession, listSessions, listTrashedSessions, resumeSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession,
     refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, deleteExpertCollab, setModel, setEffort,
     fetchMemory, remember, forget, saveDoc,

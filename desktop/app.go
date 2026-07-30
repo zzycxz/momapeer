@@ -566,7 +566,10 @@ type schedulerIMPusher struct{ app *App }
 func (p schedulerIMPusher) Push(ctx context.Context, dest, text string) error {
 	gw := p.app.botGW.Load()
 	if gw == nil {
-		return nil // bot not running — silent skip
+		// Signal "offline" so the scheduler records a skipped delivery with a
+		// clear reason, rather than silently reporting success. The user then
+		// sees "bot 未启动" and knows to start the bot.
+		return schedulerpkg.ErrIMOffline
 	}
 	return gw.Push(ctx, dest, text)
 }
@@ -795,6 +798,7 @@ func (a *App) restoreOrBuildTabs() {
 			if tab.toolApprovalMode == control.ToolApprovalAsk && tabModeHasAutoApproveTools(entry.Mode) {
 				tab.toolApprovalMode = control.ToolApprovalYolo
 			}
+			tab.ragScope = strings.TrimSpace(entry.RagScope)
 			tab.profile = strings.TrimSpace(entry.Profile)
 			tab.SessionPath = strings.TrimSpace(entry.SessionPath)
 			tab.IsExpertSession = entry.IsExpertSession
@@ -1186,6 +1190,15 @@ func applyTabToolApprovalModeToController(ctrl *control.Controller, mode string)
 		return
 	}
 	ctrl.SetToolApprovalMode(normalizeToolApprovalMode(mode))
+}
+
+// applyTabRagScopeToController pushes the tab's knowledge-base auto-injection
+// scope onto a (re)built controller. Mirrors applyTabToolApprovalModeToController.
+func applyTabRagScopeToController(ctrl *control.Controller, scope string) {
+	if ctrl == nil {
+		return
+	}
+	ctrl.SetRAGScope(scope)
 }
 
 func (a *App) currentModeForTab(tabID string) string {
@@ -2487,6 +2500,35 @@ func (a *App) SetToolApprovalModeForTab(tabID, mode string) {
 	tabIDForSave := tab.ID
 	a.mu.Unlock()
 	applyTabToolApprovalModeToController(ctrl, mode)
+	a.mu.Lock()
+	if a.tabs[tabIDForSave] == tab {
+		a.saveTabsLocked()
+	}
+	a.mu.Unlock()
+}
+
+// SetRagScope sets the knowledge-base auto-injection scope for the active tab
+// ("" = 不使用, the default). Wired from the Composer "知识库" dropdown.
+func (a *App) SetRagScope(scope string) {
+	a.SetRagScopeForTab("", scope)
+}
+
+// SetRagScopeForTab sets the knowledge-base auto-injection scope for a tab,
+// applies it to the live controller, and persists the selection. Mirrors
+// SetToolApprovalModeForTab.
+func (a *App) SetRagScopeForTab(tabID, scope string) {
+	scope = strings.TrimSpace(scope)
+	a.mu.Lock()
+	tab := a.tabByIDLocked(tabID)
+	if tab == nil {
+		a.mu.Unlock()
+		return
+	}
+	tab.ragScope = scope
+	ctrl := tab.Ctrl
+	tabIDForSave := tab.ID
+	a.mu.Unlock()
+	applyTabRagScopeToController(ctrl, scope)
 	a.mu.Lock()
 	if a.tabs[tabIDForSave] == tab {
 		a.saveTabsLocked()
@@ -4202,6 +4244,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	newCtrl.EnableInteractiveApproval()
 	applyTabModeToController(newCtrl, tab.mode)
 	applyTabToolApprovalModeToController(newCtrl, tab.toolApprovalMode)
+	applyTabRagScopeToController(newCtrl, tab.ragScope)
 	newCtrl.SetGoal(tab.goal)
 
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
@@ -4422,10 +4465,12 @@ func (a *App) SwitchProfileForTab(tabID, name string) error {
 	snapTopicTitle := tab.TopicTitle
 	snapMode := tab.mode
 	snapToolApprovalMode := tab.toolApprovalMode
+	snapRagScope := tab.ragScope
 	a.mu.Unlock()
 	newCtrl.EnableInteractiveApproval()
 	applyTabModeToController(newCtrl, snapMode)
 	applyTabToolApprovalModeToController(newCtrl, snapToolApprovalMode)
+	applyTabRagScopeToController(newCtrl, snapRagScope)
 	// Hard isolation extends to the goal: a dev goal (e.g. "refactor auth.go")
 	// must NOT carry into the cowork controller, because Compose would inject it
 	// as an <active-goal> block on every cowork turn. The goal lives with the
@@ -4569,6 +4614,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	newCtrl.EnableInteractiveApproval()
 	applyTabModeToController(newCtrl, tab.mode)
 	applyTabToolApprovalModeToController(newCtrl, tab.toolApprovalMode)
+	applyTabRagScopeToController(newCtrl, tab.ragScope)
 	newCtrl.SetGoal(tab.goal)
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
 	if len(carried) > 0 {

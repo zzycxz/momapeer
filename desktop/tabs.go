@@ -62,6 +62,11 @@ type WorkspaceTab struct {
 	mode             string // "normal" | "plan" | "yolo" | "plan-yolo"; yolo/full access is runtime-only
 	goal             string
 	toolApprovalMode string
+	// ragScope is the knowledge-base collection the user picked in the Composer
+	// "知识库" dropdown for auto-injection; "" = "不使用" (default, no injection).
+	// Persisted per tab so a reopened session keeps its RAG selection. Applied
+	// to the controller via applyTabRagScopeToController on (re)build.
+	ragScope string
 	// profile is the active product mode: "dev" (default, coding) or "cowork"
 	// (office). Empty is treated as "dev" everywhere it is read. Persisted so a
 	// restarted tab lands back in the same mode. A profile switch rebuilds the
@@ -433,6 +438,7 @@ type TabMeta struct {
 	Mode              string `json:"mode"`
 	CollaborationMode string `json:"collaborationMode"`
 	ToolApprovalMode  string `json:"toolApprovalMode"`
+	RagScope          string `json:"ragScope"`
 	Goal              string `json:"goal,omitempty"`
 	GoalStatus        string `json:"goalStatus,omitempty"`
 	StartupErr        string `json:"startupErr,omitempty"`
@@ -468,6 +474,7 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 		Mode:              currentTabMode(tab),
 		CollaborationMode: currentTabCollaborationMode(tab),
 		ToolApprovalMode:  currentTabToolApprovalMode(tab),
+		RagScope:          tab.ragScope,
 		Goal:              currentTabGoal(tab),
 		GoalStatus:        currentTabGoalStatus(tab),
 		StartupErr:        tab.StartupErr,
@@ -1089,6 +1096,7 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 	ctrl.EnableInteractiveApproval()
 	applyTabModeToController(ctrl, tab.mode)
 	applyTabToolApprovalModeToController(ctrl, tab.toolApprovalMode)
+	applyTabRagScopeToController(ctrl, tab.ragScope)
 	ctrl.SetGoal(tab.goal)
 
 	if dir := ctrl.SessionDir(); dir != "" {
@@ -1402,6 +1410,7 @@ type desktopTabEntry struct {
 	Mode             string  `json:"mode,omitempty"`
 	Goal             string  `json:"goal,omitempty"`
 	ToolApprovalMode string  `json:"toolApprovalMode,omitempty"`
+	RagScope         string  `json:"ragScope,omitempty"`
 	Profile          string  `json:"profile,omitempty"`
 	IsExpertSession  bool    `json:"isExpertSession,omitempty"`
 	ExpertTeamID     string  `json:"expertTeamId,omitempty"`
@@ -1442,6 +1451,7 @@ func (a *App) saveTabsLocked() {
 				Mode:             persistedTabMode(currentTabMode(tab)),
 				Goal:             strings.TrimSpace(currentTabGoal(tab)),
 				ToolApprovalMode: persistedToolApprovalMode(currentTabToolApprovalMode(tab)),
+				RagScope:         tab.ragScope,
 				Profile:          tab.profile,
 			})
 		}

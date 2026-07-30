@@ -148,6 +148,8 @@ export interface AppBindings {
   SetCollaborationModeForTab(tabID: string, mode: string): Promise<void>;
   SetToolApprovalMode(mode: string): Promise<void>;
   SetToolApprovalModeForTab(tabID: string, mode: string): Promise<void>;
+  SetRagScope(scope: string): Promise<void>;
+  SetRagScopeForTab(tabID: string, scope: string): Promise<void>;
   SetGoal(goal: string): Promise<void>;
   SetGoalForTab(tabID: string, goal: string): Promise<void>;
   ClearGoal(): Promise<void>;
@@ -373,6 +375,10 @@ export interface AppBindings {
   SearchCalendarEvents(q: string, limit: number): Promise<CalendarEventView[]>;
   ExportCalendarEvents(path: string): Promise<string>;
   ImportCalendarEvents(path: string): Promise<string>;
+  // ExportCalendarDialog / ImportCalendarDialog open a native file dialog, then
+  // export/import. Return "" when the user cancels the dialog.
+  ExportCalendarDialog(): Promise<string>;
+  ImportCalendarDialog(): Promise<string>;
   GetChineseHolidays(year: number): Promise<CalendarEventView[]>;
   // --- RAG knowledge base (coWork RAG panel) -------------------------------
   // Backed by desktop/rag_app.go. The panel re-fetches the tree on the
@@ -1909,6 +1915,15 @@ function makeMockApp(): AppBindings {
               : tab,
           );
         },
+        async SetRagScope(scope) {
+          const active = mockTabs.find((tab) => tab.active);
+          if (active) await this.SetRagScopeForTab(active.id, scope);
+        },
+        async SetRagScopeForTab(tabID, scope) {
+          mockTabs = mockTabs.map((tab) =>
+            tab.id === tabID ? { ...tab, ragScope: scope.trim() } : tab,
+          );
+        },
         async SetGoal(goal) {
           const active = mockTabs.find((tab) => tab.active);
           if (active) await this.SetGoalForTab(active.id, goal);
@@ -3207,6 +3222,12 @@ function makeMockApp(): AppBindings {
       return "exported 0 events (mock)";
     },
     async ImportCalendarEvents(_path: string): Promise<string> {
+      return "imported 0 events (mock)";
+    },
+    async ExportCalendarDialog(): Promise<string> {
+      return "exported 0 events (mock)";
+    },
+    async ImportCalendarDialog(): Promise<string> {
       return "imported 0 events (mock)";
     },
     async GetChineseHolidays(_year: number): Promise<CalendarEventView[]> {

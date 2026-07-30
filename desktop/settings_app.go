@@ -707,6 +707,7 @@ func (a *App) rebuild() error {
 	a.emitReady(a.ctx)
 	ctrl.EnableInteractiveApproval()
 	applyTabModeToController(ctrl, tab.mode)
+	applyTabRagScopeToController(ctrl, tab.ragScope)
 	path := agent.ContinueSessionPath(prevPath, ctrl.SessionDir(), ctrl.Label())
 	if len(carried) > 0 {
 		carried = withFreshSystemPrompt(carried, systemPromptFrom(ctrl.History()))

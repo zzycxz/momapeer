@@ -3180,13 +3180,6 @@ func (c *Controller) SetRAGScope(scope string) {
 	c.mu.Unlock()
 }
 
-// RAGScope returns the current auto-injection collection ("" = disabled).
-func (c *Controller) RAGScope() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.ragScope
-}
-
 // drainApprovalsLocked removes every pending approval gate and returns their
 // reply channels; caller holds c.mu and sends {allow:true} after unlocking.
 func (c *Controller) drainApprovalsLocked(includeExplicitAsk bool) []chan approvalReply {

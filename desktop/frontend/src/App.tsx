@@ -615,6 +615,7 @@ export default function App() {
     setToolApprovalMode: setControllerToolApprovalMode,
     setGoal: setControllerGoal,
     clearGoal: clearControllerGoal,
+    setRagScope: setControllerRagScope,
     clearSession,
     listSessions,
     listTrashedSessions,
@@ -1006,6 +1007,10 @@ export default function App() {
   const toolApprovalMode = activeTabId
     ? toolApprovalModesByTab[activeTabId] ?? normalizeToolApprovalMode(state.meta?.toolApprovalMode ?? activeTab?.toolApprovalMode, legacyMode, state.meta?.autoApproveTools ?? state.meta?.bypass)
     : "ask";
+  // Knowledge-base auto-injection scope, per-tab ("" = 不使用 / off, default).
+  // Sourced directly from backend meta since the selection is persisted there;
+  // refreshMetaForTab re-syncs after a change.
+  const ragScope = state.meta?.ragScope ?? "";
   const controllerReady = state.meta?.ready === true;
   const setMode = useCallback(
     (next: Mode | ((prev: Mode) => Mode)) => {
@@ -2667,6 +2672,8 @@ export default function App() {
         onClearGoal={() => applyGoal("")}
         onSwitchModel={switchModel}
         onSetEffort={setEffort}
+        ragScope={ragScope}
+        onPickRagScope={setControllerRagScope}
         insertRequest={composerInsertRequest}
         onInsertComplete={() => setComposerInsertRequest(null)}
         disabled={state.meta?.ready === false || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
