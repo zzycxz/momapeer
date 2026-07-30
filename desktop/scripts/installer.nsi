@@ -1,0 +1,73 @@
+; MoMAPeer Desktop Installer
+; NSIS script for Windows installation
+
+!define APP_NAME "MoMAPeer"
+!define APP_VERSION "0.5.6"
+!define APP_PUBLISHER "zzycxz"
+!define APP_URL "https://github.com/zzycxz/momapeer"
+!define APP_EXE "momapeer.exe"
+
+; Installer attributes
+Name "${APP_NAME} ${APP_VERSION}"
+OutFile "dist\momapeer-setup.exe"
+InstallDir "$LOCALAPPDATA\${APP_NAME}"
+InstallDirRegKey HKCU "Software\${APP_NAME}" ""
+RequestExecutionLevel user
+
+; Modern UI
+!include "MUI2.nsh"
+
+!define MUI_ABORTWARNING
+!define MUI_ICON "build\windows\icon.ico"
+
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+
+!insertmacro MUI_LANGUAGE "SimpChinese"
+!insertmacro MUI_LANGUAGE "English"
+
+Section "Install"
+  SetOutPath "$INSTDIR"
+
+  ; Main executable
+  File "build\bin\${APP_EXE}"
+
+  ; Skills directory
+  SetOutPath "$INSTDIR\.momapeer\skills"
+  File /r "build\bin\.momapeer\skills\*"
+
+  ; Create uninstaller
+  WriteUninstaller "$INSTDIR\uninstall.exe"
+
+  ; Start Menu
+  CreateDirectory "$SMPROGRAMS\${APP_NAME}"
+  CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
+  CreateShortCut "$SMPROGRAMS\${APP_NAME}\Uninstall.lnk" "$INSTDIR\uninstall.exe"
+
+  ; Registry
+  WriteRegStr HKCU "Software\${APP_NAME}" "" "$INSTDIR"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayName" "${APP_NAME}"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "UninstallString" "$INSTDIR\uninstall.exe"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayVersion" "${APP_VERSION}"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "Publisher" "${APP_PUBLISHER}"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "URLInfoAbout" "${APP_URL}"
+SectionEnd
+
+Section "Uninstall"
+  Delete "$INSTDIR\${APP_EXE}"
+  Delete "$INSTDIR\uninstall.exe"
+  RMDir /r "$INSTDIR\.momapeer"
+  RMDir "$INSTDIR"
+
+  Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
+  Delete "$SMPROGRAMS\${APP_NAME}\Uninstall.lnk"
+  RMDir "$SMPROGRAMS\${APP_NAME}"
+
+  DeleteRegKey HKCU "Software\${APP_NAME}"
+  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
+SectionEnd

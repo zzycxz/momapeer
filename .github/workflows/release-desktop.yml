@@ -99,6 +99,7 @@ jobs:
         uses: crazy-max/ghaction-upx@v3
         with:
           install-only: true
+        continue-on-error: true
 
       - name: Inject version from tag
         id: version
@@ -117,7 +118,9 @@ jobs:
           CC: aarch64-w64-mingw32-gcc
           CXX: aarch64-w64-mingw32-g++
         run: |
-          wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }} -ldflags "-s -w -X main.version=${{ steps.version.outputs.semver }}" -upx -v 2 > wails_build.log 2>&1
+          UPX_FLAG=""
+          if command -v upx &> /dev/null; then UPX_FLAG="-upx"; fi
+          wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }} -ldflags "-s -w -X main.version=${{ steps.version.outputs.semver }}" $UPX_FLAG -v 2 > wails_build.log 2>&1
           if [ $? -ne 0 ]; then echo "Wails build failed"; exit 1; fi
 
       - name: Build Wails App (Others)
@@ -125,7 +128,9 @@ jobs:
         working-directory: ./desktop
         shell: bash
         run: |
-          wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }} -ldflags "-s -w -X main.version=${{ steps.version.outputs.semver }}" -upx -v 2 > wails_build.log 2>&1
+          UPX_FLAG=""
+          if command -v upx &> /dev/null; then UPX_FLAG="-upx"; fi
+          wails build -platform ${{ matrix.platform }} -clean ${{ matrix.build_args }} -ldflags "-s -w -X main.version=${{ steps.version.outputs.semver }}" $UPX_FLAG -v 2 > wails_build.log 2>&1
           if [ $? -ne 0 ]; then
             echo "Wails build failed"
             exit 1
