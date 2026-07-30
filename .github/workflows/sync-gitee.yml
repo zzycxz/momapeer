@@ -14,6 +14,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Strip LFS history to bypass Gitee limits
+        run: |
+          pip install git-filter-repo
+          # 1. 移除整个历史中的 .gitattributes 文件
+          git filter-repo --force --path .gitattributes --invert-paths
+          # 2. 修改所有 LFS 指针文件的二进制特征，让 Gitee 识别为普通文本
+          git filter-repo --force --blob-callback '
+            if b"version https://git-lfs.github.com/spec/v1" in blob.data:
+              blob.data = blob.data.replace(b"version https://git-lfs.github.com/spec/v1", b"version https://disabled-lfs/spec/v1")
+          '
+
       - name: Sync to Gitee
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}

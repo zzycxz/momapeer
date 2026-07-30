@@ -160,9 +160,8 @@ jobs:
           # Rename with version and arch
           $arch = "${{ matrix.platform }}".Replace("windows/", "")
           $setupName = "momapeer-setup-$ver-$arch.exe"
-          if (Test-Path "dist\momapeer-setup.exe") {
-            Rename-Item "dist\momapeer-setup.exe" $setupName
-            Move-Item $setupName "build\bin\"
+          if (Test-Path "build\bin\momapeer-setup.exe") {
+            Rename-Item "build\bin\momapeer-setup.exe" "build\bin\$setupName"
           } else {
             Write-Error "NSIS installer not created"
             exit 1

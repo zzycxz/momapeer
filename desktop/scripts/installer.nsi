@@ -9,7 +9,7 @@
 
 ; Installer attributes
 Name "${APP_NAME} ${APP_VERSION}"
-OutFile "dist\momapeer-setup.exe"
+OutFile "build\bin\momapeer-setup.exe"
 InstallDir "$LOCALAPPDATA\${APP_NAME}"
 InstallDirRegKey HKCU "Software\${APP_NAME}" ""
 RequestExecutionLevel user
