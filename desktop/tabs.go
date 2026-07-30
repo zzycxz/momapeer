@@ -1543,8 +1543,6 @@ var projectsMu sync.Mutex
 // writes the per-profile file; otherwise it writes the legacy un-profiled
 // desktop-projects.json.
 func saveProjectsFile(f desktopProjectFile, profileKey ...string) error {
-	projectsMu.Lock()
-	defer projectsMu.Unlock()
 	var path string
 	if len(profileKey) > 0 && strings.TrimSpace(profileKey[0]) != "" {
 		path = projectsFilePath(profileKey[0])
@@ -2083,8 +2081,8 @@ func ensureTopicIndexed(args ...string) error {
 	if topicID == "" {
 		return fmt.Errorf("topicID is required")
 	}
-	topicIndexMu.Lock()
-	defer topicIndexMu.Unlock()
+	projectsMu.Lock()
+	defer projectsMu.Unlock()
 	if strings.TrimSpace(scope) == "global" {
 		workspaceRoot = ""
 	} else {
@@ -2255,8 +2253,8 @@ func migrateLegacySessionsIntoGlobalTopics(dir string, profileKey ...string) []s
 	if strings.TrimSpace(dir) == "" {
 		return nil
 	}
-	legacyMigrationMu.Lock()
-	defer legacyMigrationMu.Unlock()
+	projectsMu.Lock()
+	defer projectsMu.Unlock()
 
 	// Fast path: if the marker exists, the directory was already fully migrated
 	// on a previous call. The per-session TopicID check is idempotent, but

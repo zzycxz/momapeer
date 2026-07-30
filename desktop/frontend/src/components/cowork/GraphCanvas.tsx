@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import ForceGraph3D from "react-force-graph-3d";
+import SpriteText from "three-spritetext";
 // Import some basic three types if needed for typing, but ForceGraph3D is mainly any for props in basic usage.
 import { app, onRagChanged, onRagProgress } from "../../lib/bridge";
 import { asArray } from "../../lib/array";
@@ -60,7 +61,6 @@ function GraphCanvasInner({
   const [stalledSecs, setStalledSecs] = useState(0);
   const [fgData, setFgData] = useState<{ nodes: any[]; links: any[] }>({ nodes: [], links: [] });
   const fgRef = useRef<any>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
   const [dims, setDims] = useState({ width: 800, height: 600 });
   const [semanticHits, setSemanticHits] = useState<Set<string>>(new Set());
   const [semanticStatus, setSemanticStatus] = useState("");
@@ -105,19 +105,24 @@ function GraphCanvasInner({
     return () => clearInterval(timer);
   }, [extracting, extractProgress]);
 
-  // Handle container resize
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setDims({
-          width: entry.contentRect.width,
-          height: entry.contentRect.height
-        });
-      }
-    });
-    ro.observe(containerRef.current);
-    return () => ro.disconnect();
+  const roRef = useRef<ResizeObserver | null>(null);
+  const containerRef = useCallback((node: HTMLDivElement | null) => {
+    if (roRef.current) {
+      roRef.current.disconnect();
+      roRef.current = null;
+    }
+    if (node) {
+      const ro = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          setDims({
+            width: entry.contentRect.width,
+            height: entry.contentRect.height
+          });
+        }
+      });
+      ro.observe(node);
+      roRef.current = ro;
+    }
   }, []);
 
   // Fetch top hub entities when collection changes.
@@ -469,6 +474,14 @@ function GraphCanvasInner({
         nodeColor="color"
         nodeVal="val"
         nodeResolution={16}
+        nodeThreeObjectExtend={true}
+        nodeThreeObject={(node: any) => {
+          const sprite = new SpriteText(node.label);
+          sprite.color = node.color;
+          sprite.textHeight = 4;
+          sprite.position.y = -(node.val || 2) - 4; // 将文字放置在星球下方
+          return sprite;
+        }}
         linkColor={() => "rgba(255,255,255,0.2)"}
         linkWidth={1}
         onNodeClick={handleNodeClick}

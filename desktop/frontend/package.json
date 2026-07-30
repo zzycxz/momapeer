@@ -29,7 +29,8 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.0",
     "remark-math": "^6.0.0",
-    "three": "^0.185.1"
+    "three": "^0.185.1",
+    "three-spritetext": "^1.10.0"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",

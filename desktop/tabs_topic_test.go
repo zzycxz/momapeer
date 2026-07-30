@@ -1259,12 +1259,13 @@ func TestLegacyMigrationConcurrentRunsHaveNoLostUpdates(t *testing.T) {
 	wg.Wait()
 
 	gotSet := map[string]bool{}
-	for _, id := range loadProjectsFile("dev").GlobalTopics {
+	// Migration writes to the un-profiled projects file (no profileKey)
+	for _, id := range loadProjectsFile().GlobalTopics {
 		gotSet[id] = true
 	}
 	for id := range want {
 		if !gotSet[id] {
-			t.Fatalf("concurrent migration lost topic %q; GlobalTopics=%v", id, loadProjectsFile("dev").GlobalTopics)
+			t.Fatalf("concurrent migration lost topic %q; GlobalTopics=%v", id, loadProjectsFile().GlobalTopics)
 		}
 	}
 }
@@ -1291,18 +1292,24 @@ func TestEnsureTopicIndexedConcurrentRunsHaveNoLostProjectUpdates(t *testing.T) 
 	close(start)
 	wg.Wait()
 
-	nodes := NewApp().ListProjectTree("dev")
-	if len(nodes) != 1 {
-		t.Fatalf("project tree len = %d, want 1: %#v", len(nodes), nodes)
+	// ensureTopicIndexed writes to the un-profiled projects file (no profile arg)
+	// so check that file directly instead of ListProjectTree("dev")
+	f := loadProjectsFile()
+	var projectTopics []string
+	for _, p := range f.Projects {
+		if p.Root == normalizeProjectRoot(projectRoot) {
+			projectTopics = p.Topics
+			break
+		}
 	}
 	got := map[string]bool{}
-	for _, child := range nodes[0].Children {
-		got[child.TopicID] = true
+	for _, id := range projectTopics {
+		got[id] = true
 	}
 	for i := 0; i < n; i++ {
 		topicID := fmt.Sprintf("topic_recovered_%02d", i)
 		if !got[topicID] {
-			t.Fatalf("concurrent topic index recovery lost %q; children=%#v", topicID, nodes[0].Children)
+			t.Fatalf("concurrent topic index recovery lost %q; projectTopics=%v", topicID, projectTopics)
 		}
 		if title := loadTopicTitle(projectRoot, topicID); title == "" {
 			t.Fatalf("title index missing %q", topicID)
