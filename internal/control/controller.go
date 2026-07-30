@@ -84,7 +84,8 @@ type Controller struct {
 	startedOnce   bool                                                         // guards the one-shot SessionStart hook on first turn
 	onRemember    func(rule string) RememberResult                             // set via Options; invoked when user picks "always allow"
 	onTurnEnd     func(ctx context.Context, lastUserMsg, lastAssistant string) // set via Options; passive memory capture
-	ragContextFn  func(ctx context.Context, query string) string               // set via Options; auto-retrieves knowledge-base context
+	ragContextFn  func(ctx context.Context, query, collection string) string               // set via Options; auto-retrieves knowledge-base context
+	ragScope      string                                                                 // knowledge-base collection to scope auto-injection to; "" = don't inject (guarded by c.mu)
 
 	// jobs is the session-scoped background-job manager. The agent's background
 	// tools spawn into it; Compose drains its completion notes into the next turn;
@@ -293,8 +294,10 @@ type Options struct {
 	// RAGContextFn, when set, is called with the user's message before each
 	// turn to auto-retrieve knowledge-base context. The returned string is
 	// prepended to the user's input (like @reference context). A nil callback
-	// or "" return disables injection for that turn.
-	RAGContextFn func(ctx context.Context, query string) string
+	// or "" return disables injection for that turn. collection scopes the
+	// retrieval to one knowledge-base collection ("" = let the callback decide,
+	// typically meaning "don't inject" for the auto-injection path).
+	RAGContextFn func(ctx context.Context, query, collection string) string
 }
 
 // New builds a Controller. A nil Sink is replaced with event.Discard.
@@ -1306,9 +1309,16 @@ func (c *Controller) runRefTurnWithRefs(input, refLine, display string) {
 			c.notice(e)
 		}
 		// Auto-retrieve knowledge-base context (if a RAG store is wired in).
+		// ragScope is the collection the user picked in the Composer dropdown;
+		// "" means "不使用" → skip injection entirely (default opt-out).
 		ragCtx := ""
 		if c.ragContextFn != nil {
-			ragCtx = c.ragContextFn(ctx, input)
+			c.mu.Lock()
+			scope := c.ragScope
+			c.mu.Unlock()
+			if scope != "" {
+				ragCtx = c.ragContextFn(ctx, input, scope)
+			}
 		}
 		var sent any
 		// Build the context preamble from @references + RAG auto-search.
@@ -3157,6 +3167,24 @@ func (c *Controller) SetMode(plan, autoApproveTools bool) {
 	} else {
 		c.SetToolApprovalMode(ToolApprovalAsk)
 	}
+}
+
+// SetRAGScope sets the knowledge-base collection that auto-injection searches.
+// Pass "" to disable injection for this session ("不使用" in the Composer
+// dropdown). The scope is read at the start of each turn (under c.mu) so a
+// mid-flight change can't race the RAG call. Mirrors the per-tab pattern of
+// SetToolApprovalMode.
+func (c *Controller) SetRAGScope(scope string) {
+	c.mu.Lock()
+	c.ragScope = scope
+	c.mu.Unlock()
+}
+
+// RAGScope returns the current auto-injection collection ("" = disabled).
+func (c *Controller) RAGScope() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.ragScope
 }
 
 // drainApprovalsLocked removes every pending approval gate and returns their

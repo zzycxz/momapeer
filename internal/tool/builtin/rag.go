@@ -46,6 +46,18 @@ var globalRAGSessionResolver func() []string
 // LLM-driven searches. Called once at cowork boot.
 func SetRAGSessionResolver(fn func() []string) { globalRAGSessionResolver = fn }
 
+// globalRAGAutoScope is the collection the user explicitly picked in the
+// Composer "knowledge base" dropdown for auto-injection. Empty = "不使用" (the
+// default) — AutoSearch then returns "" and nothing is injected, which is the
+// intended per-message opt-in behavior. Set per-tab by the desktop layer; takes
+// priority over the session resolver so the explicit choice always wins.
+var globalRAGAutoScope string
+
+// SetRAGAutoScope sets the auto-injection collection scope. Called by the
+// controller's SetRAGScope (wired from the desktop Composer dropdown). Pass ""
+// to disable injection for this session.
+func SetRAGAutoScope(collection string) { globalRAGAutoScope = collection }
+
 // autoSearchMaxChars is the soft budget for RAG context injected into each user
 // message. Items (entities, snippets) are added one by one; when the budget is
 // reached, remaining items are omitted entirely (not truncated mid-sentence).
@@ -58,7 +70,14 @@ const autoSearchMaxChars = 3000
 // or "" when there are no matches or the store is offline. This lets the
 // controller prepend knowledge-base context to user messages without exposing
 // the rag_search tool to the main agent loop.
-func AutoSearch(ctx context.Context, query string) string {
+//
+// collection controls scoping: pass a collection path/name to search only that
+// collection, or "" to consult the auto-scope / session resolver. When the
+// resolved scope is "" AND collection itself is "" (i.e. the user picked "不使
+// 用" in the Composer dropdown), this returns "" immediately — injection is an
+// explicit opt-in per session, never automatic. The controller enforces the
+// same rule, but AutoSearch defends in depth so direct callers stay correct.
+func AutoSearch(ctx context.Context, query, collection string) string {
 	if globalRAGStore == nil {
 		return ""
 	}
@@ -68,7 +87,12 @@ func AutoSearch(ctx context.Context, query string) string {
 	if len([]rune(q)) < 2 {
 		return ""
 	}
-	collection := resolveRAGScope("")
+	scope := resolveRAGScope(collection)
+	if scope == "" {
+		// No explicit scope resolved → user opted out ("不使用"). Don't inject.
+		return ""
+	}
+	collection = scope
 	hasEntities, _ := globalRAGStore.HasEntities(collection)
 	const topK = 5
 	const maxDescRunes = 60
@@ -163,11 +187,18 @@ func AutoSearch(ctx context.Context, query string) string {
 }
 
 // resolveRAGScope returns the effective collection for a rag_search call: an
-// explicit collection parameter always wins; otherwise, if the session has
-// exactly one active collection, use it; otherwise "" (all collections).
+// explicit collection parameter always wins; otherwise the per-session auto-
+// scope (set from the Composer "knowledge base" dropdown) wins; otherwise, if
+// the session has exactly one active collection, use it; otherwise "" (all
+// collections). The auto-scope sits between explicit and resolver so a UI
+// selection overrides ambient session state but a tool call's explicit arg
+// still wins.
 func resolveRAGScope(explicit string) string {
 	if explicit != "" {
 		return explicit
+	}
+	if globalRAGAutoScope != "" {
+		return globalRAGAutoScope
 	}
 	if globalRAGSessionResolver != nil {
 		if active := globalRAGSessionResolver(); len(active) == 1 {
