@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -56,7 +55,7 @@ func TestResumePickerNavigateAndSelect(t *testing.T) {
 	aPath := filepath.Join(dir, "a.jsonl")
 	saveTestSession(t, aPath, "first session prompt")
 	time.Sleep(50 * time.Millisecond)
-	
+
 	bPath := filepath.Join(dir, "b.jsonl")
 	saveTestSession(t, bPath, "SECOND-SESSION-PROMPT")
 
