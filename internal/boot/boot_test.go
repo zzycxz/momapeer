@@ -773,6 +773,8 @@ api_key_env = "MOMAPEER_TEST_KEY_UNSET"
 	// Model-specific addons (e.g. ThinkingAddon for thinking-capable models)
 	// are appended at boot; strip them so this assertion is purely about memory.
 	base = stripThinkingAddon(base)
+	// Time block is appended at boot; strip it.
+	base = stripTimeBlock(base)
 	if base != "JUST THE BASE" {
 		t.Fatalf("expected untouched base prompt, got:\n%s", sys)
 	}
@@ -838,6 +840,16 @@ func stripThinkingAddon(s string) string {
 			s = strings.TrimSpace(strings.Replace(s, "\n\n"+addon, "", 1))
 			s = strings.TrimSpace(strings.Replace(s, addon, "", 1))
 		}
+	}
+	return s
+}
+
+func stripTimeBlock(s string) string {
+	if i := strings.Index(s, "\n\n# 当前时间\n"); i >= 0 {
+		if j := strings.Index(s[i+2:], "\n\n"); j >= 0 {
+			return strings.TrimSpace(s[:i] + s[i+2+j:])
+		}
+		return strings.TrimSpace(s[:i])
 	}
 	return s
 }

@@ -13,11 +13,11 @@ import (
 // 精确定时器对各类任务都可靠工作。
 //
 // 用例矩阵：
-//   1. 纯提醒 + 一次性：Plain=true，到点弹原文，不调 AI，触发后自动禁用
-//   2. AI 任务 + 一次性：Plain=false，到点调 runner，返回 agent 输出
-//   3. 循环任务：every，首次触发后重新武装定时器，第二次也准时
-//   4. 动态新建：Start 后再 Create 任务，定时器能重新武装捕捉新任务
-//   5. 删除任务：删除最近任务后，定时器重新武装到次近任务
+//  1. 纯提醒 + 一次性：Plain=true，到点弹原文，不调 AI，触发后自动禁用
+//  2. AI 任务 + 一次性：Plain=false，到点调 runner，返回 agent 输出
+//  3. 循环任务：every，首次触发后重新武装定时器，第二次也准时
+//  4. 动态新建：Start 后再 Create 任务，定时器能重新武装捕捉新任务
+//  5. 删除任务：删除最近任务后，定时器重新武装到次近任务
 func TestIntegrationSchedulerMatrix(t *testing.T) {
 	t.Run("纯提醒_一次性", func(t *testing.T) {
 		s := New(t.TempDir() + "/plain_oneshot.json")

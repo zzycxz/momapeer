@@ -69,17 +69,17 @@ type ScheduledTask struct {
 	// shared workspace root; the agent prompt may reference it. Color/Location
 	// render the task on the calendar grid. These were previously sent by the
 	// UI form but dropped because they had no backing struct field.
-	OutputDir      string    `json:"output_dir,omitempty"`
-	Color          string    `json:"color,omitempty"`
-	Location       string    `json:"location,omitempty"`
-	LastDeliverErr string    `json:"last_deliver_err,omitempty"` // "" if last delivery succeeded / was skipped
+	OutputDir      string `json:"output_dir,omitempty"`
+	Color          string `json:"color,omitempty"`
+	Location       string `json:"location,omitempty"`
+	LastDeliverErr string `json:"last_deliver_err,omitempty"` // "" if last delivery succeeded / was skipped
 	// Plain marks a task whose Prompt is a plain reminder to be surfaced verbatim
 	// (toast/IM/email body) WITHOUT running the agent. Set explicitly by the UI
 	// ("纯提醒" toggle) — we do NOT guess this from prompt text, because no
 	// heuristic can reliably tell "周报" (AI task, no verb) from "下班打卡" (plain
 	// reminder, no verb). Plain=false (default) always runs the agent.
-	Plain bool `json:"plain,omitempty"`
-	LastDeliverAt  time.Time `json:"last_deliver_at,omitempty"`  // when the most recent delivery was attempted
+	Plain         bool      `json:"plain,omitempty"`
+	LastDeliverAt time.Time `json:"last_deliver_at,omitempty"` // when the most recent delivery was attempted
 }
 
 // Runner is the bridge to a controller: the scheduler calls Run with the task's

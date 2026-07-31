@@ -44,7 +44,7 @@ type TaskView struct {
 	OutputDir      string `json:"outputDir"`
 	Color          string `json:"color"`
 	Location       string `json:"location"`
-	Plain          bool   `json:"plain"` // 纯提醒：到点直接弹原文，不调 AI
+	Plain          bool   `json:"plain"`          // 纯提醒：到点直接弹原文，不调 AI
 	LastDeliverErr string `json:"lastDeliverErr"` // "" if last delivery was ok / skipped
 	LastDeliverAt  string `json:"lastDeliverAt"`  // "" if never delivered
 	HumanSchedule  string `json:"humanSchedule"`  // friendly description, e.g. "每天 18:00"
