@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	skillassets "github.com/zzycxz/momapeer/internal/assets"
 	"github.com/zzycxz/momapeer/internal/config"
 	"github.com/zzycxz/momapeer/internal/ppttemplate"
 	"github.com/zzycxz/momapeer/internal/secret"
@@ -245,10 +246,14 @@ func scanPPTXTemplates(dir string) []ppttemplate.View {
 
 // updatePPTSkillConfig updates a single key in the PPT skill's template_config.json.
 func (a *App) updatePPTSkillConfig(key, value string) error {
-	// Find the skill config file in the app directory
-	exePath, _ := os.Executable()
-	exeDir := filepath.Dir(exePath)
-	configPath := filepath.Join(exeDir, ".momapeer", "skills", "ppt-auto", "template_config.json")
+	// Prefer the released embedded skill's config (~/.momapeer/skills/ppt-auto),
+	// then fall back to the legacy exe-sibling layout for older installs.
+	configPath := skillassets.PPTAutoConfigPath()
+	if configPath == "" {
+		exePath, _ := os.Executable()
+		exeDir := filepath.Dir(exePath)
+		configPath = filepath.Join(exeDir, ".momapeer", "skills", "ppt-auto", "template_config.json")
+	}
 
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		return nil // config not found, skip silently

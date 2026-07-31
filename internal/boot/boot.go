@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/zzycxz/momapeer/internal/agent"
+	"github.com/zzycxz/momapeer/internal/assets"
 	"github.com/zzycxz/momapeer/internal/builtinmcp"
 	"github.com/zzycxz/momapeer/internal/codegraph"
 	"github.com/zzycxz/momapeer/internal/command"
@@ -400,6 +401,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	skillLegacyPath := ""
 	if udir := config.MemoryUserDir(); udir != "" {
 		skillLegacyPath = filepath.Join(udir, "skill_usage.json")
+	}
+	// Release the embedded ppt-auto skill to ~/.momapeer/skills/ppt-auto/ before
+	// the skill store scans, so the just-released skill is discovered this run.
+	// Best-effort: a failure is logged but never aborts startup, since the user
+	// may already have a working skill from a prior release or a manual install.
+	if err := assets.EnsurePPTAutoSkill(); err != nil {
+		slog.Warn("assets: failed to release embedded ppt-auto skill", "err", err)
 	}
 	skillStore := skill.New(skill.Options{
 		ProjectRoot:     root,

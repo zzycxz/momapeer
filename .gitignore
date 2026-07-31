@@ -34,11 +34,11 @@
 .zcode/
 /.claude/
 /.momapeer.zip
-/.momapeer/*
-!/.momapeer/skills/
-!/.momapeer/skills/**
-# Exclude Python runtime (56MB+ of platform-specific binaries)
-/.momapeer/skills/*/python/runtime/
+# ~/.momapeer-style project-local dir. The built-in ppt-auto skill now lives
+# under internal/assets/pptauto (embedded into the binary); .momapeer/ here is
+# purely local runtime state (the released copy lands in the user's home), so
+# it is fully ignored.
+/.momapeer/
 __pycache__/
 *.pyc
 /bin/

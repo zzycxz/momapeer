@@ -42,9 +42,9 @@ Section "Install"
   ; Main executable
   File "..\build\bin\${APP_EXE}"
 
-  ; Bundle built-in skills and configs to user profile
-  SetOutPath "$PROFILE\.momapeer"
-  File /r "..\..\.momapeer\*.*"
+  ; NOTE: built-in skills (ppt-auto) are no longer copied here — they are
+  ; embedded in the binary and released to $PROFILE\.momapeer\skills\ on first
+  ; run by the app itself. See internal/assets/.
 
   ; Create Desktop Shortcut
   CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"

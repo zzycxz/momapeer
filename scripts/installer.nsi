@@ -39,9 +39,9 @@ Section "Install"
     ; Main executable
     File "desktop\build\bin\${APP_EXE}"
 
-    ; .momapeer skills (ppt-auto: Python runtime + templates)
-    SetOutPath "$INSTDIR\.momapeer\skills\ppt-auto"
-    File /r ".momapeer\skills\ppt-auto\*"
+    ; NOTE: built-in skills (ppt-auto) are no longer copied here — they are
+    ; embedded in the binary and released to $PROFILE\.momapeer\skills\ on first
+    ; run by the app itself. See internal/assets/.
 
     ; codegraph (code intelligence engine: node.exe + lib)
     ; bundled() expects: exe_dir/codegraph/bin/codegraph.cmd
@@ -90,7 +90,9 @@ SectionEnd
 
 Section "Uninstall"
     ; Delete files
-    RMDir /r "$INSTDIR\.momapeer"
+    ; NOTE: $INSTDIR\.momapeer is no longer created (skills are released to the
+    ; user profile by the app). $PROFILE\.momapeer is left intact — it may hold
+    ; the user's own skills/data and is not owned by the installer.
     RMDir /r "$INSTDIR\codegraph"
     Delete "$INSTDIR\${APP_EXE}"
     Delete "$INSTDIR\uninstall.exe"

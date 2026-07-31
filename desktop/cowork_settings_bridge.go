@@ -4,8 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-
-	"github.com/zzycxz/momapeer/internal/builtinmcp"
 )
 
 // These helpers bridge the coWork settings panel to the detection/deps logic
@@ -76,20 +74,6 @@ func fileExists(p string) bool {
 	}
 	info, err := os.Stat(p)
 	return err == nil && !info.IsDir()
-}
-
-// checkWPSPPTDepsForSettings reports missing Python deps for the wps-ppt server,
-// delegating to builtinmcp (which already has the probe logic). Returns the
-// missing package list (empty = all present).
-func checkWPSPPTDepsForSettings() []string {
-	missing, _ := builtinmcp.WPSPPTDepsMissing("")
-	return missing
-}
-
-// installWPSPPTDepsForSettings runs `pip install fastmcp pywin32`, delegating to
-// builtinmcp. Returns combined pip output.
-func installWPSPPTDepsForSettings() (string, error) {
-	return builtinmcp.EnsureWPSPPTDeps("")
 }
 
 // stripSpace trims surrounding whitespace (tiny helper kept local).

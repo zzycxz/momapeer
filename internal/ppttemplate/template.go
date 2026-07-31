@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/zzycxz/momapeer/internal/assets"
 )
 
 // Template is one PPT template spec, parsed from a JSON file in the templates
@@ -152,8 +154,16 @@ func DefaultDir() string {
 
 // SkillTemplatesDir returns the PPT skill's templates directory if it exists.
 // This allows the settings page to also show templates bundled with the skill.
+//
+// Lookup order: the embedded-skill release dir (~/.momapeer/skills/ppt-auto/
+// templates, where EnsurePPTAutoSkill writes it) first, then the legacy exe-
+// sibling and user-config locations as fallbacks for older installs.
 func SkillTemplatesDir() string {
-	// Check exe directory first
+	// Released embedded skill (the canonical location going forward).
+	if dir := assets.PPTAutoTemplatesDir(); dir != "" {
+		return dir
+	}
+	// Legacy: exe-sibling .momapeer layout (pre-embed releases).
 	exePath, err := os.Executable()
 	if err == nil {
 		exeDir := filepath.Dir(exePath)
@@ -162,7 +172,7 @@ func SkillTemplatesDir() string {
 			return skillDir
 		}
 	}
-	// Check user config directory
+	// Legacy: user-config layout.
 	base, err := os.UserConfigDir()
 	if err == nil {
 		skillDir := filepath.Join(base, "momapeer", "skills", "ppt-auto", "templates")

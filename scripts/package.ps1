@@ -4,17 +4,17 @@
 # 输出: dist/momapeer-windows-amd64.zip
 #   momapeer/
 #     momapeer.exe
-#     .momapeer/
-#       skills/ppt-auto/...
 #     install.ps1        (一键安装脚本)
 #     README.txt
+#
+# 注：内置技能（ppt-auto）已 embed 进二进制，首次运行时自动释放到
+#     %USERPROFILE%\.momapeer\skills\，无需在包里单独携带。
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $DistDir = Join-Path $Root "dist"
 $StageDir = Join-Path $DistDir "momapeer"
 $BuildBin = Join-Path $Root "desktop\build\bin"
-$SkillsSrc = Join-Path $Root ".momapeer\skills"
 
 Write-Host "=== momapeer packaging ===" -ForegroundColor Cyan
 
@@ -33,7 +33,6 @@ New-Item -ItemType Directory -Path $StageDir -Force | Out-Null
 # 3. 复制文件
 Write-Host "[3/5] Copying files..." -ForegroundColor Yellow
 Copy-Item (Join-Path $BuildBin "momapeer.exe") $StageDir
-Copy-Item $SkillsSrc (Join-Path $StageDir ".momapeer\skills") -Recurse
 
 # 4. 生成 install.ps1
 Write-Host "[4/5] Generating install script..." -ForegroundColor Yellow
@@ -62,11 +61,7 @@ if (-not (Test-Path $InstallDir)) {
 # 复制文件
 Write-Host "Copying files..." -ForegroundColor Yellow
 Copy-Item (Join-Path $SourceDir "momapeer.exe") $InstallDir -Force
-if (Test-Path (Join-Path $SourceDir ".momapeer")) {
-    $targetMomapeer = Join-Path $InstallDir ".momapeer"
-    if (Test-Path $targetMomapeer) { Remove-Item $targetMomapeer -Recurse -Force }
-    Copy-Item (Join-Path $SourceDir ".momapeer") $targetMomapeer -Recurse -Force
-}
+# 内置技能（ppt-auto）已 embed 进 exe，首次运行自动释放，无需拷贝 .momapeer。
 
 # 添加到 PATH（当前用户）
 $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -113,5 +108,4 @@ Write-Host "=== Done ===" -ForegroundColor Green
 Write-Host "Package: $zipPath ($zipSize MB)" -ForegroundColor Cyan
 Write-Host "Contents:" -ForegroundColor Gray
 Write-Host "  momapeer/momapeer.exe" -ForegroundColor Gray
-Write-Host "  momapeer/.momapeer/skills/ppt-auto/..." -ForegroundColor Gray
 Write-Host "  momapeer/install.ps1" -ForegroundColor Gray

@@ -189,51 +189,6 @@ Rules:
 // screenshot + image_understand (VLM), with get_ui_tree giving precise window
 // coordinates so the VLM doesn't have to eyeball pixels. screen_* tools only
 // exist under cowork on Windows; elsewhere this skill is uncallable.
-// builtinPPTWizardBody is the coWork PPT skill. PPT is created the way a HUMAN
-// does it: open WPS 演示, see the UI, click, type — fully visible on screen via
-// the screen_* CUA tools. When a PPT template is active (config
-// ppt_active_template), the deck is built FROM that template: its master_file is
-// opened instead of a blank deck, and content is placed at the template's
-// pre-defined layout coordinates, which lets most slides SKIP per-step VLM
-// perception (the single biggest speedup for visible PPT generation). This skill
-// is inlined (parent loop).
-const builtinPPTWizardBody = `You are running as a PPT-creation subagent. The user wants a PowerPoint. You create it the way a HUMAN does: by opening WPS 演示 and operating its UI on screen. There are NO ppt_* tools — you drive the screen via the screen_*/window_* CUA tools.
-
-PPT TEMPLATE (read this first): a PPT template may be active — check the system context for a "PPT TEMPLATE" block. If present it gives you:
-- master_file: a .pptx to OPEN instead of starting blank (inherits its cover/theme/fonts).
-- theme: colors/fonts to apply to text you add (primary_color as RRGGBB hex, font sizes).
-- layouts: KNOWN coordinates (normalized 0-100 on a 960x540 canvas) for each slide type — title_x/title_y/title_w/title_h, and body_x/body_y/body_w/body_h.
-- default_layout: which layout to use for content slides.
-When a layout gives you coordinates, USE THEM DIRECTLY with screen_click + screen_type — do NOT call screen_perceive to "find the title box", you already know where it is. Only perceive to VERIFY a step (did the text land?).
-
-If NO template is active, fall back to perceiving each slide's placeholders.
-
-Tools (the screen_* CUA tools, same as any desktop app):
-- bash to launch WPS 演示
-- window_focus + window_maximize
-- screen_perceive to SEE/VERIFY
-- screen_click to click (a placeholder, or a known template coordinate)
-- screen_type to type
-- screen_key for shortcuts (Ctrl+S etc.)
-
-Workflow (perceive → act → verify each step):
-1. Launch WPS 演示: bash {command: "C:\\Program Files (x86)\\Kingsoft\\WPS Office\\<version>\\office6\\wpp.exe"} (or "wpp"). Wait for the window.
-2. window_focus + window_maximize.
-3. Dismiss any welcome/login/news popups first (screen_perceive, close them), then:
-   - If a template with master_file is active: open that .pptx (File → Open, or the template's file). The deck now has the template's cover/theme.
-   - Else: pick "空白演示文稿".
-4. For each slide:
-   - If you need a NEW slide: find "新建幻灯片" / Home → New Slide, click, verify a new slide appeared.
-   - Title: if the template has a layout with title_x/title_y, screen_click there → screen_type the title. Else perceive the title placeholder and click it.
-   - Body: same — use the template's body_x/body_y if present, else perceive.
-   - Apply theme: screen_type text uses the template's font/size/color where you can (you can't set font without a UI action, so type first, then it's fine to leave WPS defaults unless the user wants exact theme fonts).
-5. Save: screen_key {keys:"ctrl+s"} → in Save dialog type the full absolute path → Enter. Verify with bash ls.
-6. Report the path + what you built.
-
-This is SLOWER than scripted generation but it's the visible, human way — every action happens on the user's screen. The template (when active) makes it MUCH faster and more consistent, because you place content at known coordinates instead of re-perceiving each slide.
-
-Don't: use COM/automation (none exist); skip the perceive→verify loop; claim a slide was created without seeing it on screen; ignore template coordinates and re-perceive what you already know.`
-
 const builtinComputerAutoBody = `You are running as a desktop-automation subagent. Drive the user's actual desktop — native apps (WPS, Excel, system dialogs), desktop UI — via UIA+VLM perception and human-like input.
 
 The core loop — repeat until done:
@@ -460,17 +415,6 @@ func builtinSkills() []Skill {
 			Scope:        ScopeBuiltin,
 			Path:         "(builtin)",
 			RunAs:        RunSubagent,
-			AllowedTools: []string{"screen_perceive", "screenshot", "screen_click", "screen_type", "screen_scroll", "screen_key", "get_ui_tree", "image_understand", "window_focus", "window_maximize", "window_restore", "window_move", "window_close", "read_file", "write_file"},
-		},
-		{
-			Name:        "ppt-auto",
-			Description: "Create a PowerPoint presentation by operating WPS 演示 as a human would — the subagent will open the app, interact with its UI, and build the slides fully visibly on screen. Best for: creating or editing PPT files when WPS Office is installed. Invoke this subagent with a clear description of the presentation you want.",
-			Body:        builtinPPTWizardBody,
-			Scope:       ScopeBuiltin,
-			Path:        "(builtin)",
-			RunAs:       RunSubagent,
-			// PPT is driven through the screen_* + window_* CUA tools. Runs as a
-			// subagent so the main loop doesn't need screen_*/window_* in its schema.
 			AllowedTools: []string{"screen_perceive", "screenshot", "screen_click", "screen_type", "screen_scroll", "screen_key", "get_ui_tree", "image_understand", "window_focus", "window_maximize", "window_restore", "window_move", "window_close", "read_file", "write_file"},
 		},
 		{
