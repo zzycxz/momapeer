@@ -287,8 +287,6 @@ export function ExpertPanel() {
             {filteredTeams.map((tm) => {
               const selected = tm.id === activeTeamId;
               const experts = tm.experts ?? [];
-              const preview = experts.slice(0, 3);
-              const extra = experts.length - preview.length;
               const modeLabel =
                 tm.defaultMode === "debate" ? t("cowork.expertModeDebate")
                   : tm.defaultMode === "pipeline" ? t("cowork.expertModePipeline")

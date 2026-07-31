@@ -51,21 +51,14 @@ func TestResumePickerNavigateAndSelect(t *testing.T) {
 	exec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
 	ctrl := control.New(control.Options{Executor: exec, SessionDir: dir, Label: "test"})
 
-	// Create two saved sessions.
+	// Create two saved sessions with a small sleep to guarantee different UpdateAt
+	// timestamps in their .meta.json sidecars, avoiding flaky tie-breaks on Windows.
 	aPath := filepath.Join(dir, "a.jsonl")
 	saveTestSession(t, aPath, "first session prompt")
+	time.Sleep(50 * time.Millisecond)
+	
 	bPath := filepath.Join(dir, "b.jsonl")
 	saveTestSession(t, bPath, "SECOND-SESSION-PROMPT")
-	// Pin distinct mtimes so b is unambiguously the most recent. Created back to
-	// back, the two files can land in the same filesystem mtime tick (seen on the
-	// CI Windows runner), which then tie-breaks to a.jsonl by path and flakes.
-	now := time.Now()
-	if err := os.Chtimes(aPath, now.Add(-2*time.Second), now.Add(-2*time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chtimes(bPath, now, now); err != nil {
-		t.Fatal(err)
-	}
 
 	m := newTestChatTUI()
 	m.width = 80
