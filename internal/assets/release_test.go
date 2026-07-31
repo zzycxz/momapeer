@@ -13,17 +13,9 @@ import (
 func TestEnsurePPTAutoSkill_ReleasesEmbeddedTree(t *testing.T) {
 	// Sandbox HOME so the test never writes to the real ~/.momapeer.
 	tmp := t.TempDir()
-	prevHome, hadHome := os.LookupEnv("USERPROFILE")
+	// t.Setenv automatically handles cleanup, no need for manual defer/unset
 	t.Setenv("USERPROFILE", tmp)
-	defer func() {
-		if hadHome {
-			os.Setenv("USERPROFILE", prevHome)
-		}
-	}()
-	prevUnix := os.Getenv("HOME")
 	t.Setenv("HOME", tmp)
-	os.Unsetenv("HOME")
-	defer os.Setenv("HOME", prevUnix)
 
 	if err := EnsurePPTAutoSkill(); err != nil {
 		t.Fatalf("EnsurePPTAutoSkill: %v", err)

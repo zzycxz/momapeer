@@ -1,5 +1,108 @@
 # Changelog
 
+## [0.5.8] — 2026-07-31
+
+**一条主线：把 ppt-auto PPT 技能从「外部 .momapeer 小尾巴」内化进 momapeer.exe 二进制本体，顺手清理三套互相冲突的旧 Windows 专属 PPT 代码，并让该技能首次真正具备跨平台（macOS/Linux/Windows）能力。** 本版起，用户下载单个安装包即拥有 PPT 能力，分发时不再需要拷贝独立的 `.momapeer` 资产目录，且 ppt-auto 从「名义跨平台、实际 Windows-only」变成真正的三平台通用。
+
+> 起因：评审一份 AI 生成的「跨平台 PPT 架构升级方案」时，逐条核实代码发现其核心前提多处与实际不符。本版按核实后的真实情况重做了方案并落地，下面分阶段记录。
+
+---
+
+### 背景：三套并存的旧 PPT 逻辑（均已在本版清理）
+
+代码库里曾同时存在三套互相冲突的 PPT 实现，全部强绑定 Windows：
+
+| 旧逻辑 | 位置 | 问题 |
+|---|---|---|
+| wps-ppt MCP server 入口 | `internal/builtinmcp/wpsppt.go` | 通过 `pywin32` + WPS COM 生成 PPT，被废弃后从未被 `boot.go` 接入，是死代码 |
+| 内置 Windows COM skill | `internal/skill/builtins.go` 的 `builtinPPTWizardBody` | 提示词写死 `C:\Program Files (x86)\Kingsoft\...\wpp.exe`，靠屏幕点击（CUA）操作 WPS |
+| ppt-auto 技能资产 | `.momapeer/skills/ppt-auto/` | SKILL.md 写死 `<skill_dir>/python/runtime/python.exe`（11 处），携带 56MB Windows 嵌入式 runtime（`python312.dll` / `*.pyd`），名义跨平台、实际 Mac/Linux 跑不起来 |
+
+---
+
+### Removed — 清理 wps-ppt 死代码
+
+被废弃的 Windows COM + pywin32 MCP server 路线（CHANGELOG 早期版本已记录被 ppt-auto 取代，`WPSPPTEntry` 从未被 `boot.Build` 接入）。
+
+- **删除** `internal/builtinmcp/wpsppt.go`（93 行，定义 `WPSPPTEntry` / `WPSPPTDepsMissing` / `EnsureWPSPPTDeps`）与同名 `_test.go`。
+- **修复一处连锁编译断裂**（`desktop/cowork_settings_bridge.go`）：删除两个无人调用的辅助函数 `checkWPSPPTDepsForSettings` / `installWPSPPTDepsForSettings`，并移除随之失效的 `builtinmcp` import（否则报 "imported and not used"）。此处在最初的方案中被漏报，删 `wpsppt.go` 会直接编译失败。
+- **删除内置 Windows COM skill**（`internal/skill/builtins.go`）：移除常量 `builtinPPTWizardBody`（内含硬编码 `wpp.exe` 路径）与 `builtinSkills()` 中的 `ppt-auto` 注册项。该项早已被磁盘 SKILL.md 按 skill 加载优先级（"first wins"）遮蔽，运行时不生效，删除安全。
+
+---
+
+### Changed — ppt-auto 跨平台改造（Windows-only → 真跨平台）
+
+参考上游原型 `ppt-master` 的成熟做法（系统 Python + 运行时 `os.name` 分支 + 零嵌入式 runtime），把 ppt-auto 从「自带 56MB Windows 二进制」改成「用系统 python3 + pip 依赖」。
+
+- **删除 56MB Windows 专属 runtime**（`.momapeer/skills/ppt-auto/python/runtime/`，含 `python312.dll`、20+ `.pyd`、`python.exe`）。
+- **清理 496 个 `__pycache__` / `*.pyc` 编译缓存**（平台相关，绝不该打包）。资产从 **90MB → 33MB**。
+- **SKILL.md**：11 处 `<skill_dir>/python/runtime/python.exe` 改为 `python3`，并加 Windows 备选注解（python.org 安装只提供 `python.exe`，可换 `python`）。前置条件章节从「需要嵌入式 python.exe」改为「需要系统 Python 3.10+，首次用前跑 setup 脚本装依赖」。
+- **新增跨平台依赖清单** `requirements.txt`：核心 `python-pptx>=0.6.21`、`Pillow`、`cairosvg`、`PyMuPDF`、`mammoth`、`openpyxl`（均为纯 Python，无需 Office）；Windows 专属的 `comtypes`（COM 调 PowerPoint）标注为可选。
+- **新增 `setup_python.sh`**（macOS/Linux）：自动选 `python3`/`python`，`pip install --user -r requirements.txt`，失败回退普通安装。
+- **改造 `setup_python.bat`**：从「打印提示让用户手动拷贝 python.exe」改为 `pip install -r requirements.txt`。
+
+---
+
+### Added — ppt-auto 资产 embed 进二进制（消灭 .momapeer 小尾巴）
+
+把 ppt-auto 资产用 `go:embed` 编译进 `momapeer.exe`，程序首次启动会话时自动释放到 `~/.momapeer/skills/ppt-auto/`（skill store 的 global scope 固定扫描点）。CLI 与桌面应用走同一条 `boot.Build` 路径，桌面零额外改动。
+
+- **新建 `internal/assets/` 包**：
+  - `embed.go`：`//go:embed all:pptauto`。
+  - `release.go`：`EnsurePPTAutoSkill()` 幂等释放（带 `.embedded-version` 版本标记），以及 `PPTAutoSkillDir()` / `PPTAutoTemplatesDir()` / `PPTAutoConfigPath()` 路径辅助函数。
+  - `release_test.go`：用 sandbox HOME 覆盖释放正确性、下划线条目（证明 `all:` 生效）、版本标记、幂等性。
+- **资产目录改名**：`.momapeer/skills/ppt-auto/` → `internal/assets/pptauto/`（无点号）。Go embed 硬性拒绝以 `.` 开头的路径；`all:` 前缀确保 `__init__.py` / `_index.md` 等以 `_`/`.` 开头的条目不被静默丢弃。
+- **接入释放逻辑**（`internal/boot/boot.go`）：在 `skill.New` 之前调用 `assets.EnsurePPTAutoSkill()`，失败只记日志、不阻断启动（用户可能已有可用副本）。
+- **改造两个 exe 同级辅助函数**（ Gemini 原方案漏改的运行时断裂点）：
+  - `internal/ppttemplate/template.go` 的 `SkillTemplatesDir`：优先查释放后的 `~/.momapeer/skills/ppt-auto/templates`。
+  - `desktop/cowork_settings.go` 的 `updatePPTSkillConfig`：优先查释放后的 `template_config.json`。
+
+---
+
+### Changed — 安装包分发简化（CI 零改动）
+
+ppt-auto 已 embed 进 exe 本体，安装包只需装一个 exe，不再需要拷贝外部 `.momapeer` 目录。`wails build` 生成 exe 时 ppt-auto 自动跟进去，版本永远与 exe 同源同步。
+
+- **清理打包脚本**：`scripts/installer.nsi`、`desktop/scripts/installer.nsi`、`scripts/package.ps1` 中拷贝 `.momapeer` 的逻辑全部删除；`scripts/installer.nsi` 卸载段移除对 `$INSTDIR\.momapeer` 的清理（该目录不再创建），并显式保留 `$PROFILE\.momapeer`（可能含用户自有资产）。
+- **更新 `.gitignore`**：原 `.momapeer/skills` 白名单与 runtime 排除规则失效，改为整体忽略本地 `.momapeer/`（运行时释放目录）。
+- **CI 兼容性**：`release-desktop.yml` 的 `wails build` + `makensis scripts\installer.nsi` 流程一行都不用改，安装包模式天然兼容。安装包体积约 60MB → 80MB（多出的 ~20MB 是跨平台 ppt-auto 资产）。
+
+---
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| 主模块 `go build ./...` | ✅ |
+| desktop 模块 `go build ./...` | ✅ |
+| `go vet`（受影响包） | ✅ 无新增警告（5 处 unsafe.Pointer 是预存的 Windows UIA 代码，与本次无关） |
+| `go test ./internal/assets/...` | ✅ `TestEnsurePPTAutoSkill_ReleasesEmbeddedTree`（释放正确性 + 幂等性） |
+| `go test ./internal/{skill,config,builtinmcp,ppttemplate,boot}/...` | ✅ 全过（含 boot 包 59s 完整测试） |
+| CLI 二进制编译 | ✅ 77MB（含 ~33MB embed 资产） |
+
+---
+
+### 用户最终体验
+
+```
+下载 momapeer-setup.exe (~80MB)
+  ↓ 双击安装
+首次运行会话
+  ↓ boot.Build 自动释放 ppt-auto → ~/.momapeer/skills/ppt-auto/
+首次用 PPT 时跑 setup_python.bat / setup_python.sh 装依赖
+  ↓
+PPT 功能就绪（macOS/Linux/Windows 三平台通用）
+```
+
+---
+
+### ⚠️ 后续留意
+
+- **完整会话触发未实测**：释放逻辑已被单元测试覆盖，但「通过 CLI chat 会话端到端触发」建议手动确认一次（清空 `~/.momapeer/skills/ppt-auto/` → 跑 `momapeer chat` → 看是否释放）。
+- **版本标记 `SkillVersion = "1"`**：以后更新 embed 的 ppt-auto 资产时，记得 bump 这个常量，否则已有用户的程序不会刷新本地副本。
+
+---
+
 ## [0.5.7] — 2026-07-30
 
 **两条主线：(1) 日历智能解析重塑——从脆弱的正则单点改造成「正则即时秒解 + 迅捷任务模型按需兜底」的分层架构，并修复一个让 `8点50` 解析成 `08:00` 的分钟丢失 bug；(2) 邮件栏时间/排序根治——日期改用 ISO 8601（原 RFC1123Z JS 解析失败）、FETCH 后显式按日期最新优先排序（原依赖 IMAP 返回顺序）。** 本版还收录了知识库注入控制权归还用户（Composer 知识库下拉框）、飞书机器人假连接修复等并行迭代。
