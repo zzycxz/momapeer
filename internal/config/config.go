@@ -1402,7 +1402,7 @@ var BuiltinMoMAModels = []string{
 	// 通义千问
 	"qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b",
 	// DeepSeek
-	"deepseek/deepseek-v4-flash", "deepseek/deepseek-v32",
+	"deepseek/deepseek-v4-flash",
 	// 智谱
 	"z.ai/glm-5.1", "z.ai/glm-5.2",
 	// MiniMax
