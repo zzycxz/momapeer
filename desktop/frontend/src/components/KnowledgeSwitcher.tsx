@@ -75,13 +75,6 @@ export function KnowledgeSwitcher({
   }, [open, closing]);
 
   const pick = (next: string) => {
-    // Unconditional onPick — mirrors ModelSwitcher/EffortSwitcher. The previous
-    // `if (next !== scope)` guard was a stale-closure trap: `scope` is captured
-    // at pick-creation time, but closeMenu defers the callback 140ms (close
-    // animation). If the component re-rendered in between (e.g. collections
-    // lazy-loaded), the guard compared against a stale scope and silently
-    // skipped the call, making the dropdown appear unresponsive. The backend's
-    // SetRagScopeForTab is idempotent, so a redundant call is harmless.
     closeMenu(() => onPick(next));
   };
 

@@ -55,6 +55,7 @@ import type {
   RagCollectionView,
   RagNodeView,
   TaskView,
+  BotDockStatusView,
 } from "../../lib/types";
 import { WorkspacePanel } from "../WorkspacePanel";
 import { EntityDetail } from "./EntityDetail";
@@ -226,6 +227,7 @@ function DefaultDock({
               onToggleMaximized={onToggleMaximized}
               showViewTabs={false}
               initialViewMode="files"
+              onAddToChat={(text: string) => window.dispatchEvent(new CustomEvent("cowork:insert-text", { detail: text }))}
             />
           ) : (
             <div className="cowork-dock__empty-state">
@@ -252,6 +254,7 @@ function TodayView() {
   const [probe, setProbe] = useState<MailProbeResult | null>(null);
   const [inbox, setInbox] = useState<InboxItem[] | null>(null);
   const [holidays, setHolidays] = useState<CalendarEventView[]>([]);
+  const [botStatus, setBotStatus] = useState<BotDockStatusView | null>(null);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(() => {
@@ -265,7 +268,7 @@ function TodayView() {
       next.getDate(),
     ).padStart(2, "0")}`;
 
-    // 1. 优先快加载：日程、任务、节假日（本地数据，几乎 0 延迟）
+    // 1. 优先快加载：日程、任务、节假日、bot状态（本地数据，几乎 0 延迟）
     Promise.all([
       (app as unknown as { ListCalendarEvents: (s: string, b: string) => Promise<CalendarEventView[]> })
         .ListCalendarEvents(since, before)
@@ -276,10 +279,14 @@ function TodayView() {
       (app as unknown as { GetChineseHolidays?: (year: number) => Promise<CalendarEventView[]> })
         .GetChineseHolidays?.(now.getFullYear())
         .catch(() => [] as CalendarEventView[]) ?? Promise.resolve([] as CalendarEventView[]),
-    ]).then(([evs, tks, hols]) => {
+      (app as unknown as { BotDockStatus?: () => Promise<BotDockStatusView> })
+        .BotDockStatus?.()
+        .catch(() => null as BotDockStatusView | null) ?? Promise.resolve(null as BotDockStatusView | null),
+    ]).then(([evs, tks, hols, bs]) => {
       setEvents(evs);
       setTasks(tks);
       setHolidays(hols);
+      setBotStatus(bs);
     });
 
     // 2. 异步慢加载：邮件探针与 50 封邮件列表（远程请求）
@@ -453,16 +460,30 @@ function TodayView() {
             </div>
           </div>
 
-          {/* IM bot 行 */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px" }}>
+          {/* IM bot 行 — real status from BotDockStatus (not hardcoded). Click
+              the row to jump to Settings → Bots for connection details. */}
+          <div
+            style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", cursor: "pointer" }}
+            onClick={() => window.dispatchEvent(new CustomEvent("app:open-settings-tab", { detail: "bots" }))}
+            title="点击查看 IM bot 连接详情"
+          >
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
               <Bot size={14} style={{ color: "var(--fg-dim)" }} />
               <span style={{ fontSize: "13px", fontWeight: 500 }}>IM bot</span>
-              <span className={"mail-status-dot mail-status-dot--" + (loading ? "warning" : "ok")} style={{ marginLeft: "4px" }} />
-              <span style={{ fontSize: "12px", color: "var(--fg-dim)" }}>{loading ? "同步中..." : "已连接"}</span>
+              <span className={"mail-status-dot mail-status-dot--" + (loading ? "warning" : (botStatus?.online ? "ok" : "idle"))} style={{ marginLeft: "4px" }} />
+              <span style={{ fontSize: "12px", color: "var(--fg-dim)" }}>
+                {loading ? "同步中..." : (botStatus?.online
+                  ? (botStatus.platforms.length > 0 ? `在线（${botStatus.platforms.join("、")}）` : "在线")
+                  : "未启动")}
+              </span>
             </div>
             <div>
-              <span style={{ color: "var(--fg-faint)", fontSize: "12px" }}>暂无新件</span>
+              <span style={{ color: "var(--fg-faint)", fontSize: "12px" }}>
+                {botStatus?.online && botStatus.recentCount > 0
+                  ? `${botStatus.recentCount} 个近期会话`
+                  : "暂无消息"}
+                <span style={{ marginLeft: "4px", opacity: 0.6 }}>›</span>
+              </span>
             </div>
           </div>
         </div>

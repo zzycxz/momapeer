@@ -143,6 +143,7 @@ function sameMeta(a?: Meta, b?: Meta): boolean {
     a.autoApproveTools === b.autoApproveTools &&
     a.bypass === b.bypass &&
     a.toolApprovalMode === b.toolApprovalMode &&
+    a.ragScope === b.ragScope &&
     a.goal === b.goal &&
     a.goalStatus === b.goalStatus &&
     // expertSession drives the main-area branch (ExpertSessionView vs

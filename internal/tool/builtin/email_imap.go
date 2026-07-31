@@ -311,15 +311,26 @@ func imapRead(ctx context.Context, cfg config.IMAPConfig, mailbox string, limit 
 	if _, err := c.Select(mbox, true); err != nil { // read-only
 		// The requested mailbox may not exist under that exact name — providers
 		// use "Sent", "Sent Messages", "已发送", "[Gmail]/Sent Mail", etc. Try
-		// a few common aliases before giving up, so the dock's sent view works
-		// across 139/chinamobile/QQ/Gmail without per-provider config.
+		// all common aliases and pick the one with the MOST messages (some
+		// providers have a near-empty "Sent" alongside the real "已发送" with
+		// hundreds of messages — picking the first alias that exists would miss
+		// the real sent folder).
 		if mbox != "INBOX" {
-			for _, alias := range []string{"Sent", "Sent Messages", "已发送", "已发送邮件", "[Gmail]/Sent Mail"} {
-				if _, e := c.Select(alias, true); e == nil {
-					mbox = alias
-					err = nil
-					break
+			bestMbox := ""
+			bestCount := -1
+			for _, alias := range []string{"已发送", "已发送邮件", "Sent Messages", "Sent", "[Gmail]/Sent Mail", "Drafts", "垃圾邮件"} {
+				if st, e := c.Select(alias, true); e == nil && st != nil {
+					if int(st.Messages) > bestCount {
+						bestCount = int(st.Messages)
+						bestMbox = alias
+					}
 				}
+			}
+			if bestMbox != "" {
+				// Re-select the winner (the last Select may have been a different folder).
+				c.Select(bestMbox, true)
+				mbox = bestMbox
+				err = nil
 			}
 		}
 		if err != nil {
@@ -372,12 +383,20 @@ func imapSearch(ctx context.Context, cfg config.IMAPConfig, mailbox, from, subje
 	}
 	if _, err := c.Select(mbox, true); err != nil {
 		if mbox != "INBOX" {
-			for _, alias := range []string{"Sent", "Sent Messages", "已发送", "已发送邮件", "[Gmail]/Sent Mail"} {
-				if _, e := c.Select(alias, true); e == nil {
-					mbox = alias
-					err = nil
-					break
+			bestMbox := ""
+			bestCount := -1
+			for _, alias := range []string{"已发送", "已发送邮件", "Sent Messages", "Sent", "[Gmail]/Sent Mail"} {
+				if st, e := c.Select(alias, true); e == nil && st != nil {
+					if int(st.Messages) > bestCount {
+						bestCount = int(st.Messages)
+						bestMbox = alias
+					}
 				}
+			}
+			if bestMbox != "" {
+				c.Select(bestMbox, true)
+				mbox = bestMbox
+				err = nil
 			}
 		}
 		if err != nil {

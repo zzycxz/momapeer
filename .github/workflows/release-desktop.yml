@@ -296,6 +296,7 @@ jobs:
             -d "access_token=$GITEE_TOKEN" \
             -d "tag_name=$TAG" \
             -d "name=$TAG" \
+            -d "target_commitish=${{ github.sha }}" \
             -d "body=✨ Release auto-synced from GitHub Actions")
           
           RELEASE_ID=$(echo "$CREATE_RES" | jq -r .id)

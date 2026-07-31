@@ -145,6 +145,44 @@ func (a *App) ListRecentBotChats() []RecentChatView {
 	return out
 }
 
+// BotDockStatusView is the lightweight bot status shown in the dock's Today
+// panel: whether the gateway is online, which platforms are connected, and how
+// many recent chats (proxy for "new messages") exist.
+type BotDockStatusView struct {
+	Online       bool     `json:"online"`
+	Platforms    []string `json:"platforms"`
+	RecentCount  int      `json:"recentCount"`
+}
+
+// BotDockStatus returns a compact bot status for the dock Today panel, replacing
+// the previous hardcoded "已连接 / 暂无新件" placeholder. Online = the gateway
+// goroutine is running (botGW non-nil). Platforms = which adapters connected.
+// RecentCount = number of recently-seen chats (a rough "activity" indicator).
+func (a *App) BotDockStatus() BotDockStatusView {
+	gw := a.botGW.Load()
+	if gw == nil {
+		return BotDockStatusView{Online: false, Platforms: []string{}, RecentCount: 0}
+	}
+	recent := gw.RecentChats()
+	// Platforms are derived from the recent-chats list (the platforms that have
+	// actually exchanged messages). This is more meaningful than configured-but-
+	// unconnected adapters.
+	seen := map[string]bool{}
+	platforms := make([]string, 0, 3)
+	for _, c := range recent {
+		p := string(c.Platform)
+		if !seen[p] {
+			seen[p] = true
+			platforms = append(platforms, p)
+		}
+	}
+	return BotDockStatusView{
+		Online:      true,
+		Platforms:   platforms,
+		RecentCount: len(recent),
+	}
+}
+
 // botChannelConfigsFromConnections 从 connections 配置中提取每个平台的覆盖参数。
 func botChannelConfigsFromConnections(connections []config.BotConnectionConfig) map[bot.Platform]bot.ChannelConfig {
 	if len(connections) == 0 {

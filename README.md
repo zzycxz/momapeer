@@ -188,6 +188,9 @@ api_key_env = "JIUTIAN_API_KEY"
 | **[架构规格](./docs/SPEC.md)** | 工程契约：系统架构、Registry 机制、数据类型约束与长期路线图 |
 | **[快照机制](./docs/CHECKPOINTS.md)** | 基于文件快照的代码修改安全网设计 |
 | **[Session 架构](./docs/SESSION_REFERENCE_ARCHITECTURE.md)** | 会话生命周期管理、状态持久化与无缝恢复机制 |
+| **[RAG 知识库指南](./docs/RAG_GUIDE.md)** | 文档导入、知识图谱、实体提取、语义搜索、@引用 |
+| **[专家团指南](./docs/EXPERT_GUIDE.md)** | 多模型协作、团队配置、协作模式、会话历史 |
+| **[办公自动化指南](./docs/OFFICE_GUIDE.md)** | 邮件集成、日历任务、PPT 生成、定时任务 |
 | **[贡献指南](./CONTRIBUTING.md)** | 开发者必读：如何添加新工具、新 Provider 以及定制机器人通道 |
 | **[更新日志](./CHANGELOG.md)** | 历史发版记录与功能迭代 |
 

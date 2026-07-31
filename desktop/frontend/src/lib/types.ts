@@ -1284,6 +1284,14 @@ export interface RecentChatView {
   lastSeen: number;
 }
 
+// BotDockStatusView is the lightweight bot status shown in the dock Today panel:
+// online (gateway running), connected platforms, and recent chat count.
+export interface BotDockStatusView {
+  online: boolean;
+  platforms: string[];
+  recentCount: number;
+}
+
 export interface BotConnectionDiagnostic {
   id: string;
   label: string;

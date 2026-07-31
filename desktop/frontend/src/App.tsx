@@ -872,13 +872,26 @@ export default function App() {
     });
   }, [sidebarImConnections]);
 
-  // Open settings when the native menu item (CmdOrCtrl+,) is activated.
+  // Open settings when the native menu item (CmdOrCtrl+,) is activated (Wails
+  // backend event), OR when another frontend component (e.g. the dock's IM bot
+  // row) dispatches a DOM CustomEvent to open a specific settings tab.
   useEffect(() => {
-    if (typeof window === "undefined" || !window.runtime) return;
-    return window.runtime.EventsOn("app:open-settings", () => {
+    // Backend event (keyboard shortcut) — always opens "general".
+    if (typeof window !== "undefined" && window.runtime) {
+      window.runtime.EventsOn("app:open-settings", () => {
+        closeTransientOverlays();
+        setSettingsTarget("general");
+      });
+    }
+    // Frontend DOM event (e.g. dock → settings → bots). detail carries the tab.
+    const validTabs = ["general", "models", "bots", "cowork", "mcp", "skills", "memory", "permissions", "sandbox", "network", "hooks", "appearance", "updates"];
+    const handler = (e: Event) => {
       closeTransientOverlays();
-      setSettingsTarget("general");
-    });
+      const tab = (e as CustomEvent<string>).detail;
+      setSettingsTarget((validTabs.includes(tab) ? tab : "general") as SettingsTab);
+    };
+    window.addEventListener("app:open-settings-tab", handler as EventListener);
+    return () => window.removeEventListener("app:open-settings-tab", handler as EventListener);
   }, [closeTransientOverlays]);
 
   // Screenshot hotkey recognition results — surface as a toast so the user sees

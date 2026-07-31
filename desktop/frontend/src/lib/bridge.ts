@@ -80,6 +80,7 @@ import type {
   RagExtractResultView,
   ExpertRunView,
   RecentChatView,
+  BotDockStatusView,
 } from "./types";
 
 const GLOBAL_PROJECT_ORDER_KEY = "__global__";
@@ -301,6 +302,9 @@ export interface AppBindings {
   TestBotConnection(id: string, target?: string): Promise<BotConnectionDiagnostic>;
   // ListRecentBotChats returns recently-seen IM chats for the task-form picker.
   ListRecentBotChats(): Promise<RecentChatView[]>;
+  // BotDockStatus returns the lightweight bot status for the dock Today panel
+  // (online, connected platforms, recent chat count). Replaces hardcoded text.
+  BotDockStatus(): Promise<BotDockStatusView>;
   SetCloseBehavior(mode: string): Promise<void>;
   SetDisplayMode(mode: string): Promise<void>;
   SetDesktopLanguage(lang: string): Promise<void>;
@@ -2807,6 +2811,9 @@ function makeMockApp(): AppBindings {
         },
         async ListRecentBotChats() {
           return [];
+        },
+        async BotDockStatus() {
+          return { online: false, platforms: [], recentCount: 0 } as BotDockStatusView;
         },
         async SetCloseBehavior(mode: string) {
           settings.closeBehavior = mode === "quit" ? "quit" : "background";
