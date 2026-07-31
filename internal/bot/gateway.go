@@ -458,9 +458,18 @@ func (gw *BotGateway) addPendingReaction(ctx context.Context, plat Platform, ada
 	if !ok {
 		return
 	}
-	if err := reactor.AddPendingReaction(ctx, msg.MessageID); err != nil {
-		gw.logger.Warn("pending reaction failed", "platform", plat, "err", err)
-	}
+	// 异步打 emoji：这是纯视觉反馈，不应阻塞消息处理主流程。原同步实现会在
+	// runTurn 之前等待飞书 REST API 返回（最长 15s 超时），网络抖动时用户会感
+	// 到「发消息后很久没反应」。这里用独立 context，避免 turn 结束后父 ctx 被取
+	// 消导致请求中断。
+	messageID := msg.MessageID
+	go func() {
+		reactCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := reactor.AddPendingReaction(reactCtx, messageID); err != nil {
+			gw.logger.Warn("pending reaction failed", "platform", plat, "err", err)
+		}
+	}()
 }
 
 // autoAddToAllowlist 将用户自动加入内存白名单，并通过回调持久化。
@@ -680,8 +689,11 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 		return
 	}
 
-	// 发送"正在输入"状态
+	// 发送"正在输入"状态。多数 IM（含飞书）无原生 typing API，SendTyping 多为
+	// 空实现，故同步发一条轻量占位回复给用户即时反馈，避免模型冷启动/首 token
+	// 延迟期间用户以为「没收到」。异步的 pending reaction 也会先于这条发出。
 	_ = adapter.SendTyping(ctx, msg.ChatID)
+	_ = gw.sendText(ctx, adapter, msg, "🤔 收到，正在思考…")
 
 	// 创建事件渲染 sink
 	sink := newRenderSink(ctx, adapter, msg.ChatID, msg.ChatType, msg.MessageID, gw.logger, func(ask event.Ask) {

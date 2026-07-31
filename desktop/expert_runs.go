@@ -289,22 +289,32 @@ func toEventCollab(r experts.CollabRecord) event.Collab {
 	}
 }
 
-// waitForExpertTab polls until the expert-session tab's controller is built
-// (boot.Build is async), up to a timeout. Returns the controller or nil.
+// waitForExpertTab blocks until the expert-session tab's controller is built
+// (boot.Build runs async in a goroutine), up to a timeout. The build signals
+// completion by closing tab.readyCh, so this is a pure blocking wait — no poll
+// loop. Returns the controller or nil (timeout / build failure).
 func (a *App) waitForExpertTab(tabID string, timeout time.Duration) *control.Controller {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		a.mu.RLock()
-		tab := a.tabs[tabID]
-		ready := tab != nil && tab.Ctrl != nil && tab.Ready
-		ctrl := tab.Ctrl
-		a.mu.RUnlock()
-		if ready && ctrl != nil {
-			return ctrl
-		}
-		time.Sleep(100 * time.Millisecond)
+	a.mu.RLock()
+	tab := a.tabs[tabID]
+	ch := tab.readyCh
+	a.mu.RUnlock()
+	if ch == nil {
+		return nil // tab gone or build never started
 	}
-	return nil
+
+	// Block on the build's done signal. On wake, re-read Ctrl under the lock;
+	// it's nil if the build failed, in which case we return nil.
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-ch:
+	case <-timer.C:
+		return nil
+	}
+	a.mu.RLock()
+	ctrl := a.tabs[tabID].Ctrl
+	a.mu.RUnlock()
+	return ctrl
 }
 
 // priorExpertRuns reads the expert session's history and extracts prior

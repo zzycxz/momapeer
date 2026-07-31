@@ -302,7 +302,9 @@ var (
 	reWeekdayNext = regexp.MustCompile(`(下|本)(周|星期|礼拜)([一二三四五六七天末]|1|2|3|4|5|6|7)`)
 	reWeekdayBare = regexp.MustCompile(`(周|星期|礼拜)([一二三四五六七天末]|1|2|3|4|5|6|7)`)
 	reClock       = regexp.MustCompile(`(\d{1,2})\s*[:：]\s*(\d{1,2})`)
-	// Period + 点[M分][半]. m[3]=M分, m[4]=半 (only one populated).
-	rePeriodHour = regexp.MustCompile(`(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上|夜里|夜间|午夜)\s*(\d{1,2})\s*点(?:(\d{1,2})\s*分|(\s*半))?`)
-	reBareHour   = regexp.MustCompile(`(\d{1,2})\s*点(?:(\d{1,2})\s*分|(\s*半))?`)
+	// Period + 点[M(分)][半]. m[3]=minutes (1-2 digits, optional 分), m[4]=半.
+	// 分 is OPTIONAL: people write "8点50" as often as "8点50分", and without
+	// this the minute group silently fails to match, dropping 8:50 → 8:00.
+	rePeriodHour = regexp.MustCompile(`(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上|夜里|夜间|午夜)\s*(\d{1,2})\s*点(?:(\d{1,2})\s*分?|(\s*半))?`)
+	reBareHour   = regexp.MustCompile(`(\d{1,2})\s*点(?:(\d{1,2})\s*分?|(\s*半))?`)
 )

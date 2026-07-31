@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeAdapter 是一个内存中的假适配器，用于测试 BotGateway。
@@ -211,11 +212,23 @@ func TestGatewayAddsPendingReactionWhenAdapterSupportsIt(t *testing.T) {
 	gw := NewGateway(GatewayConfig{}, nil, logger)
 	fa := &fakeReactionAdapter{fakeAdapter: newFakeAdapter(PlatformFeishu, "fake-feishu")}
 
+	// addPendingReaction 现在异步执行（不阻塞消息处理主流程），轮询等待 goroutine 完成。
 	gw.addPendingReaction(context.Background(), PlatformFeishu, fa, InboundMessage{MessageID: "om_123"})
 
-	if len(fa.reactions) != 1 || fa.reactions[0] != "om_123" {
-		t.Fatalf("reactions = %#v, want [om_123]", fa.reactions)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		fa.mu.Lock()
+		done := len(fa.reactions) == 1 && fa.reactions[0] == "om_123"
+		fa.mu.Unlock()
+		if done {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
+	fa.mu.Lock()
+	got := append([]string(nil), fa.reactions...)
+	fa.mu.Unlock()
+	t.Fatalf("reactions = %#v, want [om_123]", got)
 }
 
 func TestGatewaySessionOptionsUseChannelOverride(t *testing.T) {

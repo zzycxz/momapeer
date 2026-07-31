@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -48,9 +49,12 @@ type EmailMessage struct {
 	From        string            `json:"from"`
 	To          string            `json:"to"`
 	Subject     string            `json:"subject"`
-	Date        string            `json:"date"`
+	Date        string            `json:"date"` // RFC3339 ("2006-01-02T15:04:05Z07:00"), ISO 8601 so the JS frontend parses it reliably
 	Preview     string            `json:"preview"`
 	Attachments []EmailAttachment `json:"attachments,omitempty"`
+	// rawDate is the parsed envelope date, kept (unexported) so callers can sort
+	// newest-first deterministically instead of relying on IMAP arrival order.
+	rawDate time.Time
 }
 
 // imapConnect dials (TLS for 993, plain/STARTTLS for 143), logs in. Returns the
@@ -328,7 +332,7 @@ func imapRead(ctx context.Context, cfg config.IMAPConfig, mailbox string, limit 
 			}
 			if bestMbox != "" {
 				// Re-select the winner (the last Select may have been a different folder).
-				c.Select(bestMbox, true)
+				_, _ = c.Select(bestMbox, true)
 				mbox = bestMbox
 				err = nil
 			}
@@ -394,7 +398,7 @@ func imapSearch(ctx context.Context, cfg config.IMAPConfig, mailbox, from, subje
 				}
 			}
 			if bestMbox != "" {
-				c.Select(bestMbox, true)
+				_, _ = c.Select(bestMbox, true)
 				mbox = bestMbox
 				err = nil
 			}
@@ -458,6 +462,24 @@ func fetchMessages(c *client.Client, seqs []uint32, withBody bool) ([]EmailMessa
 		}
 		out = append(out, parseMessage(msg))
 	}
+	// IMAP FETCH responses arrive in server-dependent order, not necessarily by
+	// sequence number or date. Sort newest-first by envelope date so the dock and
+	// the agent text view both show the most recent message on top. Messages
+	// without a parseable date (rawDate zero) sink to the bottom; ties keep a
+	// stable order.
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i].rawDate, out[j].rawDate
+		if a.IsZero() && b.IsZero() {
+			return false
+		}
+		if a.IsZero() {
+			return false // a has no date → a goes after b
+		}
+		if b.IsZero() {
+			return true
+		}
+		return a.After(b)
+	})
 	return out, nil
 }
 
@@ -471,7 +493,11 @@ func parseMessage(msg *imap.Message) EmailMessage {
 		m.To = formatAddresses(env.To)
 		m.Subject = decodeRFC2047(env.Subject)
 		if env.Date != (time.Time{}) {
-			m.Date = env.Date.Format(time.RFC1123Z)
+			m.rawDate = env.Date
+			// RFC3339 (ISO 8601) is parsed reliably by JS's new Date() — the prior
+			// RFC1123Z ("30 Jul 26 09:15 +0800") format frequently failed to parse
+			// in the frontend, leaving the dock's date column blank/abbreviated.
+			m.Date = env.Date.Format(time.RFC3339)
 		}
 	}
 	// Read the raw message bytes and parse MIME for a body preview + attachments.

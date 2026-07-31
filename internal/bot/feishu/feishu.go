@@ -109,7 +109,10 @@ func (a *adapter) Start(ctx context.Context) error {
 
 	mode := a.cfg.Mode
 	if mode == "" {
-		mode = "webhook"
+		// 默认走 WebSocket 长连接：免公网域名/端口映射，飞书后台只需开启
+		// 「使用长连接接收事件」即可。webhook 模式需公网回调地址 + verification
+		// token，手动配置时极易出现「连上却收不到消息」的假连接。
+		mode = "websocket"
 	}
 
 	switch mode {

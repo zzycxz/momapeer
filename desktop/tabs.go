@@ -44,6 +44,14 @@ type WorkspaceTab struct {
 	Ready         bool                // true once boot.Build completes
 	StartupErr    string              // build error, surfaced to the frontend
 	sink          *tabEventSink       // routes events with this tab's ID
+	// readyCh is closed when the current build attempt finishes (success or
+	// failure). It replaces the 100ms poll loop that waitForExpertTab used to
+	// spin while waiting for boot.Build: callers now block on <-readyCh and wake
+	// the instant the build returns. reset at the start of each build so a
+	// rebuild (model switch) produces a fresh signal. Guarded by readyOnce +
+	// the App mutex (reset happens under a.mu in buildTabController).
+	readyCh   chan struct{}
+	readyOnce sync.Once
 
 	ActivityStatus string // transient project-tree status for the in-flight turn
 
@@ -976,7 +984,23 @@ func (a *App) startTabControllerBuild(tab *WorkspaceTab) {
 	go a.buildTabController(tab)
 }
 
+// markBuilt closes the tab's ready signal, waking any goroutine blocked on
+// waitForTabReady. Idempotent via readyOnce: safe to call on every exit path of
+// buildTabController, and harmless when a rebuilt tab closes it again.
+func (tab *WorkspaceTab) markBuilt() {
+	tab.readyOnce.Do(func() { close(tab.readyCh) })
+}
+
 func (a *App) buildTabController(tab *WorkspaceTab) {
+	// Reset the ready signal so a rebuild (model switch) produces a fresh edge.
+	// Callers blocked on the previous build already returned; a new wait starts
+	// against this fresh channel. Done under a.mu so reset+Do are race-free.
+	a.mu.Lock()
+	tab.readyCh = make(chan struct{})
+	tab.readyOnce = sync.Once{}
+	a.mu.Unlock()
+	defer tab.markBuilt()
+
 	wailsCtx := a.ctx
 	buildCtx := a.bootContext()
 

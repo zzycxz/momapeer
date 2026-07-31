@@ -280,6 +280,12 @@ func (a *App) PreviewSchedule(text string) SchedulePreview {
 		}
 	}
 	// (2) Scheduler expression. Normalize "in X" first.
+	// NOTE: PreviewSchedule is called on every keystroke (debounced in the UI),
+	// so it deliberately uses ONLY the cheap regex + expression paths here. When
+	// both fail the result is kind="unknown" and the UI shows a manual "🔍 智能
+	// 解析" button; clicking it calls SmartParseSchedule, which is the only place
+	// the fast_task_model (迅捷任务模型) is invoked for time parsing — one call
+	// per click, never per keystroke.
 	expr, err := scheduler.NormalizeExpression(text, now)
 	if err != nil {
 		return SchedulePreview{InputText: text, Kind: "unknown", Note: "无法识别（支持：每天/后天/15:00/daily/every/at/in）"}
@@ -305,6 +311,38 @@ func (a *App) PreviewSchedule(text string) SchedulePreview {
 		}
 	}
 	return preview
+}
+
+// SmartParseSchedule is the explicit, on-demand LLM time parser. It is called
+// ONLY when the user clicks the "🔍 智能解析" button in the create form — never
+// during typing (typing goes through the regex-only PreviewSchedule). It asks
+// the fast_task_model (迅捷任务模型) to resolve phrases the regex can't —
+// "下下周五下午3点", "两个星期后", "下个月初" — into a concrete one-shot time.
+//
+// Returns the resolved SchedulePreview on success. When the model says the text
+// isn't a time phrase, or the call fails, it returns a kind="unknown" preview
+// carrying an error note so the UI can surface why the parse didn't work.
+func (a *App) SmartParseSchedule(text string) SchedulePreview {
+	text = trim(text)
+	if text == "" {
+		return SchedulePreview{InputText: text, Kind: "unknown", Note: "输入时间或计划"}
+	}
+	now := time.Now()
+	t, err := llmParseTime(context.Background(), text, now)
+	if err != nil {
+		return SchedulePreview{InputText: text, Kind: "unknown", Note: "智能解析失败：" + err.Error()}
+	}
+	if t.IsZero() {
+		// Model responded "N/A" — the text isn't recognized as a time phrase.
+		return SchedulePreview{InputText: text, Kind: "unknown", Note: "未能识别为时间表达，请换种说法"}
+	}
+	return SchedulePreview{
+		InputText:    text,
+		Expression:   "at " + t.Format("2006-01-02 15:04"),
+		AbsoluteTime: t.Format(timeFmt),
+		Kind:         "oneshot",
+		Note:         "一次性任务（智能解析）",
+	}
 }
 
 // emitSchedulerChanged notifies the frontend that the task list mutated. The

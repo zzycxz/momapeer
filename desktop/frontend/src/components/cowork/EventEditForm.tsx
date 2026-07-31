@@ -106,7 +106,7 @@ export function EventEditForm({
   };
 
   return (
-    <div className="cowork-taskform-overlay" onClick={onCancel}>
+    <div className="cowork-taskform-overlay">
       <div className="cowork-taskform" onClick={(e) => e.stopPropagation()}>
         <header className="cowork-taskform__head">
           <h3>{isEdit ? t("cowork.automationFormTitleEdit") : t("cowork.automationFormTitleNew")}</h3>

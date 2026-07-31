@@ -81,6 +81,7 @@ const PALETTE: string[] = [
 // we mirror the runtime shape with an optional preview here.
 interface InboxItem {
   from: string;
+  to: string;
   date: string;
   subject: string;
   preview?: string;
@@ -295,7 +296,7 @@ function TodayView() {
         .ProbeMailAccount("")
         .catch(() => ({ ok: false, status: "error", message: "Wails调用异常" } as MailProbeResult)),
       (app as unknown as { InboxPreview?: (mailbox: string, n: number) => Promise<InboxItem[]> })
-        .InboxPreview?.("INBOX", 50)
+        .InboxPreview?.("INBOX", 10)
         .catch(() => [] as InboxItem[]) ?? Promise.resolve([] as InboxItem[]),
     ]).then(([mb, inb]) => {
       setProbe(mb);
@@ -520,7 +521,6 @@ function TodayView() {
 
 function MailView() {
   const t = useT();
-  const [inbox, setInbox] = useState<InboxItem[] | null>(null);
   const [probe, setProbe] = useState<MailProbeResult | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -529,31 +529,45 @@ function MailView() {
   // InboxPreview reads and the tab label.
   const [folder, setFolder] = useState<"inbox" | "sent">("inbox");
 
+  // Cache both folders so switching inbox/sent is instant (no re-fetch).
+  const [inboxData, setInboxData] = useState<InboxItem[]>([]);
+  const [sentData, setSentData] = useState<InboxItem[]>([]);
+
   const refresh = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const mailbox = folder === "sent" ? "Sent" : "INBOX";
-      const [mb, inb] = await Promise.all([
+      // Fetch both folders at once (probe + inbox 30 + sent 10). This runs on
+      // mount and on explicit refresh-button click — NOT on folder switch, so
+      // switching tabs is instant.
+      const [mb, inb, sent] = await Promise.all([
         (app as unknown as { ProbeMailAccount: (name: string) => Promise<MailProbeResult> })
           .ProbeMailAccount("")
           .catch(() => ({ ok: false, status: "error", message: "Wails调用异常" } as MailProbeResult)),
         (app as unknown as { InboxPreview?: (mailbox: string, n: number) => Promise<InboxItem[]> })
-          .InboxPreview?.(mailbox, 30) ??
+          .InboxPreview?.("INBOX", 30) ??
+          Promise.resolve([] as InboxItem[]),
+        (app as unknown as { InboxPreview?: (mailbox: string, n: number) => Promise<InboxItem[]> })
+          .InboxPreview?.("Sent", 10) ??
           Promise.resolve([] as InboxItem[]),
       ]);
       setProbe(mb);
-      setInbox(inb);
+      setInboxData(inb);
+      setSentData(sent);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
     } finally {
       setLoading(false);
     }
-  }, [folder]);
+  }, []);
 
+  // Load once on mount only (not on folder switch).
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // The displayed list comes from the cached folder data — instant switch.
+  const inbox = folder === "sent" ? sentData : inboxData;
 
   const mailOk = probe?.status === "ok";
   const mailUnconfigured = probe?.status === "unconfigured" || !probe;
@@ -625,8 +639,9 @@ function MailView() {
                   onClick={() => setOpenKey(open ? null : key)}
                 >
                   <div className="cowork-mailtab__item-head">
-                    <span className="cowork-mailtab__from" title={m.from}>
-                      {m.from}
+                    {/* Inbox shows sender (from); Sent shows recipient (to). */}
+                    <span className="cowork-mailtab__from" title={folder === "sent" ? m.to : m.from}>
+                      {folder === "sent" ? (m.to || "（未知收件人）") : m.from}
                     </span>
                     <span className="cowork-mailtab__date">{formatDateTime(m.date)}</span>
                   </div>

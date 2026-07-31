@@ -690,6 +690,25 @@ func runBrowserAction(ctx context.Context, s *browserSession, actions ...chromed
 	return chromedp.Run(actx, actions...)
 }
 
+// waitForBodyContent blocks until the <body> has meaningful content (SPA apps
+// render asynchronously, so right after Navigate the DOM can be near-empty).
+// It replaces a blind time.Sleep: chromedp.Poll re-evaluates a JS predicate
+// every pollInterval and returns the instant body length exceeds the threshold,
+// so a fast page completes in tens of ms instead of always waiting the full
+// cap. The cap is a worst-case backstop mirroring the old fixed sleeps.
+func waitForBodyContent(ctx context.Context, s *browserSession, minLen int, cap time.Duration) {
+	pollCtx, cancel := context.WithTimeout(ctx, cap)
+	defer cancel()
+	// Returns true (truthy) once non-whitespace body content exceeds minLen.
+	const expr = `document.body && document.body.innerHTML.replace(/\s/g,'').length > %d`
+	var ok bool
+	_ = runBrowserAction(pollCtx, s, chromedp.Poll(
+		fmt.Sprintf(expr, minLen),
+		&ok,
+		chromedp.WithPollingInterval(150*time.Millisecond),
+	))
+}
+
 // --- retry helpers -----------------------------------------------------------
 
 // retryConfig holds retry parameters for browser actions.
@@ -1006,11 +1025,14 @@ func (browserNavigate) Execute(ctx context.Context, args json.RawMessage) (strin
 	var bodyHTML string
 	if err := runBrowserAction(ctx, s, chromedp.OuterHTML("body", &bodyHTML)); err == nil {
 		if len(strings.TrimSpace(bodyHTML)) < 50 {
-			time.Sleep(3 * time.Second)
+			// Wait for the SPA to populate <body>. Polling returns the moment
+			// content appears (cap mirrors the old fixed 3s as a backstop).
+			waitForBodyContent(ctx, s, 50, 3*time.Second)
 			_ = runBrowserAction(ctx, s, chromedp.OuterHTML("body", &bodyHTML))
 			if len(strings.TrimSpace(bodyHTML)) < 50 {
+				// Still empty after the wait — reload and give it another chance.
 				_ = runBrowserAction(ctx, s, chromedp.Reload(), chromedp.WaitReady("body"))
-				time.Sleep(2 * time.Second)
+				waitForBodyContent(ctx, s, 50, 2*time.Second)
 			}
 		}
 	}

@@ -440,7 +440,7 @@ func (a *App) Settings() SettingsView {
 func botSettingsView(b config.BotConfig) BotSettingsView {
 	mode := strings.TrimSpace(b.Feishu.Mode)
 	if mode == "" {
-		mode = "webhook"
+		mode = "websocket"
 	}
 	return BotSettingsView{
 		Enabled:    b.Enabled,

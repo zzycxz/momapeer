@@ -20508,6 +20508,28 @@ a[href] {
   color: var(--fg-faint);
 }
 
+/* Smart-parse button — only appears in the preview row when the regex path
+   failed, as the sole on-demand trigger for the 迅捷任务模型. */
+:root[data-theme-style] .cowork-taskform__smart-btn {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+:root[data-theme-style] .cowork-taskform__smart-btn:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+}
+:root[data-theme-style] .cowork-taskform__smart-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 :root[data-theme-style] .cowork-taskform__delivery {
   display: flex;
   flex-wrap: wrap;

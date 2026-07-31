@@ -124,6 +124,46 @@ func TestResolveRelativeTimeOffsets(t *testing.T) {
 	}
 }
 
+// TestResolveRelativeTimeBareMinutes guards the regression where a bare
+// "N点M" (no 分 suffix) silently dropped the minutes — "8点50" parsed as 8:00.
+// People write this form constantly, so both the bare and period variants, with
+// and without 分, must keep the minute component.
+func TestResolveRelativeTimeBareMinutes(t *testing.T) {
+	now := fixedNow() // 2026-06-22 10:00
+	cases := []struct {
+		name string
+		in   string
+		want time.Time
+	}{
+		// Bare "N点M" (no 分) — the originally broken case.
+		{"bare 点M未来", "8点50", time.Date(2026, 6, 23, 8, 50, 0, 0, time.Local)}, // past → rolls to tomorrow
+		{"bare 点M已过", "明天8点50", time.Date(2026, 6, 23, 8, 50, 0, 0, time.Local)},
+		// Period + 点M (no 分).
+		{"下午点M", "下午3点20", time.Date(2026, 6, 22, 15, 20, 0, 0, time.Local)},
+		{"晚上点M", "晚上10点15", time.Date(2026, 6, 22, 22, 15, 0, 0, time.Local)},
+		// With 分 suffix must still work (didn't regress).
+		{"bare 点M分", "8点50分", time.Date(2026, 6, 23, 8, 50, 0, 0, time.Local)},
+		{"下午点M分", "下午3点20分", time.Date(2026, 6, 22, 15, 20, 0, 0, time.Local)},
+		// Half hour unaffected.
+		{"点半", "9点半", time.Date(2026, 6, 23, 9, 30, 0, 0, time.Local)},
+		// Mixed sentence where the time phrase is embedded in free text.
+		// now is 10:00, so 8:50 today has passed → future-guard rolls to tomorrow
+		// (matches the existing "今天已过时间" semantics).
+		{"嵌入句子", "今天8点50提醒我去开会", time.Date(2026, 6, 23, 8, 50, 0, 0, time.Local)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := ResolveRelativeTime(c.in, now)
+			if err != nil {
+				t.Fatalf("ResolveRelativeTime(%q): %v", c.in, err)
+			}
+			if !got.Equal(c.want) {
+				t.Errorf("ResolveRelativeTime(%q) = %v, want %v", c.in, got, c.want)
+			}
+		})
+	}
+}
+
 func TestResolveRelativeTimeWeekday(t *testing.T) {
 	now := fixedNow() // Monday 2026-06-22
 	cases := []struct {

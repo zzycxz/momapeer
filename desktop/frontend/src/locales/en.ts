@@ -1545,6 +1545,8 @@ export const en = {
   "cowork.automationFormIMHint": "Format: platform:chatId (feishu/weixin) or platform:type:chatId (QQ group uses qq:group:xxx)",
   "cowork.automationFormEmailAccount": "Sender account",
   "cowork.automationFormPreview": "Preview",
+  "cowork.automationFormSmartParse": "🔍 Smart parse",
+  "cowork.automationFormSmartParseRun": "Parsing…",
   "cowork.automationFormQuickDaily": "Daily",
   "cowork.automationFormQuickWeekday": "Weekdays",
   "cowork.automationFormQuickHourly": "Hourly",

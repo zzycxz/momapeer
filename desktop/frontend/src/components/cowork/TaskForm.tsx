@@ -65,6 +65,12 @@ export function TaskForm({
   const [location, setLocation] = useState(initial?.location ?? "");
   const [preview, setPreview] = useState<SchedulePreview | null>(null);
   const [saving, setSaving] = useState(false);
+  // smartParsing tracks the on-demand LLM parse (🔍 智能解析). It's invoked only
+  // by an explicit button click, never during typing — typing stays free
+  // (regex-only PreviewSchedule). smartSrc marks the text the last smart parse
+  // ran on so the button can hide after a successful parse until the text changes.
+  const [smartParsing, setSmartParsing] = useState(false);
+  const [smartSrc, setSmartSrc] = useState("");
   // IM-target picker state. recentChats is loaded once from the bot gateway so
   // the user can select a destination instead of hand-typing "feishu:oc_xxx".
   // imPlatform + imChatIndex drive a platform dropdown + chat dropdown; the
@@ -137,6 +143,31 @@ export function TaskForm({
     setOutputMode(tpl.outputMode);
   };
 
+  // runSmartParse invokes the fast_task_model (迅捷任务模型) to resolve the
+  // current expression into an absolute time. It's the ONLY path that calls the
+  // LLM — triggered by an explicit button click, not by typing. On success the
+  // model's resolved time replaces the preview; the composed "at YYYY-MM-DD HH:MM"
+  // is also written back into the expression so saving stores the concrete time.
+  const runSmartParse = async () => {
+    const text = expression.trim();
+    if (!text) return;
+    setSmartParsing(true);
+    try {
+      const r = await app.SmartParseSchedule(text);
+      setPreview(r);
+      setSmartSrc(text);
+      // If the model resolved a concrete time, adopt it as the stored expression
+      // so the task is saved as an absolute one-shot rather than the raw phrase.
+      if (r.kind === "oneshot" && r.expression) {
+        setExpression(r.expression);
+      }
+    } catch {
+      setPreview({ inputText: text, expression: "", absoluteTime: "", kind: "unknown", note: "智能解析调用失败" });
+    } finally {
+      setSmartParsing(false);
+    }
+  };
+
   const quickFill = (kind: "daily" | "weekday" | "hourly" | "oneshot") => {
     switch (kind) {
       case "daily":
@@ -186,7 +217,7 @@ export function TaskForm({
   };
 
   return (
-    <div className="cowork-taskform-overlay" onClick={onCancel}>
+    <div className="cowork-taskform-overlay">
       <div className="cowork-taskform" onClick={(e) => e.stopPropagation()}>
         <header className="cowork-taskform__head">
           <h3>{isEdit ? t("cowork.automationFormTitleEdit") : t("cowork.automationFormTitleNew")}</h3>
@@ -280,6 +311,21 @@ export function TaskForm({
                   <span className="cowork-taskform__preview-time">→ {preview.absoluteTime}</span>
                 )}
                 {preview.note && <span className="cowork-taskform__preview-note">{preview.note}</span>}
+                {/* Smart-parse button: shown only when the regex/expression path
+                    failed (kind="unknown") AND the current text hasn't already
+                    been smart-parsed. Clicking it is the sole trigger for the
+                    迅捷任务模型 — typing never calls it. */}
+                {preview.kind === "unknown" && expression.trim() && smartSrc !== expression.trim() && (
+                  <button
+                    type="button"
+                    className="cowork-taskform__smart-btn"
+                    onClick={() => void runSmartParse()}
+                    disabled={smartParsing}
+                    title="用迅捷任务模型解析复杂时间表达（如：下下周五下午3点）"
+                  >
+                    {smartParsing ? t("cowork.automationFormSmartParseRun") : t("cowork.automationFormSmartParse")}
+                  </button>
+                )}
               </div>
             )}
           </div>

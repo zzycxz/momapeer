@@ -368,6 +368,10 @@ export interface AppBindings {
   ScheduledTaskHistory(taskID: string): Promise<RunRecordView[]>;
   ScheduledTaskTemplates(): Promise<TemplateView[]>;
   PreviewSchedule(text: string): Promise<SchedulePreview>;
+  // SmartParseSchedule is the on-demand LLM time parser (迅捷任务模型), called
+  // ONLY when the user clicks the "🔍 智能解析" button — never during typing.
+  // It resolves phrases the regex can't ("下下周五下午3点") into a one-shot time.
+  SmartParseSchedule(text: string): Promise<SchedulePreview>;
   // --- Calendar (coWork calendar panel) ------------------------------------
   // Backed by desktop/calendar_app.go. The UI re-lists on the
   // "calendar:changed" event (onCalendarChanged).
@@ -3202,6 +3206,13 @@ function makeMockApp(): AppBindings {
         return { inputText: text, expression: text, absoluteTime: "", kind: "recurring", note: "下次：稍后（mock）" };
       }
       return { inputText: text, expression: "", absoluteTime: "", kind: "unknown", note: "无法识别（mock）" };
+    },
+    async SmartParseSchedule(text: string): Promise<SchedulePreview> {
+      // Mock: pretend the model resolved it to a near-future time.
+      const now = new Date();
+      now.setDate(now.getDate() + 7);
+      const ts = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")} 15:00`;
+      return { inputText: text, expression: "at " + ts, absoluteTime: ts, kind: "oneshot", note: "一次性任务（智能解析 mock）" };
     },
     // --- Calendar mock (browser dev only) ------------------------------------
     async ListCalendarEvents(_since: string, _before: string): Promise<CalendarEventView[]> {

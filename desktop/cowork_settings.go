@@ -560,6 +560,7 @@ func (a *App) ProbeMailAccount(name string) (result MailProbeResult, err error) 
 // attachments, to keep the JSON payload small for a sidebar list.
 type InboxItem struct {
 	From    string `json:"from"`
+	To      string `json:"to"` // recipient(s); shown instead of From in the Sent view
 	Subject string `json:"subject"`
 	Date    string `json:"date"`
 	Preview string `json:"preview"`
@@ -592,6 +593,7 @@ func (a *App) InboxPreview(mailbox string, limit int) ([]InboxItem, error) {
 	for _, m := range msgs {
 		out = append(out, InboxItem{
 			From:    m.From,
+			To:      m.To,
 			Subject: m.Subject,
 			Date:    m.Date,
 			Preview: m.Preview,
