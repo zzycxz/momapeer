@@ -149,9 +149,9 @@ func (a *App) ListRecentBotChats() []RecentChatView {
 // panel: whether the gateway is online, which platforms are connected, and how
 // many recent chats (proxy for "new messages") exist.
 type BotDockStatusView struct {
-	Online       bool     `json:"online"`
-	Platforms    []string `json:"platforms"`
-	RecentCount  int      `json:"recentCount"`
+	Online      bool     `json:"online"`
+	Platforms   []string `json:"platforms"`
+	RecentCount int      `json:"recentCount"`
 }
 
 // BotDockStatus returns a compact bot status for the dock Today panel, replacing
