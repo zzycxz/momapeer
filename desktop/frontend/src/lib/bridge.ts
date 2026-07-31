@@ -2353,9 +2353,8 @@ function makeMockApp(): AppBindings {
         ],
         "/model": [
           { label: "qwen/qwen3.6-35b", insert: "qwen/qwen3.6-35b", hint: "current" },
-          { label: insert: hint: "" },
-          { label: "moonshotai/kimi-k2.6", insert: "moonshotai/kimi-k2.6", hint: "" },
           { label: "minimax/minimax-m2.7", insert: "minimax/minimax-m2.7", hint: "" },
+          { label: "moonshotai/kimi-k2.6", insert: "moonshotai/kimi-k2.6", hint: "" },
         ],
         "/effort": [
           { label: "auto", insert: "auto", hint: "use the model default" },
