@@ -1415,7 +1415,7 @@ var BuiltinMoMAModels = []string{
 func Default() *Config {
 	return &Config{
 		ConfigVersion: 2,
-		DefaultModel:  "z.ai/glm-5.1",
+		DefaultModel:  "minimax/minimax-m2.7",
 		UI:            UIConfig{Theme: "auto"},
 		Desktop:       DesktopConfig{Theme: "light", ThemeStyle: "slate"},
 		Notifications: NotificationsConfig{

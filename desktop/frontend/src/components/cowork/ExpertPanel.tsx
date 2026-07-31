@@ -329,19 +329,9 @@ export function ExpertPanel() {
                       <Trash2 size={13} />
                     </button>
                   </div>
-                  {preview.length > 0 && (
-                    <div className="cowork-expert__card-roster">
-                      {preview.map((ex, i) => (
-                        <span key={i} className="cowork-expert__expert-chip">
-                          <Users size={11} />
-                          {ex.name}
-                        </span>
-                      ))}
-                      {extra > 0 && (
-                        <span className="cowork-expert__expert-chip">
-                          {t("cowork.expertMemberMore").replace("{n}", String(extra))}
-                        </span>
-                      )}
+                  {experts.length > 0 && (
+                    <div className="cowork-expert__card-roster" style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px' }}>
+                      专家成员: {experts.map((ex) => ex.name).join(", ")}
                     </div>
                   )}
                   <div className="cowork-expert__card-foot">
