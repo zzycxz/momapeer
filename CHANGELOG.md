@@ -1,5 +1,202 @@
 # Changelog
 
+## [0.5.7] — 2026-07-30
+
+**两条主线：(1) 日历智能解析重塑——从脆弱的正则单点改造成「正则即时秒解 + 迅捷任务模型按需兜底」的分层架构，并修复一个让 `8点50` 解析成 `08:00` 的分钟丢失 bug；(2) 邮件栏时间/排序根治——日期改用 ISO 8601（原 RFC1123Z JS 解析失败）、FETCH 后显式按日期最新优先排序（原依赖 IMAP 返回顺序）。** 本版还收录了知识库注入控制权归还用户（Composer 知识库下拉框）、飞书机器人假连接修复等并行迭代。
+
+---
+
+### Fixed — 日历智能解析：`8点50` 分钟丢失（P0）
+
+**根因**：`resolveTime` 的两个正则 `rePeriodHour` / `reBareHour`，分钟捕获组 `(?:(\d{1,2})\s*分|半)?` **要求分钟数字后必须带"分"字才匹配**。`8点50`（不带"分"）→ 分钟组静默失败 → `8:50` 被解析成 `08:00`。又因 8:00 已过，日期还被滚到明天，所以用户截图显示 `2026-08-01 08:00`（日期+时间双错）。
+
+- **正则修复**（`internal/scheduler/reltime.go`）：给两个正则的分钟组加分可选 `分?`——`(?:(\d{1,2})\s*分?|半)?`。`8点50` / `下午3点20` / `晚上10点15` 现在秒级解析正确，不消耗任何 token。带"分"的写法（`8点50分`）保持兼容。
+- **回归测试**（`internal/scheduler/reltime_test.go` `TestResolveRelativeTimeBareMinutes`）：8 个用例覆盖裸 `点M`（含/不带分）、period + `点M`、`点半`、嵌入句子 `今天8点50提醒我去开会`。
+
+---
+
+### Added — 日历智能解析：迅捷任务模型按需兜底
+
+正则只擅长固定形状（今天/明天/下周X/8点50/15:00），接不住 `下下周五下午3点` / `两个星期后` / `下个月初` 这类表达。本轮新增**迅捷任务模型**（`fast_task_model`，默认 `qwen3.6-35b`）作为复杂自然语言时间的解析后盾——两者**分层互补，不是同时识别**。
+
+**架构（串行降级）**：
+```
+输入
+ ├─(1) 正则 ResolveRelativeTime   今天/明天/8点50…  → 秒级返回，不碰模型
+ ├─(2) 调度器表达式 NormalizeExpression  daily/every… → 返回 recurring 预览
+ └─(3) 迅捷任务模型 SmartParseSchedule  ← 只有这层用 LLM，且仅按钮点击触发
+```
+
+- **打字全程 0 次 LLM 调用**：`PreviewSchedule`（`desktop/scheduler_app.go`）**只保留正则 + 表达式两层**，删除了上一版"每次打字停顿自动调 LLM"的兜底（那样每个停顿都触发一次 8 秒超时调用，既费 token/配额又可能卡输入框）。常见按键路径永远零延迟零成本。
+- **手动按钮触发**：新增 `SmartParseSchedule(text)`（`desktop/scheduler_app.go`），仅当正则失败、预览区显示「🔍 智能解析」按钮时，**用户点击才调一次模型**。解析成功把绝对时间写回表达式框（保存的就是具体时间，非原始句子）；解析后按钮自动隐藏，改句子才重新出现。
+- **LLM 解析器**（`desktop/scheduler_llm.go` `llmParseTime`）：复用 `App.RagAsk` 的成熟模式——直连 `/chat/completions`（**不走 `SendWithRetry`**，避免 10 次重试把 UI 卡死）、`temperature:0`、要求模型只输出一行 `YYYY-MM-DD HH:MM` 或 `N/A`、8 秒超时、走全局 RPM 限流（`boot.RagAskBudgetKey`，与主对话共享配额不抢占）。
+- **前端**（`desktop/frontend/src/components/cowork/TaskForm.tsx`）：预览区 `kind="unknown"` 时显示「🔍 智能解析」按钮；`runSmartParse` 点击处理；`smartSrc` 跟踪已解析文本避免重复触发。
+- **i18n**（`zh.ts`/`en.ts`）：原误导的预览标签「智能解析」改回「预览」，新增独立 `automationFormSmartParse` 按钮文案。
+
+### Fixed — LLM 响应解析越界（复查发现）
+
+复查发现 `llmParseTime` 初版的 `trySlice` 按固定字节切片提取时间，会在多种模型输出上失败（模型常偏离指令）。
+
+| 模型实际输出 | 初版结果 | 原因 |
+|---|---|---|
+| `2026-08-14 15:00:00`（带秒） | ❌ 失败 | 切 19 字节只剩 18 |
+| `解析结果：2026-08-14 15:00`（带前缀） | ❌ 可能失败 | 前缀数字干扰定位 |
+| `2026-08-14T15:00`（ISO T 分隔） | ❌ 失败 | 布局用空格不认 T |
+
+**后果**：即使模型答对时间，前端也显示"智能解析失败"——像模型不行，其实是后端没接住。
+
+- **改用正则提取**（`desktop/scheduler_llm.go`）：`reDateTime` 提取所有 `YYYY-MM-DD HH:MM[:SS]` 候选子串，逐个尝试 4 种布局（含/不含秒、`-`/`/` 分隔）；T 分隔符归一化为空格；防引号/markdown/中英文前缀干扰。
+- **抽取逻辑独立 + 单测**：`extractLLMTime(content, now)` 独立可测，新增 13 个用例（裸格式/带秒/斜杠/引号/markdown/中英文前缀/T 分隔/N/A/空/乱码）覆盖所有变体。
+- **写回回归测试**（`internal/scheduler/reltime_writeback_test.go` `TestSmartParseWritebackReResolves`）：验证智能解析写回的 `at YYYY-MM-DD HH:MM` 重新走正则不会翻回 "unknown"。
+
+---
+
+### Fixed — 邮件栏时间显示不全
+
+**根因**：邮件日期用 `time.RFC1123Z` 格式输出（`"30 Jul 26 09:15:00 +0800"`），但前端的 `new Date()` **无法可靠解析这种 HTTP 头格式** → 解析失败 → `isNaN` → 时间列空白或残缺。
+
+- **改用 RFC3339 / ISO 8601**（`internal/tool/builtin/email_imap.go`）：`m.Date = env.Date.Format(time.RFC3339)`（`"2026-08-14T15:00:00+08:00"`），JS 的 `Date` 总能可靠解析。
+- **EmailMessage 加 `rawDate time.Time`**（不导出）：保留解析后的时间供排序用，`Date` 字段仅做显示。
+
+### Fixed — 邮件栏排序错乱（最新不在最上面）
+
+**根因**：代码虽在取最后 N 封后反转了序列号切片，但 IMAP `FETCH` 的**响应到达顺序由服务器决定，不保证按序列号或日期**。反转 seq 只是"请求顺序"，实际返回的邮件顺序仍可能是乱的。
+
+- **FETCH 后显式按日期排序**（`internal/tool/builtin/email_imap.go` `fetchMessages`）：用 `sort.SliceStable` 按 `rawDate` **最新优先稳定排序**——不依赖 IMAP 返回顺序。无日期的邮件沉底，同日期保持稳定顺序。收件箱、发件箱都受益。
+
+---
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| `go build ./...` | ✅ |
+| `go vet`（scheduler/desktop） | ✅ |
+| `go test ./internal/scheduler/` | ✅（含 `TestResolveRelativeTimeBareMinutes`、`TestSmartParseWritebackReResolves`） |
+| `go test desktop`（`TestExtractLLMTime` 13 用例） | ✅ |
+| `tsc --noEmit` | ✅ |
+| `wails build` + 覆盖 `desktop.exe` | ✅ md5 = `a7ed2c126fc61e54f182bb1d2f969779` |
+
+---
+
+### 并行迭代（同版本收录）— 知识库注入控制权归还用户
+
+> 以下工作与本版主线（日历/邮件）并行进行，同属 v0.5.7 收录。
+
+**知识库注入从「全自动」转向「用户显式选择」：新增 Composer 知识库下拉框（默认不注入），修正分类导入全路径映射，清理占位符模板，统一删除确认弹窗；并修复飞书机器人「假连接 + 回复慢」，根除两处「该用事件却用 sleep 轮询」的架构反模式。**
+
+此前每条消息都会无条件全局检索知识库并注入，既费 token 又制造噪音；将其改为输入框工具栏的下拉框，用户选哪个分类就只检索哪个分类，默认"不使用"——彻底改掉办公界面每条消息都请求 RAG 的毛病。同时修复了导入时分类映射丢失父路径导致重复分类的顽疾，删除了三个无实际效果的占位符模板，并将删除操作的原生丑弹框统一替换为应用风格确认窗。
+
+此外，针对用户反馈的飞书机器人「连上了却收不到消息、回复很慢」做了专项排查与修复：根治了连接模式默认值与实际部署不符导致的假连接，消除每条消息处理前的同步阻塞点；并对全项目轮询机制做了系统审计，将两处纯进程内的盲等待重构为精确的事件/条件驱动。
+
+#### Added — Composer 知识库下拉框（按需注入，默认关）
+
+- **KnowledgeSwitcher 下拉框组件**（`KnowledgeSwitcher.tsx`）：在输入框工具栏 effort 选择器右侧新增「📚 知识库」下拉框，样式与 ModelSwitcher/EffortSwitcher 完全一致（AnchoredPopover + modelsw 类名体系）。用户可选某个分类（只检索该分类注入）或"不使用"（不注入）。默认"不使用"，彻底告别每条消息自动注入。
+- **per-tab 持久化 + 全链路打通**：照搬 `toolApprovalMode` 的 per-tab 状态链路——`tab.ragScope` 字段 → `desktopTabEntry` 持久化 → `SetRagScopeForTab` Wails 绑定 → `applyTabRagScopeToController` 重建同步 → controller `ragScope` 字段 + `SetRAGScope` 方法（加锁）。每个会话独立设置，重启保留。
+- **后端注入门改造**（`controller.go` `runRefTurnWithRefs`）：注入门前读 `ragScope`，空值直接跳过（默认不注入）；非空才调 `ragContextFn(ctx, input, scope)`。
+- **AutoSearch 按分类检索**（`rag.go`）：`AutoSearch(ctx, query, collection)` 接收显式 collection 参数，只搜该分类，不再回退到 session resolver——注入严格 opt-in。
+- **编码界面隐藏**（`Composer.tsx`）：`showKnowledge` prop 控制，`coworkActive=false` 时不渲染知识库按钮。
+
+#### Fixed — 分类导入全路径映射（重复分类根治）
+
+**背景**：导入文件时 collection 参数用了叶子名（`管理办法`）而非全路径（`工作/管理办法`），后端只在顶层新建同名分类，导致重复。
+
+- **全链路 `c.name` → `c.path`**：`ImportModal.tsx`、`CoworkDock.tsx`（文件 tab 下拉框）、`TemplateSelect.tsx`（提取面板，同时修复深度计算用叶子名 split 永远 depth=0）、`GraphToolbar.tsx`、`RagPanel.tsx` 五处全部改为 `c.path || c.name`。
+- **"默认分类(全部)" 不再作为导入目标**（`ImportModal.tsx`）：从下拉框移除空值选项 + 过滤 `default` 集合，导入按钮未选分类时禁用。"全部"仅保留为图谱查看的范围选项（`GraphToolbar.tsx`）。
+
+#### Fixed — 知识库下拉框无法切换（sameMeta 去重遗漏）
+
+**背景**：后端正确存储了新 scope（日志确认），`MetaForTab` 也返回了带新 `RagScope` 的 meta，但前端 `sameMeta` 比较函数**遗漏了 `ragScope` 字段**，认为新旧 meta"相同"直接丢弃，导致 UI 永远不更新。
+
+- **sameMeta 补 ragScope 比较**（`useController.ts`）：加入 `a.ragScope === b.ragScope`。
+- **MetaForTab 补 RagScope 字段**（`app.go`）：`Meta` 结构体新增 `RagScope`，`MetaForTab` 快照读 `tab.ragScope` 并返回——此前只有 `TabMeta`（ListTabs 用）有此字段，`MetaForTab`（refreshMetaForTab 用）遗漏。
+- **pick 守卫移除**（`KnowledgeSwitcher.tsx`）：去掉 `if (next !== scope)` 守卫，改为无条件 `onPick`（与 ModelSwitcher 一致），消除闭包过期陷阱。
+
+#### Changed — 删除占位符模板（超图/列表/模型）
+
+- **移除三个无实际效果的模板**（`templates.go`）：`general/hypergraph`、`general/list`、`general/model` 在 Hyper-Extract 原版 Python 库中是真实功能（各有独立类/提示词/数据结构），但 momapeer 的 Go 提取管线不支持这些结构（无定制提示词、结果硬编码为二元图），选它们和选"通用知识图谱"产出完全一样。模板列表从 9 个精简为 6 个（通用图谱 + 金融/医学/法律/工业/中医）。
+
+#### Added — 统一删除确认弹窗
+
+- **ConfirmModal 通用组件**（`ConfirmModal.tsx`）：复用 `rag-create-modal` 同款遮罩+卡片样式，替换 CoworkDock 删除分类时的原生 `window.confirm`。红色警示图标 + 标题 + 说明 + 取消/确认按钮，ESC/点遮罩取消。
+
+#### Fixed — 其他修复
+
+- **settings_app.go 重建遗漏**：settings 变更重建 controller 时补上 `applyTabRagScopeToController`，避免该 tab 的知识库选择丢失。
+- **bridge.ts 补 BrowserViewRunning**：修复预存的 tsc 类型检查错误（Go 端新增方法未同步到 bridge 接口）。
+- **死代码清理**：删除 `rag.go` 中从未被调用的 `globalRAGAutoScope`/`SetRAGAutoScope`；删除 `controller.go` 中无外部调用的 `RAGScope()` getter。
+- **KnowledgeSwitcher 体验优化**：运行中禁用（`disabled={running}`）、加载前标签用客户端叶子名兜底（不显示原始全路径）、分类行水平布局（name + 文档数同一行）、"不使用"行加分隔线、文档数 i18n（"篇"/"docs"）。
+
+#### Fixed — 飞书机器人「假连接」与响应迟滞
+
+**背景**：用户反馈机器人「连接了却感觉总是假连接，飞书发消息回复很慢」。经审计定位为两个独立问题叠加：连接模式默认值与实际部署不符，以及每条消息处理前存在同步阻塞点。
+
+- **连接模式默认改为 WebSocket 长连接**（`internal/bot/feishu/feishu.go`、`desktop/settings_app.go`）：原 `Mode` 为空时默认走 `webhook`，会在本地起 HTTP server 监听 8080 等待回调——若飞书后台配置的是「长连接接收事件」，则飞书永远打不到本机，表现为「连上却收不到消息」的假连接。现默认改为 `websocket`，免公网域名/端口映射，与飞书官方推荐方式一致。桌面端 OAuth 安装流程本就写入 `websocket`，此次让手动配置场景也获得一致的合理默认
+- **打「处理中」emoji 改为异步**（`internal/bot/gateway.go` `addPendingReaction`）：原实现在 `runTurn` **之前**同步调用飞书 REST API 打一个 `OnIt` 表情，请求超时长达 15 秒，网络抖动时用户发消息后数秒无任何反馈。现改为独立 goroutine + 独立 context（10 秒超时），完全不阻塞消息处理主流程，emoji 仅作视觉锦上添花
+- **新增「思考中」即时反馈**（`internal/bot/gateway.go` `runTurn`）：飞书无原生 typing 指示器（`SendTyping` 为空实现），配合上条异步化后，模型冷启动/首 token 延迟期间用户毫无感知。现于 turn 开始时同步发一条「🤔 收到，正在思考…」占位回复，给用户即时确认
+- **测试适配异步行为**（`internal/bot/gateway_test.go`）：`TestGatewayAddsPendingReactionWhenAdapterSupportsIt` 原为同步断言，改为带 2 秒 deadline 的轮询等待 goroutine 完成
+
+#### Changed / Refactored — 根除「该用等待却用 sleep 轮询」的反模式
+
+**背景**：全项目轮询机制审计发现，部分「等待同进程内事件完成」的场景，本应阻塞接收一个信号，却写成了「固定间隔 sleep + 检查」的忙等循环——既引入平均半轮间隔的延迟，又持续占用 CPU。本轮重构两处典型；外部协议强制的轮询（微信长轮询 / QQ 与飞书心跳 / OAuth 授权流程）不在此次范围。
+
+- **专家会话 Tab 就绪等待：100ms 轮询 → channel 阻塞**（`desktop/tabs.go`、`desktop/expert_runs.go`）：`waitForExpertTab` 原以 `time.Sleep(100ms)` 循环检查 `tab.Ready`，等待异步的 `boot.Build` 完成，平均引入 50ms 延迟。现于 `WorkspaceTab` 引入 `readyCh chan struct{}` + `readyOnce sync.Once`，`buildTabController` 开头 reset channel（支持 rebuild 场景重用）、`defer tab.markBuilt()` 保证所有退出路径（成功/失败）均触发关闭；`waitForExpertTab` 改为 `select { case <-ch; case <-timer.C }` 零延迟精确唤醒
+- **浏览器导航后等 SPA 渲染：盲 sleep → chromedp 条件轮询**（`internal/tool/builtin/browser.go`）：导航后 `<body>` 可能因 SPA 异步渲染而近乎为空，原代码 `time.Sleep(3 * time.Second)` 死等，页面 200ms 渲染完成也要白等 3 秒。新增 `waitForBodyContent` helper，以 `chromedp.Poll` 每 150ms 求值「body 非空白长度 > 阈值」的 JS 谓词，**内容出现即刻返回**；原 3s/2s 保留为最坏情况兜底而非固定等待
+
+---
+
+### Fixed / Added — 定时任务全链路修复（多轮排查，根因彻底）
+
+**背景**：用户设的定时任务完全不触发，经多轮排查发现是一个让调度器 tick 循环永不启动的 P0 bug，以及一系列关联问题（提醒看不到、邮件任务打架、AI 写错年份、提醒一闪而过、删除弹窗丑陋）。逐一定位根因并修复。
+
+#### Fixed — 调度器 tick 循环从未启动（P0，根因）
+
+**症状**：用户设的定时任务 `run_count` 永远为 0，`last_run` 零值，从未触发——即使应用一直开着、任务设在未来。
+
+**根因**（写端到端测试复现后定位）：`Start()` 的幂等性检查用 `stopCh` channel 状态推断是否在运行，但逻辑反了——`New()` 创建的 `stopCh` 是开放的（未关闭），第一次 `Start()` 时 `<-s.stopCh` 永远阻塞 → 走 `default` 分支 → **直接 return，`loop()` goroutine 从未启动**。30 秒 ticker 从未跑过，所有任务都不触发。
+
+**修复**：加 `running bool` 字段明确跟踪 loop 是否在运行，不再靠 channel 状态推断。端到端测试（`TestStartActuallyLaunchesTimer`）确认过去任务 0.2 秒内触发。
+
+#### Changed — 调度器从 30 秒轮询升级为 `time.AfterFunc` 精确定时器（零轮询、零偏差）
+
+**动机**：30 秒 `time.Ticker` 轮询精度最多 30 秒偏差，tick 间仍有唤醒开销。用户问"能不能用本机定时器"，确认 `time.AfterFunc` 是更优方案。
+
+**原理**（`time.AfterFunc` 不是轮询）：为"最近的一个任务"设一个精确定时器，goroutine 挂起（CPU 占用 0），**操作系统内核在精确时刻唤醒**（Windows `CreateTimerQueueTimer` / Linux `timerfd`），到点触发后重新武装下一个最近任务。无应用层循环、无空转。
+
+**实现**（`internal/scheduler/scheduler.go`）：删掉 30 秒 ticker 循环，新增 `nextTimer *time.Timer` + `armNextTimerLocked()`（找最近任务、设精确定时器）；`fireAndReschedule()` 触发后重新武装；`Create`/`Update`/`Delete` 改任务后立即重算定时器。
+
+**精度实测**（`TestPreciseFireTiming`）：设 12:43:19.684，实际触发 12:43:19.685，**偏差 0.5 毫秒**（对比旧轮询最多 30 秒偏差）。集成测试矩阵 5 场景全过（纯提醒/AI任务/循环重武装/动态新建/删除重武装）。
+
+#### Added — Windows 系统通知 + 长停留「知道了」按钮
+
+**问题**：notify 提醒原本只在 momapeer 应用窗口内弹 toast，窗口最小化/后台时完全看不到。默认 toast 只停留 7 秒一闪而过。
+
+**修复**：利用 Wails v2.13.0 内置原生 Windows toast（底层 `go-toast/v2`，无需新依赖）：启动时 `InitializeNotifications` 注册 AUMID/COM 工厂；`schedulerNotifier.Notify` 双通道（应用内 toast + 系统 toast）；绕过 Wails 硬编码 7 秒短停留，直接调 `go-toast` 设 `Duration: Long`（约 25 秒）+ 加「知道了」显式关闭按钮，25 秒后移入通知中心留存。点击通知唤起主窗口。
+
+#### Added — 纯提醒模式（Plain 显式开关）+ 错过补发
+
+**问题**：所有任务都把 prompt 当 AI 指令跑，纯通知被 AI 胡言乱语污染（`last_result` 实锤）。应用没运行时错过的任务被静默丢弃。
+
+**Plain 开关**：最初尝试"动词列表+长度"启发式，压力测试发现会误判 AI 任务（`周报`/`备份`无动词）为纯提醒→静默吞掉。改为显式 `Plain bool` 字段 + TaskForm 开关（默认关走 AI）。用户设纯提醒时打开，到点直接弹原文不调 AI。
+
+**错过补发**（`scheduler.go` Load）：重启时检测一次性任务错过触发时间（`RunCount==0` 且已过期），存入 `missedReminders`，`initScheduler` 启动后逐个发系统通知（`⏰ 错过的提醒：xxx`）。
+
+#### Added — 任务表单：双输入时间（自然语言 + datetime 选择器）+ 智能解析按钮
+
+触发时间区改为两列布局（自然语言框 + `datetime-local` 选择器），选择器从 `expression` 派生、手改写回（T→空格转换适配 scheduler 后端）、循环任务时禁用。正则失败时显示「🔍 智能解析」按钮，点击调一次 `fast_task_model`（迅捷任务模型）兜底。复查修复 `trySlice` 字节切片越界（改 `reDateTime` 正则提取 + 13 单测）。
+
+#### Fixed — 邮件任务双路径打架 + AI 写错年份
+
+**邮件打架**：`plain=False` 走 AI 时，调度器把 AI 报错当正文发，AI 调 `email_send` 又被 headless 拒。TaskForm 加 `looksLikeEmailDirective` 检测（含邮箱/"发邮件"）显示橙色警告 + 一键改纯提醒。
+
+**AI 写错年份**：AI 用训练数据 2025 年生成 `at 2025-...`。三层修复：① `boot.go` 系统提示注入当前日期；② `schedule_create` 报错返回当前时间让 AI 自纠正；③ 工具描述强调用相对时间词（`明天下午3点`/`in 2h`）。
+
+#### Added — 统一应用内确认弹窗（替换 12 处原生 window.confirm）
+
+新建全局 `ConfirmProvider`（`lib/confirm.tsx`，照搬 ToastProvider）+ `useConfirm()` hook，替换 6 文件 12 处 `window.confirm`。危险操作红色 ⚠️ / 信息蓝色 ❓ / ESC+遮罩取消。
+
+---
+
 ## [0.5.6] — 2026-07-29
 
 **深度重构文档解析引擎与重构限流架构生命周期：由 MarkItDown 全面接管复杂文档流解析，彻底修复 RPM 设置热重载断层问题。**

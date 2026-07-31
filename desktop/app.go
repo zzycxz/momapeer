@@ -357,6 +357,20 @@ func (a *App) startup(ctx context.Context) {
 	installSystemQuitHook()
 	a.startTray()
 
+	// Initialize OS-level notifications so scheduled-task reminders (and other
+	// notify-mode output) surface as Windows toast — visible even when the window
+	// is minimized to tray / in the background, and persisted to Action Center.
+	// Best-effort: a failure only logs and continues (the in-app toast path is
+	// the fallback). Registering a response callback brings the window to front
+	// when the user clicks the toast.
+	if err := runtime.InitializeNotifications(ctx); err != nil {
+		slog.Warn("notifications: init failed; reminders will only show in-app", "err", err)
+	} else {
+		runtime.OnNotificationResponse(ctx, func(_ runtime.NotificationResult) {
+			go a.showMainWindow()
+		})
+	}
+
 	// 启动内嵌 bot gateway
 	if cfg, err := config.Load(); err == nil && cfg.Bot.Enabled {
 		a.startBotGateway(cfg)
@@ -560,6 +574,21 @@ func (a *App) initScheduler() {
 	builtin.SetScheduler(a.scheduler)
 	builtin.SetAuthNotifier(authNotifier{app: a})
 	a.scheduler.SetAccountProber(imapProber{})
+
+	// Surface any one-shot reminders that were due while the app was down. Load
+	// captured them; we drain now (after the notifier + OS-toast init are bound)
+	// and fire a catch-up notification for each, so a reminder the user set isn't
+	// silently lost just because momapeer wasn't running at the fire instant.
+	// Delayed briefly so the OS notification registration (InitializeNotifications
+	// in startup) has settled before we send.
+	if missed := a.scheduler.DrainMissedReminders(); len(missed) > 0 {
+		go func() {
+			time.Sleep(2 * time.Second)
+			for _, m := range missed {
+				(schedulerNotifier{app: a}).Notify("⏰ 错过的提醒："+m.Name, m.Body)
+			}
+		}()
+	}
 }
 
 // schedulerIMPusher implements scheduler.IMPusher by routing through the bot

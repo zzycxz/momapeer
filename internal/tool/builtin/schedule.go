@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/zzycxz/momapeer/internal/scheduler"
 	"github.com/zzycxz/momapeer/internal/tool"
@@ -53,7 +54,9 @@ type scheduleCreate struct{}
 func (scheduleCreate) Name() string { return "schedule_create" }
 
 func (scheduleCreate) Description() string {
-	return "Create a scheduled task that fires an agent prompt on a schedule, independent of any open chat tab. Expression formats: \"every 30m\", \"every 2h\", \"hourly\", \"daily 09:00\", \"daily 09:00 Mon-Fri\" (weekdays), \"daily 09:00 Mon,Wed,Fri\", \"at 2026-06-24 15:00\" (one-shot absolute time, auto-disables after firing), \"in 2h30m\" / \"in 3d\" (one-shot relative offset, normalized to at-form), or a 5-field cron (\"0 9 * * 1-5\"). The prompt runs under the cowork profile; its result is stored on the task and optionally delivered (im/email/notify/file). Use for recurring or one-off office work: daily digests, periodic reports, scheduled scraping, meeting reminders. Tasks persist across restarts."
+	return "Create a scheduled task that fires an agent prompt on a schedule, independent of any open chat tab. Expression formats: \"every 30m\", \"every 2h\", \"hourly\", \"daily 09:00\", \"daily 09:00 Mon-Fri\" (weekdays), \"daily 09:00 Mon,Wed,Fri\", \"at 2026-06-24 15:00\" (one-shot absolute time, auto-disables after firing), \"in 2h30m\" / \"in 3d\" (one-shot relative offset, normalized to at-form), or a 5-field cron (\"0 9 * * 1-5\"). " +
+		"IMPORTANT for one-shot times: prefer relative words so the system resolves the correct date — \"明天下午3点\", \"下周一9点\", \"in 2h\", \"3号10点\" — instead of guessing an absolute \"at YYYY-MM-DD HH:MM\" (your year may be wrong). " +
+		"The prompt runs under the cowork profile; its result is stored on the task and optionally delivered (im/email/notify/file). Use for recurring or one-off office work: daily digests, periodic reports, scheduled scraping, meeting reminders. Tasks persist across restarts."
 }
 
 func (scheduleCreate) Schema() json.RawMessage {
@@ -84,6 +87,20 @@ func (scheduleCreate) Execute(ctx context.Context, args json.RawMessage) (string
 	}
 	created, err := s.Create(p)
 	if err != nil {
+		// If the failure is a past-time one-shot (a common failure: the model's
+		// training cutoff makes it write absolute dates in the wrong year), enrich
+		// the error with the CURRENT date/time so the model can self-correct on a
+		// retry. Absolute "at YYYY-..." expressions are the trap; relative words
+		// ("明天下午3点", "in 2h") are resolved by the scheduler and never hit this.
+		if strings.Contains(err.Error(), "past") || strings.Contains(err.Error(), "one-shot") {
+			now := time.Now()
+			return "", fmt.Errorf(
+				"%w\n\n当前时间是 %s。请改用相对时间词（如「明天下午3点」「下周一9点」「in 2h」）让系统自动换算成正确的未来时间，或用 at %s 这样的未来绝对时间（注意年份必须是 %d）。",
+				err, now.Format("2006-01-02 15:04 (周一)"),
+				now.Add(2*time.Hour).Format("2006-01-02 15:04"),
+				now.Year(),
+			)
+		}
 		return "", err
 	}
 	return formatTask(created), nil
@@ -239,6 +256,17 @@ func (scheduleUpdate) Execute(ctx context.Context, args json.RawMessage) (string
 		}
 	})
 	if err != nil {
+		// Same past-time hint as schedule_create: enrich with current date so the
+		// model can self-correct a wrong-year absolute date on retry.
+		if strings.Contains(err.Error(), "past") || strings.Contains(err.Error(), "one-shot") {
+			now := time.Now()
+			return "", fmt.Errorf(
+				"%w\n\n当前时间是 %s。请改用相对时间词（如「明天下午3点」「in 2h」）或用 at %s 这样的未来绝对时间（年份必须是 %d）。",
+				err, now.Format("2006-01-02 15:04 (周一)"),
+				now.Add(2*time.Hour).Format("2006-01-02 15:04"),
+				now.Year(),
+			)
+		}
 		return "", err
 	}
 	return formatTask(updated), nil

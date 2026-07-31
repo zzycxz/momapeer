@@ -335,6 +335,16 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if addon := instruction.ForModel(entry.Model); addon != "" {
 		sysPrompt += "\n\n" + addon
 	}
+	// Inject the current date/time so the model doesn't fall back to its training
+	// cutoff year when generating absolute timestamps (e.g. schedule_create with
+	// "at 2025-..." instead of the real 2026). This is the root-cause fix for the
+	// "AI created a task in the wrong year" bug; the get_current_time MCP tool is
+	// opt-in (the model must call it), so it can't be relied on. Built once per
+	// Build (cache-stable for the session).
+	now := time.Now()
+	weekdays := []string{"日", "一", "二", "三", "四", "五", "六"}
+	sysPrompt += fmt.Sprintf("\n\n# 当前时间\n现在是 %s 周%s。生成涉及具体日期/时间的任务（如 schedule_create 的 at 表达式）时，必须使用当前或未来的日期，不要用训练数据中的旧年份。",
+		now.Format("2006-01-02 15:04"), weekdays[int(now.Weekday())])
 	// Output style: fold the selected persona/tone block into the base prompt
 	// before language/memory/skills append, so a "replace" style (keep-coding
 	// false) still keeps those. Applied once, into the cache-stable prefix.

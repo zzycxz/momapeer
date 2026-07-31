@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/zzycxz/momapeer/internal/jiutian"
 	"github.com/zzycxz/momapeer/internal/scheduler"
 	"github.com/zzycxz/momapeer/internal/tool/builtin"
 )
@@ -43,6 +44,7 @@ type TaskView struct {
 	OutputDir      string `json:"outputDir"`
 	Color          string `json:"color"`
 	Location       string `json:"location"`
+	Plain          bool   `json:"plain"` // 纯提醒：到点直接弹原文，不调 AI
 	LastDeliverErr string `json:"lastDeliverErr"` // "" if last delivery was ok / skipped
 	LastDeliverAt  string `json:"lastDeliverAt"`  // "" if never delivered
 	HumanSchedule  string `json:"humanSchedule"`  // friendly description, e.g. "每天 18:00"
@@ -94,6 +96,7 @@ type TaskInput struct {
 	OutputDir     string `json:"outputDir"`
 	Color         string `json:"color"`
 	Location      string `json:"location"`
+	Plain         bool   `json:"plain"` // 纯提醒：到点直接弹原文，不调 AI
 }
 
 const (
@@ -130,6 +133,7 @@ func (a *App) CreateScheduledTask(in TaskInput) (TaskView, error) {
 		OutputDir:     in.OutputDir,
 		Color:         in.Color,
 		Location:      in.Location,
+		Plain:         in.Plain,
 	})
 	if err != nil {
 		return TaskView{}, err
@@ -153,6 +157,7 @@ func (a *App) UpdateScheduledTask(in TaskInput) (TaskView, error) {
 		t.OutputDir = in.OutputDir
 		t.Color = in.Color
 		t.Location = in.Location
+		t.Plain = in.Plain
 	})
 	if err != nil {
 		return TaskView{}, err
@@ -379,6 +384,12 @@ func (n schedulerNotifier) Notify(name, result string) {
 		"name":   name,
 		"result": result,
 	})
+	// Fire a LONG-duration (25s) OS toast so the reminder stays on screen long
+	// enough to read (the default 7s flashes and is easy to miss), then persists
+	// to Windows Action Center. We bypass Wails' SendNotification (hardcoded 7s
+	// Short, no override) and call go-toast directly with Duration=Long, reusing
+	// the AUMID/COM registration from InitializeNotifications. Best-effort.
+	go notifyLongDurationToast(name, jiutian.Truncate(result, 200))
 }
 
 // --- helpers ----------------------------------------------------------------
@@ -400,6 +411,7 @@ func toTaskView(t scheduler.ScheduledTask) TaskView {
 		OutputDir:      t.OutputDir,
 		Color:          t.Color,
 		Location:       t.Location,
+		Plain:          t.Plain,
 		LastDeliverErr: t.LastDeliverErr,
 		HumanSchedule:  describeSchedule(t.Expression),
 	}

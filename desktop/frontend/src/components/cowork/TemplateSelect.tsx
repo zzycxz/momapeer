@@ -9,6 +9,7 @@ import { CustomSelect, type CustomSelectOption } from "./CustomSelect";
 import { app } from "../../lib/bridge";
 import { asArray } from "../../lib/array";
 import { useToast } from "../../lib/toast";
+import { useConfirm } from "../../lib/confirm";
 import type { RagExtractResultView, RagEntityBrief, RagNodeView } from "../../lib/types";
 import { ENTITY_TYPE_LABELS, ENTITY_TYPE_COLORS } from "./entityTypes";
 
@@ -52,6 +53,7 @@ const MAX_POLL_TICKS = 150; // 150 × 2s = 5min max
 
 export function TemplateSelect({ collection, collections, onCollectionChange, onBack, onViewGraph }: TemplateSelectProps) {
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [heReady, setHeReady] = useState<boolean | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState("general/graph");
@@ -127,7 +129,7 @@ export function TemplateSelect({ collection, collections, onCollectionChange, on
   };
 
   const handleFullExtract = async () => {
-    if (!window.confirm("确定重新提取全部文档？已有实体和关系将被清空。")) return;
+    if (!(await confirm({ title: "重新提取", message: "确定重新提取全部文档？已有实体和关系将被清空。" }))) return;
     setLoading(true);
     setJobs([]);
     setShowResult(false);
@@ -619,7 +621,7 @@ export function TemplateSelect({ collection, collections, onCollectionChange, on
             <button
               type="button"
               onClick={async () => {
-                if (window.confirm("确认清理所有提取的知识？文档不会被删除，可重新提取。")) {
+                if (await confirm({ title: "清理知识", message: "确认清理所有提取的知识？文档不会被删除，可重新提取。" })) {
                   await app.RagCleanCollection(collection);
                   setResult(null);
                 }

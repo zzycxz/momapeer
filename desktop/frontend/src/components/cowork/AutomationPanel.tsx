@@ -16,6 +16,7 @@ import { app, onSchedulerChanged, onSchedulerNotice } from "../../lib/bridge";
 import type { TaskInput, TaskView, TemplateView } from "../../lib/types";
 import { useT } from "../../lib/i18n";
 import { useToast } from "../../lib/toast";
+import { useConfirm } from "../../lib/confirm";
 import { TaskCard } from "./TaskCard";
 import { TaskForm } from "./TaskForm";
 import { RunHistory } from "./RunHistory";
@@ -23,6 +24,7 @@ import { RunHistory } from "./RunHistory";
 export function AutomationPanel() {
   const t = useT();
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const [tasks, setTasks] = useState<TaskView[] | null>(null);
   const [templates, setTemplates] = useState<TemplateView[]>([]);
   const [formOpen, setFormOpen] = useState(false);
@@ -86,7 +88,7 @@ export function AutomationPanel() {
   };
 
   const handleDelete = async (task: TaskView) => {
-    if (!window.confirm(t("cowork.automationConfirmDelete").replace("{name}", task.name))) return;
+    if (!(await confirm({ title: "删除任务", message: t("cowork.automationConfirmDelete").replace("{name}", task.name) }))) return;
     try {
       await app.DeleteScheduledTask(task.id);
     } catch (e) {
@@ -186,13 +188,15 @@ export function AutomationPanel() {
           onDelete={
             editing
               ? () => {
-                  if (window.confirm(t("cowork.automationConfirmDelete").replace("{name}", editing.name))) {
-                    void app.DeleteScheduledTask(editing.id).then(() => {
-                      setFormOpen(false);
-                      setEditing(null);
-                      setPresetTemplate(null);
-                    });
-                  }
+                  void confirm({ title: "删除任务", message: t("cowork.automationConfirmDelete").replace("{name}", editing.name) }).then((ok) => {
+                    if (ok) {
+                      void app.DeleteScheduledTask(editing.id).then(() => {
+                        setFormOpen(false);
+                        setEditing(null);
+                        setPresetTemplate(null);
+                      });
+                    }
+                  });
                 }
               : undefined
           }

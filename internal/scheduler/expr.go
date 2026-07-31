@@ -18,9 +18,9 @@ import (
 //   - "in 2h30m" / "in 3d"           (one-shot relative offset, normalized to "at <now+offset>")
 //   - 5-field cron "0 9 * * 1-5"     (power-user fallback)
 //
-// Relative natural-language words ("后天下午3点") are NOT parsed here — callers
-// should first run them through ResolveRelativeTime to convert to an absolute
-// "at YYYY-MM-DD HH:MM" form, which then flows through parseAt.
+// Relative natural-language words ("后天下午3点") are NOT parsed by this function
+// — NormalizeExpression handles them by first trying parseExpression, then falling
+// back to ResolveRelativeTime to convert a Chinese phrase into "at YYYY-MM-DD HH:MM".
 func parseExpression(expr string) (string, error) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
@@ -57,20 +57,43 @@ func parseExpression(expr string) (string, error) {
 }
 
 // NormalizeExpression converts relative forms to their stored canonical form.
-// "in 2h" / "in 3d" are resolved against `now` into an absolute "at ..." string
-// so the persisted task is restart-stable (a relative offset would otherwise
-// drift forward every load). "at ..." and all other forms pass through.
+//   - "in 2h" / "in 3d" are resolved against `now` into an absolute "at ..." so
+//     the persisted task is restart-stable (a relative offset would otherwise
+//     drift forward every load).
+//   - Chinese natural-language phrases ("后天下午3点", "9点50", "下周一 10:00")
+//     are resolved via ResolveRelativeTime into "at YYYY-MM-DD HH:MM". This is the
+//     fix for the "saved a natural-language task but it errored on save" bug —
+//     the preview path (PreviewSchedule) always resolved these, but Create/Update
+//     went straight to parseExpression (which only knows every/daily/at/in/cron),
+//     so a phrase the UI showed as valid became a parse error on save.
+//   - "at ..." and all other forms pass through.
 func NormalizeExpression(expr string, now time.Time) (string, error) {
 	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return "", errors.New("empty expression")
+	}
 	low := strings.ToLower(expr)
-	if !strings.HasPrefix(low, "in ") {
-		return parseExpression(expr)
+	if strings.HasPrefix(low, "in ") {
+		t, err := parseIn(expr, now)
+		if err != nil {
+			return "", err
+		}
+		return "at " + t.Format("2006-01-02 15:04"), nil
 	}
-	t, err := parseIn(expr, now)
-	if err != nil {
-		return "", err
+	// Try the known expression forms first (cheap, exact). If that fails, attempt
+	// ResolveRelativeTime — this catches Chinese NL phrases. Only if BOTH fail do
+	// we return the original parse error (so the user still gets a clear message
+	// for genuinely malformed input).
+	if canonical, err := parseExpression(expr); err == nil {
+		return canonical, nil
 	}
-	return "at " + t.Format("2006-01-02 15:04"), nil
+	if t, err := ResolveRelativeTime(expr, now); err == nil {
+		return "at " + t.Format("2006-01-02 15:04"), nil
+	}
+	// Neither path worked — re-run parseExpression to produce the canonical error
+	// message (which is more actionable than ResolveRelativeTime's).
+	_, err := parseExpression(expr)
+	return "", err
 }
 
 // IsOneShot reports whether an expression fires once and then should auto-disable.

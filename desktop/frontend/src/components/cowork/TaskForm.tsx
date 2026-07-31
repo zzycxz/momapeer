@@ -35,6 +35,53 @@ const IM_PLATFORMS = [
   { value: "weixin", label: "微信 / WeChat" },
 ] as const;
 
+// exprToPickerValue converts a one-shot scheduler expression ("at 2026-07-31
+// 09:50") back into the "YYYY-MM-DDTHH:MM" value an <input type="datetime-local">
+// expects. The scheduler stores time with a SPACE separator (see parseAt in
+// internal/scheduler/expr.go), but datetime-local uses a "T", so we swap it back.
+// Returns "" for non-one-shot / unparseable expressions — the picker renders empty
+// for recurring tasks (daily/every) and raw natural-language phrases.
+function exprToPickerValue(expr: string): string {
+  const e = expr.trim();
+  if (!e.toLowerCase().startsWith("at ")) return "";
+  const rest = e.slice(3).trim();
+  // Accept "YYYY-MM-DD HH:MM" (the canonical stored form). Replace the space with
+  // T to match datetime-local's expected value format.
+  const m = rest.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/);
+  if (!m) return "";
+  return `${m[1]}T${m[2]}`;
+}
+
+// pickerValueToExpr is the inverse: the datetime-local value ("2026-07-31T09:50")
+// becomes a stored scheduler expression ("at 2026-07-31 09:50") — T → space,
+// prefixed with "at ". This matches what the backend itself produces
+// (scheduler_app.go) and what SmartParseSchedule writes back.
+function pickerValueToExpr(v: string): string {
+  const trimmed = v.trim();
+  if (!trimmed) return "";
+  return "at " + trimmed.replace("T", " ");
+}
+
+// looksLikeEmailDirective reports whether a prompt reads like a "send an email"
+// instruction (the user wants to send fixed content) rather than an AI task
+// ("summarize today's email"). When output_mode=email AND this is true, the two
+// delivery paths fight: the scheduler sends the AI's (likely error) output as
+// the body, while the AI's own email_send call gets denied in headless mode. We
+// detect this so the form can suggest switching to plain mode (write the body in
+// the prompt, let the scheduler send it directly).
+function looksLikeEmailDirective(prompt: string): boolean {
+  const p = prompt.trim();
+  if (!p) return false;
+  const low = p.toLowerCase();
+  // Email address present anywhere → almost certainly a send intent.
+  if (/[^\s@]+@[^\s@]+\.[^\s@]+/.test(p)) return true;
+  // Chinese send-mail phrasing.
+  if (/发(一封)?(测试)?邮件|发送邮件|寄信|写信给/.test(p)) return true;
+  // English send-mail phrasing.
+  if (/\bsend\b.*\b(email|mail)\b|\b(email|mail)\b.*\bsend\b/.test(low)) return true;
+  return false;
+}
+
 export function TaskForm({
   initial,
   initialTemplate,
@@ -63,6 +110,11 @@ export function TaskForm({
   const [outputDir, setOutputDir] = useState(initial?.outputDir ?? "");
   const [color, setColor] = useState(initial?.color ?? "#4488FF");
   const [location, setLocation] = useState(initial?.location ?? "");
+  // plain = "纯提醒" toggle. When on, the task surfaces its prompt verbatim at
+  // fire time (toast/IM/email body) WITHOUT running the agent. Default OFF so a
+  // task always runs the agent unless the user explicitly opts into plain mode —
+  // this is the safe default (never silently drop an AI directive).
+  const [plain, setPlain] = useState(initial?.plain ?? false);
   const [preview, setPreview] = useState<SchedulePreview | null>(null);
   const [saving, setSaving] = useState(false);
   // smartParsing tracks the on-demand LLM parse (🔍 智能解析). It's invoked only
@@ -208,6 +260,7 @@ export function TaskForm({
         outputDir: outputDir.trim(),
         color,
         location: location.trim(),
+        plain,
       });
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
@@ -284,12 +337,36 @@ export function TaskForm({
           {/* Trigger */}
           <div className="cowork-taskform__section">
             <span className="cowork-taskform__labeltext">{t("cowork.automationFormTrigger")}</span>
-            <input
-              className="cowork-taskform__input"
-              value={expression}
-              placeholder={t("cowork.automationFormExpressionHint")}
-              onChange={(e) => setExpression(e.target.value)}
-            />
+            {/* Two-column time input: natural-language phrase (left) + manual
+                datetime picker (right). The picker is a derived view: its value
+                prefers the stored `expression` (when the user already picked /
+                it was written back as "at ..."), and falls back to the resolved
+                preview.absoluteTime so a just-typed phrase like "9点50" — which
+                hasn't been rewritten into "at ..." yet — still shows in the
+                picker. Picking writes back via pickerValueToExpr. It's disabled
+                for recurring expressions (daily/every) which have no single
+                instant. */}
+            <div className="cowork-taskform__time-row">
+              <input
+                className="cowork-taskform__input"
+                style={{ flex: 1 }}
+                value={expression}
+                placeholder={t("cowork.automationFormExpressionHint")}
+                onChange={(e) => setExpression(e.target.value)}
+              />
+              <input
+                type="datetime-local"
+                className="cowork-taskform__input cowork-taskform__picker"
+                style={{ width: "200px" }}
+                value={exprToPickerValue(expression) || (preview?.kind === "oneshot" && preview.absoluteTime ? preview.absoluteTime.replace(" ", "T") : "")}
+                disabled={preview?.kind === "recurring"}
+                title={preview?.kind === "recurring" ? t("cowork.automationFormDatetimeRecurring") : t("cowork.automationFormDatetimeHint")}
+                onChange={(e) => setExpression(pickerValueToExpr(e.target.value))}
+              />
+            </div>
+            {preview?.kind === "recurring" && (
+              <span className="cowork-taskform__picker-hint">{t("cowork.automationFormDatetimeRecurring")}</span>
+            )}
             <div className="cowork-taskform__quicks">
               <button type="button" className="cowork-taskform__quick" onClick={() => quickFill("daily")}>
                 {t("cowork.automationFormQuickDaily")}
@@ -330,16 +407,48 @@ export function TaskForm({
             )}
           </div>
 
-          {/* Action */}
+          {/* Action / 任务内容 */}
           <label className="cowork-taskform__label cowork-taskform__label--top">
             <span className="cowork-taskform__labeltext">{t("cowork.automationFormAction")}</span>
             <textarea
               className="cowork-taskform__textarea"
               value={prompt}
               rows={5}
+              placeholder={t("cowork.automationFormActionHint")}
               onChange={(e) => setPrompt(e.target.value)}
             />
           </label>
+
+          {/* 纯提醒开关：ON = 到点直接弹原文不调AI；OFF（默认）= 走完整 agent。
+              这是显式用户意图，替代此前会误判的启发式（"周报"无动词会被误判为纯提醒）。
+              默认 OFF 保证 AI 任务永远不会被静默吞掉。 */}
+          <label className="cowork-taskform__plain-toggle">
+            <input
+              type="checkbox"
+              checked={plain}
+              onChange={(e) => setPlain(e.target.checked)}
+            />
+            <span>{t("cowork.automationFormPlain")}</span>
+            <span className="cowork-taskform__plain-hint">
+              {plain ? t("cowork.automationFormPlainOnHint") : t("cowork.automationFormPlainOffHint")}
+            </span>
+          </label>
+
+          {/* 邮件任务防双发提示：output_mode=email 且 prompt 看起来像"发邮件给xxx"指令时，
+              提醒用户改用纯提醒模式（任务内容写正文，让调度器直接发），避免 AI 调 email_send
+              被 headless 权限拒绝、同时调度器又把 AI 的报错文字当正文发出去。 */}
+          {outputMode === "email" && !plain && looksLikeEmailDirective(prompt) && (
+            <div className="cowork-taskform__warn">
+              {t("cowork.automationFormEmailDirectiveWarn")}
+              <button
+                type="button"
+                className="cowork-taskform__warn-btn"
+                onClick={() => setPlain(true)}
+              >
+                {t("cowork.automationFormEmailDirectiveFix")}
+              </button>
+            </div>
+          )}
 
           {/* Delivery */}
           <div className="cowork-taskform__section">

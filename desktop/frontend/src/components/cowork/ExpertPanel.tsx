@@ -15,12 +15,14 @@ import { app, onExpertsChanged, onExpertsCollab } from "../../lib/bridge";
 import type { TeamView } from "../../lib/types";
 import { useT } from "../../lib/i18n";
 import { useToast } from "../../lib/toast";
+import { useConfirm } from "../../lib/confirm";
 import type { StreamMessage } from "./CollabStream";
 import { TeamManager } from "./TeamManager";
 
 export function ExpertPanel() {
   const t = useT();
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const [teams, setTeams] = useState<TeamView[] | null>(null);
   const [activeTeamId, setActiveTeamId] = useState("");
   const [task, setTask] = useState("");
@@ -177,7 +179,7 @@ export function ExpertPanel() {
     // and costlier. Warn once per team selection so the user isn't surprised by
     // a 3-5 minute wait, but don't nag on every re-run of the same team.
     if (activeTeam?.allowSearch && !searchCostConfirmed) {
-      if (!window.confirm(t("cowork.expertSearchCostConfirm"))) {
+      if (!(await confirm({ title: "搜索确认", message: t("cowork.expertSearchCostConfirm"), danger: false }))) {
         return;
       }
       setSearchCostConfirmed(true);
@@ -201,7 +203,7 @@ export function ExpertPanel() {
   };
 
   const handleDelete = async (team: TeamView) => {
-    if (!window.confirm(t("cowork.expertConfirmDelete").replace("{name}", team.name))) return;
+    if (!(await confirm({ title: "删除专家团", message: t("cowork.expertConfirmDelete").replace("{name}", team.name) }))) return;
     try {
       await app.DeleteExpertTeam(team.id);
       if (activeTeamId === team.id) setActiveTeamId("");

@@ -12,6 +12,7 @@ import { useState, type MouseEvent } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { useT } from "../lib/i18n";
+import { useConfirm } from "../lib/confirm";
 import type { WireCollab } from "../lib/types";
 
 type CollabItem = { kind: "expert_collab"; id: string; collab: WireCollab };
@@ -28,6 +29,7 @@ function modeLabel(mode: string): string {
 
 export function ExpertCollabCard({ item, onDelete }: { item: CollabItem; onDelete?: (id: string) => void }) {
   const t = useT();
+  const confirm = useConfirm();
   const [open, setOpen] = useState(false);
   const c = item.collab;
   const rounds = Array.isArray(c.rounds) ? c.rounds : [];
@@ -43,10 +45,10 @@ export function ExpertCollabCard({ item, onDelete }: { item: CollabItem; onDelet
 
   // "不采纳": discard this collaboration from the transcript + context. A
   // confirm guard prevents an accidental loss of a long collaboration.
-  const handleDelete = (e: MouseEvent) => {
+  const handleDelete = async (e: MouseEvent) => {
     e.stopPropagation();
     if (!onDelete) return;
-    if (!window.confirm(t("cowork.expertCollabDeleteConfirm"))) return;
+    if (!(await confirm({ title: "删除协作", message: t("cowork.expertCollabDeleteConfirm") }))) return;
     onDelete(item.id);
   };
 

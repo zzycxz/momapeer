@@ -22,6 +22,7 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { useToast } from "./lib/toast";
+import { useConfirm } from "./lib/confirm";
 import { asArray } from "./lib/array";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, useI18n, useT, type Translator } from "./lib/i18n";
 import { useController, type Item, type LiveStream } from "./lib/useController";
@@ -669,6 +670,7 @@ export default function App() {
   const [paletteSessions, setPaletteSessions] = useState<SessionMeta[]>([]);
   const [paletteCapabilities, setPaletteCapabilities] = useState<CapabilitiesView | null>(null);
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const [sidebarImConnections, setSidebarImConnections] = useState<SidebarImConnection[]>([]);
   const [imTopicSources, setImTopicSources] = useState<Record<string, SidebarImTopicSource>>({});
   const [sidebarImDetailConnectionId, setSidebarImDetailConnectionId] = useState("");
@@ -2086,7 +2088,7 @@ export default function App() {
       const teams = await app.ListExpertTeams().catch(() => []);
       const team = teams.find((tm) => tm.id === teamId);
       if (team?.allowSearch && !searchCostConfirmedRef.current.has(teamId)) {
-        if (!window.confirm(t("cowork.expertSearchCostConfirm"))) return;
+        if (!(await confirm({ title: "搜索确认", message: t("cowork.expertSearchCostConfirm"), danger: false }))) return;
         searchCostConfirmedRef.current.add(teamId);
       }
       await app.RunExpertTeam(teamId, task, mode, rounds);

@@ -6,6 +6,7 @@ import { installGlobalCrashHandlers } from "./lib/crash";
 import { installMessageSelectionCopy } from "./lib/messageSelectionCopy";
 import { LocaleProvider } from "./lib/i18n";
 import { ToastProvider } from "./lib/toast";
+import { ConfirmProvider } from "./lib/confirm";
 import { initFontFamily } from "./lib/fontFamily";
 import { initTextSize } from "./lib/textSize";
 import { initTheme } from "./lib/theme";
@@ -60,7 +61,9 @@ createRoot(root).render(
     <ErrorBoundary>
       <LocaleProvider>
         <ToastProvider>
-          <App />
+          <ConfirmProvider>
+            <App />
+          </ConfirmProvider>
         </ToastProvider>
       </LocaleProvider>
     </ErrorBoundary>

@@ -566,6 +566,7 @@ export interface TaskView {
   outputDir: string;
   color?: string;
   location?: string;
+  plain: boolean;        // 纯提醒：到点直接弹原文，不调 AI
   // Last delivery outcome. lastDeliverErr is empty when the last run delivered
   // successfully (or had no delivery configured); non-empty means the agent ran
   // but IM/email/file push failed — surfaced in the card so the user notices.
@@ -588,6 +589,7 @@ export interface TaskInput {
   outputDir?: string;
   color?: string;
   location?: string;
+  plain?: boolean;       // 纯提醒：到点直接弹原文，不调 AI
 }
 
 // One run-history record (newest first when listed).

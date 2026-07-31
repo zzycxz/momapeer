@@ -21,7 +21,6 @@ import {
   CalendarDays,
   ChevronDown,
   ChevronRight,
-  CircleDashed,
   CornerDownRight,
   FileText,
   Folder,
@@ -64,6 +63,7 @@ import { TemplateSelect } from "./TemplateSelect";
 import { RagNode } from "./RagNode";
 import { ImportModal } from "./ImportModal";
 import { ConfirmModal } from "../ConfirmModal";
+import { useConfirm } from "../../lib/confirm";
 
 // PALETTE (Bp) is the fallback color list for calendar events without an
 // explicit color. The original bundle uses a small CSS-var palette; index 0 is
@@ -312,22 +312,52 @@ function TodayView() {
   // 移除整页阻塞 loading，改为局部静默刷新，防止切换页卡卡顿
 
   const now = new Date();
-  const todaysEvents = (events ?? []).filter((e) => {
-    const start = new Date(e.start);
-    return (
-      start.getFullYear() === now.getFullYear() &&
-      start.getMonth() === now.getMonth() &&
-      start.getDate() === now.getDate()
-    );
-  }).sort((a, b) => a.start.localeCompare(b.start));
-
-  const nowMs = Date.now();
-  const upcoming = (tasks ?? [])
-    .filter((tk) => tk.enabled && tk.nextRun)
-    .map((tk) => ({ tk, ts: new Date(tk.nextRun).getTime() }))
-    .filter((x) => !isNaN(x.ts) && x.ts >= nowMs)
-    .sort((a, b) => a.ts - b.ts)
-    .slice(0, 3);
+  // todayItems merges today's calendar events AND today's enabled scheduled
+  // tasks into a single unified list, so the user sees "everything happening
+  // today" in one place instead of two disconnected sections. Each item carries
+  // a `kind` so we can visually distinguish events (📅) from auto-tasks (⚡).
+  // Events use .start ("YYYY-MM-DDTHH:MM"), tasks use .nextRun ("YYYY-MM-DD HH:MM",
+  // space-separated) — both parse fine via new Date().
+  type TodayItem = {
+    id: string;
+    title: string;
+    time: Date;
+    allDay: boolean;
+    location: string;
+    color: string;
+    outputMode: string;
+    kind: "event" | "task";
+  };
+  const isToday = (d: Date) =>
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  const todayItems: TodayItem[] = [
+    ...(events ?? [])
+      .filter((e) => isToday(new Date(e.start)))
+      .map((e) => ({
+        id: e.id,
+        title: e.title,
+        time: new Date(e.start),
+        allDay: e.allDay,
+        location: e.location,
+        color: eventColor(e),
+        outputMode: e.outputMode,
+        kind: "event" as const,
+      })),
+    ...(tasks ?? [])
+      .filter((tk) => tk.enabled && tk.nextRun && isToday(new Date(tk.nextRun)))
+      .map((tk) => ({
+        id: tk.id,
+        title: tk.name,
+        time: new Date(tk.nextRun),
+        allDay: false,
+        location: tk.location ?? "",
+        color: tk.color || "#8b949e",
+        outputMode: tk.outputMode,
+        kind: "task" as const,
+      })),
+  ].sort((a, b) => a.time.getTime() - b.time.getTime());
 
   // Holiday hint: is today a holiday? If not, find the next upcoming one so
   // the user sees "距 XX节还有 N 天" in the briefing.
@@ -343,7 +373,7 @@ function TodayView() {
         .sort((a, b) => a.start.localeCompare(b.start))[0]
     : undefined;
   const daysToNext = nextHoliday
-    ? Math.ceil((new Date(nextHoliday.start).getTime() - nowMs) / 86400000)
+    ? Math.ceil((new Date(nextHoliday.start).getTime() - Date.now()) / 86400000)
     : 0;
 
   const mailOk = probe?.status === "ok";
@@ -359,7 +389,7 @@ function TodayView() {
             <span style={{ fontWeight: 600 }}>今日日程与任务</span>
           </div>
           <div className="cowork-today__briefing-body" style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-            <div>1. <CalendarClock size={13} style={{ color: "#8b949e", margin: "0 2px", verticalAlign: "middle" }} />今日安排核心日程 {todaysEvents.length} 项。</div>
+            <div>1. <CalendarClock size={13} style={{ color: "#8b949e", margin: "0 2px", verticalAlign: "middle" }} />今日安排核心日程 {todayItems.length} 项。</div>
             <div>2. <Mail size={13} style={{ color: "#58a6ff", margin: "0 2px", verticalAlign: "middle" }} />待处理未读件 {unreadCount} 封。</div>
             <div>3. ☕ 当前时段暂无紧迫议程。</div>
             <div>4. 🤖 请点击下方按钮，获取昨日邮件工作总结。</div>
@@ -375,7 +405,7 @@ function TodayView() {
               className="rag-toolbar__btn" 
               style={{ background: "#f26522", color: "#fff", border: "none" }}
               onClick={() => {
-                const prompt = `请生成今日行政决策早报。在早报开头，请务必直接列出以下现状信息：\n1. 今日安排核心日程 ${todaysEvents.length} 项。\n2. 待处理未读件 ${unreadCount} 封。\n3. 当前时段的紧迫议程。\n4. 昨日邮件的重要内容。\n\n接下来，请调用邮箱等工具分析上述内容，并向我简炼总结：今日还需要做的事情，以及昨天已经进行或遗留的重要事项。`;
+                const prompt = `请生成今日行政决策早报。在早报开头，请务必直接列出以下现状信息：\n1. 今日安排核心日程 ${todayItems.length} 项。\n2. 待处理未读件 ${unreadCount} 封。\n3. 当前时段的紧迫议程。\n4. 昨日邮件的重要内容。\n\n接下来，请调用邮箱等工具分析上述内容，并向我简炼总结：今日还需要做的事情，以及昨天已经进行或遗留的重要事项。`;
                 window.dispatchEvent(new CustomEvent("cowork:insert-text", { detail: prompt }));
               }}
             >
@@ -384,46 +414,42 @@ function TodayView() {
           </div>
         </div>
 
-      <section className="cowork-today__section" style={{ marginTop: "20px" }}>
+      <section className="cowork-today__section" style={{ marginTop: "20px", paddingBottom: "12px" }}>
         <h4 className="cowork-today__heading">
           <CalendarClock size={13} />
-          {t("coworkDock.todayEvents") || "今日日程"}
+          {t("coworkDock.todayTodo") || "今日待办"}
+          <span className="cowork-today__heading-count">{todayItems.length}</span>
         </h4>
-        {todaysEvents.length === 0 ? (
-          <div className="cowork-today__empty">{t("coworkDock.noEvents") || "今日暂无日程"}</div>
+        {todayItems.length === 0 ? (
+          <div className="cowork-today__empty">{t("coworkDock.noTodo") || "今日暂无待办"}</div>
         ) : (
           <ul className="cowork-today__list">
-            {todaysEvents.map((e) => (
-              <li key={e.id} className="cowork-today__row">
-                <span className="cowork-today__time">{e.allDay ? "全天" : formatEventTime(e.start)}</span>
-                <span className="cowork-today__dot" style={{ background: eventColor(e) }} />
-                <span className="cowork-today__text" title={e.title}>
-                  {e.title}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="cowork-today__section" style={{ marginTop: "24px", paddingBottom: "12px" }}>
-        <h4 className="cowork-today__heading">
-          <CircleDashed size={13} />
-          {t("coworkDock.upcoming") || "即将触发"}
-        </h4>
-        {upcoming.length === 0 ? (
-          <div className="cowork-today__empty">{t("coworkDock.noUpcoming") || "暂无待触发任务"}</div>
-        ) : (
-          <ul className="cowork-today__list">
-            {upcoming.map(({ tk, ts }) => (
-              <li key={tk.id} className="cowork-today__row">
-                <span className="cowork-today__time">{formatDateTime(new Date(ts).toISOString())}</span>
-                <span className="cowork-today__dot cowork-today__dot--plain" />
-                <span className="cowork-today__text" title={tk.name}>
-                  {tk.name}
-                </span>
-              </li>
-            ))}
+            {todayItems.map((it) => {
+              // Past items (time already passed) render dimmed so the user can
+              // tell at a glance what's left today vs. what's behind them.
+              const past = it.time.getTime() < Date.now();
+              return (
+                <li
+                  key={`${it.kind}-${it.id}`}
+                  className="cowork-today__row"
+                  style={{ opacity: past ? 0.55 : 1 }}
+                >
+                  <span className="cowork-today__time">{it.allDay ? "全天" : formatEventTime(it.time.toISOString())}</span>
+                  <span className="cowork-today__dot" style={{ background: it.color }} />
+                  <span className="cowork-today__text" title={it.title + (it.location ? ` @ ${it.location}` : "")}>
+                    {it.title}
+                  </span>
+                  {/* kind badge: 📅 event vs ⚡ task, so the two underlying systems
+                      are still distinguishable inside the unified list. */}
+                  <span className="cowork-today__kind" title={it.kind === "event" ? "日历事件" : "定时任务"}>
+                    {it.kind === "event" ? "📅" : "⚡"}
+                  </span>
+                  {/* output-mode hint when the item pushes to IM/email */}
+                  {it.outputMode === "im" && <span className="cowork-today__out" title="推送到 IM">💬</span>}
+                  {it.outputMode === "email" && <span className="cowork-today__out" title="推送到邮件">✉️</span>}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
@@ -708,6 +734,7 @@ function RagDock({
   const [newCollectionName, setNewCollectionName] = useState("");
   const [newCollectionParent, setNewCollectionParent] = useState("");
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
   const [catSearch, setCatSearch] = useState("");
   const [fileSearch, setFileSearch] = useState("");
@@ -1273,12 +1300,14 @@ function RagDock({
                           }
                         }}
                         onRemove={(n) => {
-                          if (n.path && window.confirm(`确定删除该文件已提取的知识？\n${n.path}\n\n文档本身不会被删除，可重新提取。`)) {
+                          if (!n.path) return;
+                          void confirm({ title: "删除提取的知识", message: `确定删除该文件已提取的知识？\n${n.path}\n\n文档本身不会被删除，可重新提取。` }).then((ok) => {
+                            if (!ok) return;
                             (app as unknown as { RagRemovePath: (c: string, p: string) => Promise<void> })
                               .RagRemovePath(activeCollection, n.path)
                               .then(() => refreshTree())
                               .catch(() => refreshTree());
-                          }
+                          });
                         }}
                         onFileClick={(n) => {
                           setDocCollection(n.collection);

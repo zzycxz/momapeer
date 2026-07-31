@@ -20,7 +20,7 @@ const CATEGORIES: CategoryDef[] = [
   { id: "minimax",  label: "MiniMax",    prefixes: ["minimax/"] },
   { id: "zai",      label: "智谱",       prefixes: ["z.ai/"] },
   { id: "moonshot", label: "月之暗面",   prefixes: ["moonshotai/"] },
-  { id: "other",    label: "其他",       prefixes: ["openai/", "stepfun/", "nvidia/", "moma/"] },
+  { id: "other",    label: "其他",       prefixes: ["nvidia/"] },
 ];
 
 function catForModel(modelName: string): string {

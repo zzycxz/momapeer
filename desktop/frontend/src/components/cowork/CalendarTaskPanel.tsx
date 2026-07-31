@@ -22,6 +22,7 @@ import { TaskForm } from "./TaskForm";
 import { EventEditForm } from "./EventEditForm";
 import { RunHistory } from "./RunHistory";
 import { useToast } from "../../lib/toast";
+import { useConfirm } from "../../lib/confirm";
 
 const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
 const HOURS = Array.from({ length: 14 }, (_, i) => i + 8);
@@ -84,6 +85,7 @@ type CreateMode = "event" | "task" | "template";
 
 export function CalendarTaskPanel() {
   const { showToast } = useToast();
+  const confirm = useConfirm();
 
   // Calendar state
   const [events, setEvents] = useState<CalendarEventView[]>([]);
@@ -159,7 +161,7 @@ export function CalendarTaskPanel() {
   // --- Task CRUD ---
   const handleCreateTask = async (input: TaskInput) => { await app.CreateScheduledTask(input); setTaskFormOpen(false); setEditingTask(null); setPresetTemplate(null); };
   const handleUpdateTask = async (input: TaskInput) => { if (editingTask) await app.UpdateScheduledTask({ ...input, id: editingTask.id }); setTaskFormOpen(false); setEditingTask(null); };
-  const handleDeleteTask = async (task: TaskView) => { if (!window.confirm(`确定删除任务"${task.name}"？`)) return; try { await app.DeleteScheduledTask(task.id); } catch (e) { showToast(String(e), "error"); } };
+  const handleDeleteTask = async (task: TaskView) => { if (!(await confirm({ title: "删除任务", message: `确定删除任务"${task.name}"？` }))) return; try { await app.DeleteScheduledTask(task.id); } catch (e) { showToast(String(e), "error"); } };
   const handleRunNow = async (task: TaskView) => { showToast(`执行中: ${task.name}`, "info"); try { const r = await app.RunScheduledTaskNow(task.id); showToast(`完成: ${task.name}${r ? `: ${r.slice(0, 100)}` : ""}`, "info"); } catch (e) { showToast(`失败: ${task.name} - ${e}`, "error"); } };
   const handleTogglePause = async (task: TaskView) => { try { if (task.enabled) await app.PauseScheduledTask(task.id); else await app.ResumeScheduledTask(task.id); } catch (e) { showToast(String(e), "error"); } };
 
@@ -174,7 +176,7 @@ export function CalendarTaskPanel() {
   };
   const handleCreateEvent = async (input: CalendarEventInput) => { await app.CreateCalendarEvent(input); setEventFormOpen(false); setEditingEvent(null); void refreshEvents(); };
   const handleUpdateEvent = async (input: CalendarEventInput) => { if (editingEvent) await app.UpdateCalendarEvent({ ...input, id: editingEvent.id }); setEventFormOpen(false); setEditingEvent(null); void refreshEvents(); };
-  const handleDeleteEvent = async () => { if (!editingEvent) return; if (!window.confirm(`确定删除日程"${editingEvent.title}"？`)) return; try { await app.DeleteCalendarEvent(editingEvent.id); setEventFormOpen(false); setEditingEvent(null); void refreshEvents(); } catch (e) { showToast(String(e), "error"); } };
+  const handleDeleteEvent = async () => { if (!editingEvent) return; if (!(await confirm({ title: "删除日程", message: `确定删除日程"${editingEvent.title}"？` }))) return; try { await app.DeleteCalendarEvent(editingEvent.id); setEventFormOpen(false); setEditingEvent(null); void refreshEvents(); } catch (e) { showToast(String(e), "error"); } };
 
   // --- Create menu ---
   const openCreateMenu = () => setCreateMode(null);
@@ -422,7 +424,7 @@ export function CalendarTaskPanel() {
           templates={templates}
           onSubmit={(input) => editingTask ? handleUpdateTask(input) : handleCreateTask(input)}
           onCancel={() => { setTaskFormOpen(false); setEditingTask(null); setPresetTemplate(null); }}
-          onDelete={editingTask ? () => { if (window.confirm(`确定删除"${editingTask.name}"？`)) { void app.DeleteScheduledTask(editingTask.id).then(() => { setTaskFormOpen(false); setEditingTask(null); }); } } : undefined}
+          onDelete={editingTask ? () => { void confirm({ title: "删除任务", message: `确定删除"${editingTask.name}"？` }).then((ok) => { if (ok) { void app.DeleteScheduledTask(editingTask.id).then(() => { setTaskFormOpen(false); setEditingTask(null); }); } }); } : undefined}
         />
       )}
 

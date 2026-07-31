@@ -73,6 +73,12 @@ type ScheduledTask struct {
 	Color          string    `json:"color,omitempty"`
 	Location       string    `json:"location,omitempty"`
 	LastDeliverErr string    `json:"last_deliver_err,omitempty"` // "" if last delivery succeeded / was skipped
+	// Plain marks a task whose Prompt is a plain reminder to be surfaced verbatim
+	// (toast/IM/email body) WITHOUT running the agent. Set explicitly by the UI
+	// ("纯提醒" toggle) — we do NOT guess this from prompt text, because no
+	// heuristic can reliably tell "周报" (AI task, no verb) from "下班打卡" (plain
+	// reminder, no verb). Plain=false (default) always runs the agent.
+	Plain bool `json:"plain,omitempty"`
 	LastDeliverAt  time.Time `json:"last_deliver_at,omitempty"`  // when the most recent delivery was attempted
 }
 
@@ -179,7 +185,26 @@ type Scheduler struct {
 	notifier      Notifier
 	accountProber AccountProber
 	stopCh        chan struct{}
-	logf          func(format string, args ...any)
+	running       bool // true while the loop goroutine is alive; guards double-Start
+	// nextTimer is the precise OS-level timer for the nearest due task. Unlike a
+	// fixed-interval poller, it fires at the EXACT NextRun of the closest task
+	// (second-level precision, zero CPU between fires). Re-armed on every
+	// Create/Update/Delete/Load/fire via rescheduleTimer. nil when stopped.
+	nextTimer *time.Timer
+	logf      func(format string, args ...any)
+	// missedReminders collects one-shot tasks whose fire instant already passed
+	// at Load time (the app was down when they were due). The desktop layer
+	// drains these after binding the notifier so each missed reminder is
+	// surfaced once via a catch-up notification instead of silently dropped.
+	missedReminders []MissedReminder
+}
+
+// MissedReminder describes a one-shot task that was due while the app was down.
+// DrainMissedReminders returns and clears the pending list. The desktop layer
+// fires a catch-up notification for each (the task itself is already disabled).
+type MissedReminder struct {
+	Name string
+	Body string // the prompt text (or a generic note if empty)
 }
 
 const historyMax = 100
@@ -268,11 +293,23 @@ func (s *Scheduler) Load() error {
 	now := time.Now()
 	for i := range s.tasks {
 		// One-shot tasks whose instant already passed are auto-disabled on load
-		// (they fired in a prior session, or were missed while the app was down
-		// — either way they shouldn't fire now).
+		// (they fired in a prior session, or were missed while the app was down).
+		// For the MISSED case (never ran: RunCount==0), capture a catch-up
+		// reminder so the desktop layer can surface it instead of silently
+		// dropping the user's reminder. Tasks that already fired (RunCount>0)
+		// are just kept disabled for history — no duplicate catch-up.
 		if s.tasks[i].Enabled {
 			nr := nextRun(s.tasks[i].Expression, now)
 			if s.tasks[i].OneShot && nr.IsZero() {
+				if s.tasks[i].RunCount == 0 {
+					s.missedReminders = append(s.missedReminders, MissedReminder{
+						Name: s.tasks[i].Name,
+						Body: s.tasks[i].Prompt,
+					})
+					if s.logf != nil {
+						s.logf("scheduler: one-shot %s was missed while app was down; queued catch-up reminder", s.tasks[i].Name)
+					}
+				}
 				s.tasks[i].Enabled = false
 				s.tasks[i].NextRun = time.Time{}
 			} else {
@@ -290,29 +327,55 @@ func (s *Scheduler) Load() error {
 	return nil
 }
 
-// Start launches the firing goroutine. Idempotent (a second call is a no-op).
-// The loop ticks every 30s and fires any task whose NextRun is due, then
-// recomputes its next fire. Missed runs while stopped are skipped (no backfill).
+// DrainMissedReminders returns and clears the one-shot tasks that were due while
+// the app was down (detected during Load). The desktop layer calls this after
+// binding the notifier, firing a catch-up notification for each so the user
+// isn't left believing a reminder they set was silently lost.
+func (s *Scheduler) DrainMissedReminders() []MissedReminder {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.missedReminders
+	s.missedReminders = nil
+	return out
+}
+
+// Start launches the precise-timer scheduling loop. Idempotent (a second call
+// while running is a no-op); can restart after Stop. Unlike a fixed-interval
+// poller, this uses a single time.AfterFunc timer that fires at the EXACT
+// NextRun of the nearest due task — second-level precision with zero CPU between
+// fires (the goroutine is parked until the OS wakes it). Re-armed automatically
+// after each fire and on any Create/Update/Delete/Load.
 func (s *Scheduler) Start() {
 	s.mu.Lock()
-	select {
-	case <-s.stopCh:
-		// already stopped — reset channel so we can restart.
-		s.stopCh = make(chan struct{})
-	default:
-		// still running; no-op.
+	if s.running {
 		s.mu.Unlock()
 		return
 	}
+	if s.stopCh == nil {
+		s.stopCh = make(chan struct{})
+	}
+	select {
+	case <-s.stopCh:
+		s.stopCh = make(chan struct{})
+	default:
+	}
+	s.running = true
+	s.armNextTimerLocked()
 	s.mu.Unlock()
-
-	go s.loop()
 }
 
-// Stop halts the firing loop.
+// Stop halts the scheduling timer.
 func (s *Scheduler) Stop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.running {
+		return
+	}
+	s.running = false
+	if s.nextTimer != nil {
+		s.nextTimer.Stop()
+		s.nextTimer = nil
+	}
 	select {
 	case <-s.stopCh:
 	default:
@@ -320,17 +383,63 @@ func (s *Scheduler) Stop() {
 	}
 }
 
-func (s *Scheduler) loop() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-s.stopCh:
-			return
-		case now := <-ticker.C:
-			s.fireDue(now)
+// armNextTimerLocked finds the nearest due task and arms a precise timer for it.
+// If no task is due, no timer is set (the goroutine stays parked until a
+// Create/Update/Delete re-arms). Caller MUST hold s.mu. Safe to call when
+// stopped (it checks s.running). If the nearest task is already past-due, it
+// fires it within a short delay instead of waiting 0.
+func (s *Scheduler) armNextTimerLocked() {
+	if !s.running {
+		return
+	}
+	// Cancel any pending timer — we'll re-arm with the (possibly new) nearest.
+	if s.nextTimer != nil {
+		s.nextTimer.Stop()
+		s.nextTimer = nil
+	}
+	// Find the earliest NextRun among enabled, scheduled tasks.
+	var nearest time.Time
+	for _, t := range s.tasks {
+		if !t.Enabled || t.NextRun.IsZero() {
+			continue
+		}
+		if nearest.IsZero() || t.NextRun.Before(nearest) {
+			nearest = t.NextRun
 		}
 	}
+	if nearest.IsZero() {
+		// No scheduled tasks — nothing to arm. A future Create/Update will re-arm.
+		return
+	}
+	now := time.Now()
+	delay := nearest.Sub(now)
+	if delay < 0 {
+		// Past-due (e.g. a task whose fire instant passed while armed). Fire
+		// promptly but off the lock — use a tiny delay so AfterFunc runs async.
+		delay = 0
+	}
+	if s.logf != nil {
+		s.logf("scheduler: arming timer for %s (delay %v)", nearest.Format("15:04:05"), delay)
+	}
+	s.nextTimer = time.AfterFunc(delay, s.fireAndReschedule)
+}
+
+// fireAndReschedule is the AfterFunc callback: fire all due tasks, then re-arm
+// the timer for the next nearest task. It does NOT run under s.mu (AfterFunc
+// callbacks run on their own goroutine) — it acquires the lock inside fireDue
+// and armNextTimerLocked as needed.
+func (s *Scheduler) fireAndReschedule() {
+	// Guard: if Stop ran between arming and firing, do nothing.
+	s.mu.Lock()
+	running := s.running
+	s.mu.Unlock()
+	if !running {
+		return
+	}
+	s.fireDue(time.Now())
+	s.mu.Lock()
+	s.armNextTimerLocked()
+	s.mu.Unlock()
 }
 
 // fireDue runs every task whose NextRun is at or before now, sequentially (a
@@ -354,7 +463,21 @@ func (s *Scheduler) fireDue(now time.Time) {
 		s.mu.Lock()
 		t := s.tasks[idx]
 		s.mu.Unlock()
-		result := s.runOne(runner, t)
+		// Branch: a Plain task (user toggled "纯提醒" in the form) surfaces its
+		// prompt verbatim as the notification body WITHOUT running the agent —
+		// the agent misreads short prompts (treating them as requests and
+		// returning irrelevant output). Non-Plain tasks run the full agent loop.
+		// This is an explicit per-task flag, NOT a guess from prompt text: no
+		// heuristic can reliably tell "周报" (AI task) from "下班打卡" (reminder).
+		var result string
+		if t.Plain {
+			result = strings.TrimSpace(t.Prompt)
+			if s.logf != nil {
+				s.logf("scheduler: %s fired as plain reminder (skipped agent)", t.Name)
+			}
+		} else {
+			result = s.runOne(runner, t)
+		}
 		runErr := strings.HasPrefix(result, "error:") || strings.HasPrefix(result, "skipped:")
 		// Deliver to the configured output channel. Best-effort: a delivery
 		// failure doesn't fail the run (the result is stored on the task
@@ -392,6 +515,9 @@ func (s *Scheduler) fireDue(now time.Time) {
 			if currentOneShot {
 				s.tasks[idx].Enabled = false
 				s.tasks[idx].NextRun = time.Time{}
+				if s.logf != nil {
+					s.logf("scheduler: one-shot %s auto-disabled after fire", t.Name)
+				}
 			} else {
 				s.tasks[idx].NextRun = nextRun(currentExpr, time.Now())
 			}
@@ -624,6 +750,7 @@ func (s *Scheduler) Create(t ScheduledTask) (ScheduledTask, error) {
 	s.mu.Lock()
 	s.tasks = append(s.tasks, t)
 	err = s.store.save(s.tasks)
+	s.armNextTimerLocked() // new task may be the nearest — re-arm
 	s.mu.Unlock()
 	if err != nil {
 		return ScheduledTask{}, err
@@ -653,6 +780,7 @@ func (s *Scheduler) Delete(id string) bool {
 		if t.ID == id {
 			s.tasks = append(s.tasks[:i], s.tasks[i+1:]...)
 			_ = s.store.save(s.tasks)
+			s.armNextTimerLocked() // nearest task may have been the deleted one
 			return true
 		}
 	}
@@ -683,6 +811,7 @@ func (s *Scheduler) Update(id string, mut func(*ScheduledTask)) (ScheduledTask, 
 				s.tasks[i].NextRun = time.Time{}
 			}
 			_ = s.store.save(s.tasks)
+			s.armNextTimerLocked() // schedule/enabled may have changed — re-arm
 			return s.tasks[i], nil
 		}
 	}

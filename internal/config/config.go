@@ -1400,7 +1400,7 @@ var BuiltinMoMAModels = []string{
 	"jiutian/jiutian-lan-236b", "jiutian/jiutian-lan-35b",
 	"jiutian/jiutian-lan-thinking", "jiutian/jiutian-da-35b",
 	// 通义千问
-	"qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b", "qwen/qwen3-coder-next",
+	"qwen/qwen3.6-35b", "qwen/qwen3.6-27b", "qwen/qwen3.5-397b-a17b",
 	// DeepSeek
 	"deepseek/deepseek-v4-flash", "deepseek/deepseek-v32",
 	// 智谱
@@ -1409,12 +1409,6 @@ var BuiltinMoMAModels = []string{
 	"minimax/minimax-m2.7", "minimax/minimax-m2.5",
 	// 月之暗面
 	"moonshotai/kimi-k2.6", "moonshotai/kimi-k2.5-thinking",
-	// 阶跃星辰
-	"stepfun/step-3.5-flash",
-	// OpenAI
-	"openai/gpt-oss-120b",
-	// 自动路由
-	"moma/auto-router",
 }
 
 // Default returns the built-in default configuration (MoMA + MoMA presets).
