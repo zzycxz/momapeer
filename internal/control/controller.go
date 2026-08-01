@@ -600,7 +600,7 @@ func (c *Controller) runGoalLoopWithRawDisplay(ctx context.Context, input any, r
 func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input any, raw, display string) error {
 	c.maybeSessionStart(ctx)
 	c.ensureSessionPath() // first turn: assign a transcript file so autosave & bot mapping work
-	c.touchActivity() // user is active; the idle-dream countdown restarts from now
+	c.touchActivity()     // user is active; the idle-dream countdown restarts from now
 	c.maybeAutoPlan(ctx, raw)
 	ctx = agent.WithParentSession(ctx, c.parentSessionID())
 	composedText := c.Compose(provider.ContentString(input))

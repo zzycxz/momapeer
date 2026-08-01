@@ -127,13 +127,13 @@ func TestFeishuReceiveIDType(t *testing.T) {
 		id   string
 		want string
 	}{
-		{"ou_3a2bdd60640aaa95518186677b1f6d8c", "open_id"},  // 用户 open_id — 推送主场景
-		{"on_abc123", "union_id"},                            // 跨应用 union_id
-		{"u_abc123", "user_id"},                              // 应用内 user_id
-		{"someone@example.com", "email"},                     // 邮箱
-		{"oc_abc123", "chat_id"},                             // 群/会话 chat_id — 回复主场景
-		{"oc_5dxx", "chat_id"},                               // 短 chat_id
-		{"unknown_prefix_xx", "chat_id"},                     // 未识别 → 回退 chat_id（保留旧行为）
+		{"ou_3a2bdd60640aaa95518186677b1f6d8c", "open_id"}, // 用户 open_id — 推送主场景
+		{"on_abc123", "union_id"},                          // 跨应用 union_id
+		{"u_abc123", "user_id"},                            // 应用内 user_id
+		{"someone@example.com", "email"},                   // 邮箱
+		{"oc_abc123", "chat_id"},                           // 群/会话 chat_id — 回复主场景
+		{"oc_5dxx", "chat_id"},                             // 短 chat_id
+		{"unknown_prefix_xx", "chat_id"},                   // 未识别 → 回退 chat_id（保留旧行为）
 	}
 	for _, c := range cases {
 		got := feishuReceiveIDType(c.id)

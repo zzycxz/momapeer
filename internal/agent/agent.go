@@ -1129,9 +1129,9 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 		if msgs[lastIdx].Role == provider.RoleUser {
 			now := time.Now()
 			weekdays := []string{"日", "一", "二", "三", "四", "五", "六"}
-			timeNotice := fmt.Sprintf("\n\n<ADDITIONAL_METADATA>\n【系统通知】当前实时系统时间: %s 周%s\n</ADDITIONAL_METADATA>", 
+			timeNotice := fmt.Sprintf("\n\n<ADDITIONAL_METADATA>\n【系统通知】当前实时系统时间: %s 周%s\n</ADDITIONAL_METADATA>",
 				now.Format("2006-01-02 15:04:05"), weekdays[int(now.Weekday())])
-			
+
 			lastMsg := msgs[lastIdx]
 			switch v := lastMsg.Content.(type) {
 			case string:

@@ -130,4 +130,3 @@ func TestCoworkPromptAddonDropsDisabledRows(t *testing.T) {
 		t.Fatal("SkillNameKey normalization failed: ' PPT-Auto ' did not match 'ppt-auto'")
 	}
 }
-

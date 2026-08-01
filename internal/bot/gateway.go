@@ -143,8 +143,6 @@ type sessionEventSink struct {
 	target event.Sink
 }
 
-
-
 func (s *sessionEventSink) setTarget(target event.Sink) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
