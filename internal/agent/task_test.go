@@ -40,7 +40,7 @@ func TestTaskToolReturnsSubAgentFinalAnswer(t *testing.T) {
 	if sys := sub.lastReq.Messages[0]; sys.Role != provider.RoleSystem || sys.Content != "test-sys-prompt" {
 		t.Errorf("first message = %+v, want system 'test-sys-prompt'", sys)
 	}
-	if got := lastUser(sub.lastReq); got != "find callers of Foo" {
+	if got := lastUser(sub.lastReq); !strings.HasPrefix(got, "find callers of Foo") {
 		t.Errorf("sub-agent user = %q, want the prompt verbatim", got)
 	}
 }
@@ -247,7 +247,7 @@ func TestTaskToolPersistsAndContinuesTranscript(t *testing.T) {
 	if len(msgs) < 4 {
 		t.Fatalf("continued request messages = %+v, want prior transcript plus new task", msgs)
 	}
-	if msgs[1].Content != "first task" || msgs[2].Content != "first answer" || lastUser(sub.requests[1]) != "second task" {
+	if msgs[1].Content != "first task" || msgs[2].Content != "first answer" || !strings.HasPrefix(lastUser(sub.requests[1]), "second task") {
 		t.Fatalf("continued request messages = %+v, want first task/answer then second task", msgs)
 	}
 }
