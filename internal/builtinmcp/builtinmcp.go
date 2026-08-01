@@ -2,9 +2,7 @@
 // requiring user configuration. Currently only Context7 is bundled; the
 // package is designed so more built-in servers can be added later.
 package builtinmcp
-
 import (
-	"os"
 	"os/exec"
 
 	"github.com/zzycxz/momapeer/internal/config"

@@ -417,7 +417,7 @@ func solveScreenshot(ctx context.Context, prov provider.Provider, entry *config.
 	// helpful problem-solver that reasons and verifies uncertain facts online.
 	sess := agent.NewSession("你是一个能看图的解题助手。请仔细阅读屏幕截图中的问题，逐步推理并用联网搜索核实不确定的信息，最后给出清晰的答案和过程。")
 	opts := agent.Options{
-		MaxSteps:      8, // roughly search → read → (re-search) → answer
+		MaxSteps:      8,                   // roughly search → read → (re-search) → answer
 		ContextWindow: entry.ContextWindow, // 0 disables compaction — avoid for search loops
 	}
 	sink := event.FuncSink(func(e event.Event) {
