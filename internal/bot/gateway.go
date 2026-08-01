@@ -143,9 +143,7 @@ type sessionEventSink struct {
 	target event.Sink
 }
 
-type pendingReactionAdapter interface {
-	AddPendingReaction(ctx context.Context, messageID string) error
-}
+
 
 func (s *sessionEventSink) setTarget(target event.Sink) {
 	s.mu.Lock()
