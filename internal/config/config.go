@@ -497,6 +497,14 @@ type CoworkConfig struct {
 	// SMTP configures outbound email (email_send). All fields required to enable
 	// sending; empty SMTPHost disables email_send (it returns a config error).
 	SMTP SMTPConfig `toml:"smtp"`
+	// RAGEnabled is the master switch for the knowledge base (RAG). nil/unset =
+	// enabled (the historical default, backward compatible). Set to false to
+	// fully disable the knowledge base: no auto-injection into messages, the
+	// rag_search/rag_import/... tools are not registered, and expert teams skip
+	// knowledge-base context. This is distinct from EmbeddingModel (which only
+	// toggles semantic reranking on top of FTS5) — RAGEnabled governs whether RAG
+	// runs at all.
+	RAGEnabled *bool `toml:"rag_enabled"`
 	// EmbeddingModel enables semantic RAG reranking. When set to a provider model
 	// ref that supports embeddings, rag_search computes a query embedding and
 	// reranks FTS5 hits by cosine similarity. Empty = FTS5-only (the default,
@@ -584,6 +592,17 @@ type CoworkConfig struct {
 	// pick a sensible bound. Set lower for cheaper/faster runs, higher for
 	// complex multi-page tasks.
 	BrowserUseMaxSteps int `toml:"browser_use_max_steps"`
+}
+
+// RAGEnabledOrDefault reports whether the knowledge base (RAG) is enabled. A nil
+// RAGEnabled means the user never set it → enabled (backward compatible). Only
+// an explicit false disables RAG. Callers that gate RAG behaviour should use
+// this rather than dereferencing the pointer directly.
+func (c CoworkConfig) RAGEnabledOrDefault() bool {
+	if c.RAGEnabled == nil {
+		return true
+	}
+	return *c.RAGEnabled
 }
 
 // LLMConfig holds the global LLM request budget (rate limiting). It applies
@@ -1416,8 +1435,12 @@ func Default() *Config {
 	return &Config{
 		ConfigVersion: 2,
 		DefaultModel:  "minimax/minimax-m2.7",
-		UI:            UIConfig{Theme: "auto"},
+		UI:            UIConfig{Theme: "light"},
 		Desktop:       DesktopConfig{Theme: "light", ThemeStyle: "slate"},
+		Cowork: CoworkConfig{
+			EmbeddingModel:    "moma/text-embedding-v3",
+			PPTActiveTemplate: "example",
+		},
 		Notifications: NotificationsConfig{
 			Enabled:         false,
 			TurnDone:        true,
