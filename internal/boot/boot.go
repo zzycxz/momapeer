@@ -329,7 +329,20 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			sysPrompt = strings.TrimSpace(string(b))
 		}
 		if addon := strings.TrimSpace(opts.Profile.SystemPromptAddon); addon != "" {
-			sysPrompt += "\n\n" + addon
+			// For the cowork profile, drop capability-routing rows that target
+			// disabled skills so the prompt doesn't instruct the model to call a
+			// skill the user turned off (otherwise the model retries the disabled
+			// skill instead of telling the user to re-enable it). disabledNames is
+			// computed below for the skill store; we recompute the effective set
+			// here (cheap, config-local) since the prompt is assembled before that.
+			if config.ProfileNameKey(opts.Profile.Name) == config.ProfileCowork {
+				effective := cfg.DisabledSkillNames()
+				effective = applyProfileToSkillDisabled(opts.Profile, effective)
+				addon = config.CoworkPromptAddon(effective)
+			}
+			if strings.TrimSpace(addon) != "" {
+				sysPrompt += "\n\n" + addon
+			}
 		}
 	}
 	// Model-specific prompt addon (thinking encouragement, serial constraint, etc.)
@@ -344,7 +357,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Build (cache-stable for the session).
 	now := time.Now()
 	weekdays := []string{"日", "一", "二", "三", "四", "五", "六"}
-	sysPrompt += fmt.Sprintf("\n\n# 当前时间\n现在是 %s 周%s。生成涉及具体日期/时间的任务（如 schedule_create 的 at 表达式）时，必须使用当前或未来的日期，不要用训练数据中的旧年份。",
+	sysPrompt += fmt.Sprintf("\n\n# 当前时间\n现在是 %s 周%s。在任何需要判断当前年份（例如搜索“最新”资讯）或生成具体日期/时间的任务中，都必须以当前时间为准，切勿使用你的旧训练年份（如 2023 或 2024）。",
 		now.Format("2006-01-02 15:04"), weekdays[int(now.Weekday())])
 	// Output style: fold the selected persona/tone block into the base prompt
 	// before language/memory/skills append, so a "replace" style (keep-coding
@@ -583,9 +596,16 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		// RAG knowledge-base tools. The store is injected by the desktop app
 		// (app.go) via builtin.SetRAGStore; boot registers the tool surface.
-		for _, t := range builtin.RAGTools() {
-			reg.Add(t)
-			reg.Hide(t.Name())
+		// Gated by the rag_enabled master switch: when the user disabled the
+		// knowledge base, the tools are not registered at all, so the agent
+		// cannot call rag_search/import/... even proactively. Computed once and
+		// reused by RAGContextFn below so auto-injection stays consistent.
+		ragEnabled := cfg.Cowork.RAGEnabledOrDefault()
+		if ragEnabled {
+			for _, t := range builtin.RAGTools() {
+				reg.Add(t)
+				reg.Hide(t.Name())
+			}
 		}
 		// VLM backend for screen_perceive (desktop automation).
 		//
@@ -1162,7 +1182,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		return &event.Profile{Model: model, Effort: effort}
 	}
-	reg.Add(skill.NewRunSkillTool(skillStore, skillRunner, skillProfile))
+	reg.Add(skill.NewRunSkillToolWithIndex(skillStore, allSkillStore, skillRunner, skillProfile))
 	reg.Add(installsource.NewTool(installsource.Options{
 		ProjectRoot: root,
 		HTTPClient:  httpClient,
@@ -1372,6 +1392,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		// returned snippets may carry prompt-injection text from imported docs,
 		// so they're wrapped so the model treats them as DATA, never commands.
 		RAGContextFn: func(ctx context.Context, query, collection string) string {
+			// Master switch: when the user disabled the knowledge base
+			// ([cowork] rag_enabled = false), never inject — even if a
+			// collection is selected. Read from the live config so toggling it
+			// in settings (which triggers a rebuild) takes effect immediately.
+			if !cfg.Cowork.RAGEnabledOrDefault() {
+				return ""
+			}
 			if collection == "" {
 				return "" // user opted out ("不使用")
 			}
