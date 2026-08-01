@@ -1,5 +1,65 @@
 # Changelog
 
+## [0.5.14] — 2026-08-01
+
+**一条主线：把「快捷截屏」从单纯的内容识别升级为真正的「截图解题」（联网搜索 + 答案过程），并新增 `im_send` 工具让 AI 在对话中能主动给 IM bot 推送消息——堵住之前 AI 听到「给飞书发消息」就乱开浏览器登录网页版的错误路径。** 两条链路复用同一个已连接的飞书/微信 bot 网关，互不重复建连。
+
+> 起因：用户场景是「做题时截屏受限、想偷偷让 AI 解题并把结果发回来」。原有截屏热键只会"描述截图内容"（`请识别并描述…`），不解题、不联网；而让 AI 在对话里发飞书消息时，它工具箱里没有对应工具，只能用浏览器自动化去登录网页飞书（错误且危险）。
+
+---
+
+### Changed — 快捷截屏：识别 → 解题
+
+把原有截图热键管线（`Ctrl+Shift+S`）的行为从「图像描述」改造为「解题 + 联网搜索」。配置开关与字段完全不变（`screenshot_enabled` / `screenshot_hotkey` / `screenshot_vlm_model`），行为原地升级，老用户无感。
+
+- **`desktop/screenshot_hotkey_windows.go`**：
+  - `recognizeScreenshot()`（一次性「描述内容」调用）→ `solveScreenshot()`（带工具调用的解题管线）。
+  - Prompt 从「请识别并描述这张截图的内容」改为中性的「请帮忙处理屏幕上遇到的问题，并将问题解决，你可以进行联网搜索，然后告诉我结果和过程。」
+  - 图像经 `provider.ImageContent()` 组成多模态首条用户消息传入 `agent.Run`（复用主控制器的 `@image` 路径，无需改 agent 包）。
+  - **联网搜索 + 优雅降级**：检测到 `BRAVE/EXA/LINKUP` 任一 key 时走 `web_search + web_fetch` mini-agent（复用专家团队的搜索注册表，`MaxSteps=8`）；无 key 或 agent 失败时自动降级为一次性 VLM 解题，不报错。
+  - 超时从 60s 提到 180s（搜索多轮更慢）；toast 文案与 IM 推送标题同步改为「解题」（`🧮 截图解题结果`）。
+
+---
+
+### Added — `im_send` 工具：AI 主动推送 IM
+
+新增内置工具 `im_send`，让 AI 在对话中能直接调用已连接的 bot 网关推送消息，而不是去开浏览器。
+
+- **新建 `internal/tool/builtin/im.go`**：
+  - 工具 schema：`text`（必填）+ `dest`（可选，`"platform:chatID"`；省略时自动选默认已连接会话）。
+  - `dest` 选择逻辑（`defaultIMPushDest`）与截图热键的 `screenshotPushDest` 完全一致：首个 `connected` 的 feishu/weixin 连接 + 有记住的会话（`session_mappings.remote_id`）。
+  - **依赖注入**：定义最小接口 `imPusher{ Push(ctx, dest, text) error }`，`*bot.BotGateway` 自动满足。桌面启动 bot 网关后通过 `SetIMPusher(gw)` 注入，停止时 `SetIMPusher(nil)` 清空（镜像 `SetCalendarStore` / `SetScheduler` 的标准模式）。
+  - **为什么用接口而非直接导入 `internal/bot`**：`internal/bot` 导入 `internal/boot`，而 `boot` 又导入 `builtin`，直接引用会成环。接口打破环且零耦合。
+- **`desktop/bot_gateway_app.go`**：`startBotGateway` 成功后注入 `builtin.SetIMPusher(gw)`；`stopBotGateway` 清空。`restartBotGateway`（先停后启）自动覆盖。
+- **`internal/boot/boot.go`**：注册 `IMTools()` 到工具表。
+
+### Changed — `im_send` 在两个 profile 都对主对话可见（不 Hide）
+
+- **`internal/boot/boot.go`**：`im_send` 注册后**不调用 `reg.Hide()`**——与 browser/calendar 等重型工具（约百 token、靠 `run_skill` 子代理驱动）不同，`im_send` 是轻量（约 163 token）、用户会直接要求的操作（「给飞书发条消息」）。让它出现在主对话 schema 里，模型才会主动调用它，而不是又去开浏览器。
+- 编码（dev）与办公（cowork）两个 profile 都可见，符合「发消息」作为跨场景通用动作的定位。
+
+---
+
+### Changed — 推送目标选择逻辑收敛
+
+- **`desktop/bot_connection_app.go`**：`screenshotPushDest()` 重写注释并保持与 `im_send` 的 `defaultIMPushDest` 行为一致（同一套"首个 connected feishu/weixin + 有记住会话"规则），确保截图热键、定时任务、`im_send` 三条推送路径落到同一个会话。
+
+---
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| desktop 模块 `go build ./...` | ✅ |
+| 受影响包（`tool/builtin` / `bot` / `boot`）`go build` | ✅ |
+| desktop `go vet` | ✅ |
+| `wails build` 打包 exe | ✅（63 MB） |
+| tsc `--noEmit`（前端） | ✅ |
+
+> 注：`internal/cli/cli.go` 有一处 `builtinmcp.RunCommand` 未定义的编译错误，属 0.5.13 删除 `time_server.go` 的连锁影响，与本次改动无关，仅影响 CLI 编译、不影响桌面 exe。
+
+---
+
 ## [0.5.13] — 2026-08-01
 
 **一条主线：彻底解决大模型“时间感知幻觉”（如在 2026 年去搜索“2024 最新”），通过底层被动动态注入实时时间，并彻底拔除已变为冗余的旧主动时间工具。**
