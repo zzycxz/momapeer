@@ -1438,7 +1438,7 @@ func Default() *Config {
 		UI:            UIConfig{Theme: "light"},
 		Desktop:       DesktopConfig{Theme: "light", ThemeStyle: "slate"},
 		Cowork: CoworkConfig{
-			EmbeddingModel:    "moma/text-embedding-v3",
+			EmbeddingModel:    "",
 			PPTActiveTemplate: "example",
 		},
 		Notifications: NotificationsConfig{
