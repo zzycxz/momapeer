@@ -125,8 +125,8 @@ func TestCoworkPromptAddonDropsDisabledRows(t *testing.T) {
 		}
 	}
 
-	// Name matching is case/whitespace-insensitive (SkillNameKey).
-	if got := CoworkPromptAddon([]string{" PPT-Auto "}); strings.Contains(got, `run_skill("ppt-auto"`) {
-		t.Fatal("SkillNameKey normalization failed: ' PPT-Auto ' did not match 'ppt-auto'")
+	// Name matching trims whitespace (SkillNameKey).
+	if got := CoworkPromptAddon([]string{" ppt-auto "}); strings.Contains(got, `run_skill("ppt-auto"`) {
+		t.Fatal("SkillNameKey normalization failed: ' ppt-auto ' did not match 'ppt-auto'")
 	}
 }

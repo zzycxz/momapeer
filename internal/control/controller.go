@@ -2416,12 +2416,14 @@ func (c *Controller) SessionPath() string {
 // No-op once a path is set. Idempotent under c.mu.
 func (c *Controller) ensureSessionPath() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.sessionPath != "" || c.sessionDir == "" {
+		c.mu.Unlock()
 		return
 	}
-	c.sessionPath = agent.NewSessionPath(c.sessionDir, c.label)
-	c.rebindCheckpoints(c.sessionPath)
+	p := agent.NewSessionPath(c.sessionDir, c.label)
+	c.sessionPath = p
+	c.mu.Unlock()
+	c.rebindCheckpoints(p)
 }
 
 func (c *Controller) parentSessionID() string {
