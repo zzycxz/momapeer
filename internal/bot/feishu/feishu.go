@@ -161,42 +161,76 @@ func (a *adapter) appSecret() (string, error) {
 }
 
 // runWebSocket 启动飞书 WebSocket 长连接。
+//
+// 飞书 SDK 的 WithAutoReconnect 只覆盖「连上之后断了」的场景；首次握手失败时
+// client.Start 会直接返回 error，SDK 不会自行重试。原实现在这种情况下仅打日志
+// 后 return，goroutine 退出，连接永久死亡——表现就是 UI 标记「已连接」但实际
+// 收不到任何消息（因为 Start() 是 fire-and-forget，立即返回 nil）。
+//
+// 本函数用退避重试循环包裹 client.Start：握手失败则重建 client 重试，直到连上
+// 或 ctx 取消。连上之后若再断开，由 SDK 的 AutoReconnect 负责。
 func (a *adapter) runWebSocket(ctx context.Context) {
 	secret, err := a.appSecret()
 	if err != nil {
 		a.logger.Error("feishu websocket config error", "err", err)
 		return
 	}
-	eventHandler := dispatcher.NewEventDispatcher(a.cfg.VerificationToken, "").
-		OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
-			a.handleSDKMessage(event)
-			return nil
-		}).
-		OnP2MessageReadV1(func(ctx context.Context, event *larkim.P2MessageReadV1) error {
-			return nil
-		})
-	opts := []larkws.ClientOption{
-		larkws.WithEventHandler(eventHandler),
-		larkws.WithLogLevel(larkcore.LogLevelError),
-		larkws.WithAutoReconnect(true),
-		larkws.WithOnReady(func() { a.logger.Info("feishu sdk websocket connected") }),
-		larkws.WithOnReconnecting(func() { a.logger.Warn("feishu sdk websocket reconnecting") }),
-		larkws.WithOnReconnected(func() { a.logger.Info("feishu sdk websocket reconnected") }),
-		larkws.WithOnError(func(err error) { a.logger.Error("feishu sdk websocket error", "err", err) }),
-	}
-	if feishuDomain(a.cfg.Domain) == "lark" {
-		opts = append(opts, larkws.WithDomain(lark.LarkBaseUrl))
-	}
-	client := larkws.NewClient(a.cfg.AppID, secret, opts...)
-	a.wsClient = client
-	errCh := make(chan error, 1)
-	go func() { errCh <- client.Start(ctx) }()
-	select {
-	case <-ctx.Done():
-		client.Close()
-	case err := <-errCh:
-		if err != nil {
-			a.logger.Error("feishu sdk websocket stopped", "err", err)
+
+	const maxBackoff = 30 * time.Second
+	backoff := time.Second
+	for attempt := 1; ; attempt++ {
+		if ctx.Err() != nil {
+			return
+		}
+
+		eventHandler := dispatcher.NewEventDispatcher(a.cfg.VerificationToken, "").
+			OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
+				a.handleSDKMessage(event)
+				return nil
+			}).
+			OnP2MessageReadV1(func(ctx context.Context, event *larkim.P2MessageReadV1) error {
+				return nil
+			})
+		opts := []larkws.ClientOption{
+			larkws.WithEventHandler(eventHandler),
+			larkws.WithLogLevel(larkcore.LogLevelInfo),
+			larkws.WithAutoReconnect(true),
+			larkws.WithOnReady(func() { a.logger.Info("feishu sdk websocket connected") }),
+			larkws.WithOnReconnecting(func() { a.logger.Warn("feishu sdk websocket reconnecting") }),
+			larkws.WithOnReconnected(func() { a.logger.Info("feishu sdk websocket reconnected") }),
+			larkws.WithOnError(func(err error) { a.logger.Error("feishu sdk websocket error", "err", err) }),
+		}
+		if feishuDomain(a.cfg.Domain) == "lark" {
+			opts = append(opts, larkws.WithDomain(lark.LarkBaseUrl))
+		}
+		client := larkws.NewClient(a.cfg.AppID, secret, opts...)
+		a.wsClient = client
+
+		a.logger.Info("feishu sdk websocket starting", "attempt", attempt)
+		errCh := make(chan error, 1)
+		go func() { errCh <- client.Start(ctx) }()
+		select {
+		case <-ctx.Done():
+			client.Close()
+			return
+		case err := <-errCh:
+			if err == nil {
+				// Start 返回 nil 通常意味着正常退出（非错误）。重建重试。
+				a.logger.Warn("feishu sdk websocket exited cleanly, reconnecting", "attempt", attempt)
+			} else {
+				a.logger.Error("feishu sdk websocket start failed, retrying",
+					"attempt", attempt, "err", err, "backoff", backoff)
+			}
+		}
+
+		// 退避等待，期间可被 ctx 取消打断。
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < maxBackoff {
+			backoff *= 2
 		}
 	}
 }
@@ -248,6 +282,7 @@ func (a *adapter) handleSDKMessage(event *larkim.P2MessageReceiveV1) {
 		ThreadID:  stringPtrValue(msg.ThreadId),
 		Raw:       event,
 	}
+	a.logger.Info("feishu message received from sdk", "msg_id", ib.MessageID, "user_id", userID)
 	select {
 	case a.msgCh <- ib:
 	default:
@@ -435,6 +470,25 @@ func feishuTextContent(text string) string {
 	return string(content)
 }
 
+// feishuReceiveIDType 根据飞书 ID 前缀推断 receive_id_type，让主动发送（非回复）
+// 路径同时支持会话 ID 与各类用户 ID：截图/定时任务等推送用的是 SessionMappings
+// 记录的 open_id，而回复后的继续对话用的是 chat_id。飞书 API 要求类型严格匹配。
+// 默认回退 chat_id（历史行为），保证未识别的旧 ID 不会被破坏。
+func feishuReceiveIDType(id string) string {
+	switch {
+	case strings.HasPrefix(id, "ou_"):
+		return larkim.CreateMessageV1ReceiveIDTypeOpenId
+	case strings.HasPrefix(id, "on_"):
+		return larkim.CreateMessageV1ReceiveIDTypeUnionId
+	case strings.HasPrefix(id, "u_"):
+		return larkim.CreateMessageV1ReceiveIDTypeUserId
+	case strings.Contains(id, "@"):
+		return larkim.CreateMessageV1ReceiveIDTypeEmail
+	default:
+		return larkim.CreateMessageV1ReceiveIDTypeChatId
+	}
+}
+
 func (a *adapter) sdkClient() (*lark.Client, error) {
 	if a.client != nil {
 		return a.client, nil
@@ -485,8 +539,12 @@ func (a *adapter) sendSDKContent(ctx context.Context, msg bot.OutboundMessage, m
 	if chatID == "" {
 		return bot.SendResult{}, fmt.Errorf("feishu chat_id is empty")
 	}
+	// 主动发送（非回复）时，receive_id 可能是会话 ID（chat_id, oc_ 开头），
+	// 也可能是用户 ID（open_id ou_ / union_id on_ / user_id u_）——比如截图
+	// 推送、定时任务推送用的是 SessionMappings 里记录的 open_id。飞书 API 要求
+	// receive_id_type 与实际 ID 类型严格匹配，否则报错，因此按前缀推断类型。
 	req := larkim.NewCreateMessageReqBuilder().
-		ReceiveIdType(larkim.CreateMessageV1ReceiveIDTypeChatId).
+		ReceiveIdType(feishuReceiveIDType(chatID)).
 		Body(larkim.NewCreateMessageReqBodyBuilder().ReceiveId(chatID).MsgType(msgType).Content(content).Build()).
 		Build()
 	resp, err := client.Im.Message.Create(ctx, req)

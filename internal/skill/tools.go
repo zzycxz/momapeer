@@ -36,6 +36,7 @@ type InstalledHook func(name, path string, scope Scope)
 
 type runSkillTool struct {
 	store           *Store
+	allStore        *Store // optional: the unfiltered store, to distinguish "disabled" from "unknown"
 	runner          SubagentRunner
 	profileResolver ProfileResolver
 }
@@ -48,6 +49,23 @@ func NewRunSkillTool(store *Store, runner SubagentRunner, profileResolver ...Pro
 		pr = profileResolver[0]
 	}
 	return &runSkillTool{store: store, runner: runner, profileResolver: pr}
+}
+
+// SetAllStore wires the unfiltered skill store so that when run_skill targets a
+// skill that exists but is disabled, the error can name the cause ("disabled,
+// enable it in Settings") instead of the vague "unknown skill". Without it the
+// tool still works — disabled skills are simply reported as unknown, as before.
+// The store must include disabled skills (i.e. NOT pass them via DisabledNames).
+func (t *runSkillTool) SetAllStore(all *Store) { t.allStore = all }
+
+// RunSkillToolWithIndex is the Option pattern entrypoint; see NewRunSkillTool.
+// allStore may be nil (disables the "disabled vs unknown" hint).
+func NewRunSkillToolWithIndex(store, allStore *Store, runner SubagentRunner, profileResolver ...ProfileResolver) tool.Tool {
+	t := NewRunSkillTool(store, runner, profileResolver...)
+	if rt, ok := t.(*runSkillTool); ok && allStore != nil {
+		rt.SetAllStore(allStore)
+	}
+	return t
 }
 
 func (*runSkillTool) Name() string { return "run_skill" }
@@ -90,6 +108,15 @@ func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	}
 	sk, ok := t.store.Read(name)
 	if !ok {
+		// Distinguish "disabled" from "truly unknown": if the skill exists in the
+		// unfiltered all-store, it was filtered out by the disabled list, so tell
+		// the model it's disabled (and where to re-enable) instead of the vague
+		// "unknown skill" — which the model often reacts to by retrying.
+		if t.allStore != nil {
+			if _, exists := t.allStore.Read(name); exists {
+				return "", fmt.Errorf("skill %q is disabled — enable it in Settings → Capabilities, then retry", name)
+			}
+		}
 		return "", fmt.Errorf("unknown skill %q — available: %s", name, availableNames(t.store))
 	}
 	rawArgs := strings.TrimSpace(p.Arguments)

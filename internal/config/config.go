@@ -316,7 +316,6 @@ func (c CodegraphConfig) ResolvedTier() string {
 // server has a corresponding *_enabled boolean. Default is off for servers
 // that require external dependencies (e.g. npx for Context7).
 type BuiltInMCPConfig struct {
-	TimeEnabled     bool `toml:"time_enabled"`
 	Context7Enabled bool `toml:"context7_enabled"`
 }
 
@@ -411,8 +410,6 @@ func (d DreamConfig) DistillIntervalDays() int {
 // Enabled reports whether the named built-in MCP server is enabled.
 func (c BuiltInMCPConfig) Enabled(name string) bool {
 	switch name {
-	case "time":
-		return c.TimeEnabled
 	case "context7":
 		return c.Context7Enabled
 	default:
@@ -424,9 +421,6 @@ func (c BuiltInMCPConfig) Enabled(name string) bool {
 // Returns false if the name is unknown.
 func (c *BuiltInMCPConfig) SetEnabled(name string, enabled bool) bool {
 	switch name {
-	case "time":
-		c.TimeEnabled = enabled
-		return true
 	case "context7":
 		c.Context7Enabled = enabled
 		return true
@@ -438,9 +432,6 @@ func (c *BuiltInMCPConfig) SetEnabled(name string, enabled bool) bool {
 // EnabledNames returns the names of all enabled built-in MCP servers.
 func (c BuiltInMCPConfig) EnabledNames() []string {
 	var out []string
-	if c.TimeEnabled {
-		out = append(out, "time")
-	}
 	if c.Context7Enabled {
 		out = append(out, "context7")
 	}
@@ -1475,8 +1466,8 @@ func Default() *Config {
 		// write enabled = false instead, so only brand-new users start without it.
 		// AutoInstall fetches the runtime into the cache when enabled and missing.
 		Codegraph: CodegraphConfig{Enabled: true, AutoInstall: true},
-		// Time MCP is a zero-dependency in-process server — always safe to enable.
-		BuiltInMCP: BuiltInMCPConfig{TimeEnabled: true},
+		// BuiltInMCP configuration
+		BuiltInMCP: BuiltInMCPConfig{},
 		// Jiutian multimodal tools — image understanding on by default; generation/video off.
 		Jiutian: JiutianConfig{ImageUnderstand: true, ImageGenerate: false, VideoUnderstand: false},
 		// Background self-evolution (Dream/Distill) on by default; 7/30 day cadence.

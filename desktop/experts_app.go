@@ -532,6 +532,12 @@ func (a *App) initExperts() {
 	if a.ragStore != nil {
 		a.expertOrchestrator.SetRAGSearcher(&ragSearcherAdapter{app: a})
 	}
+	// Apply the RAG master switch ([cowork] rag_enabled). When disabled, the
+	// orchestrator skips knowledge-base injection even though a searcher is set,
+	// so expert teams honour the user's global "knowledge base off" choice.
+	if cfg, err := config.Load(); err == nil {
+		a.expertOrchestrator.SetRAGEnabled(cfg.Cowork.RAGEnabledOrDefault())
+	}
 	// Bind the engine to the expert_team_* tools (registered under cowork in
 	// boot.go). Mirrors how initRAG/initScheduler bind SetRAGStore/SetScheduler.
 	builtin.SetExpertStore(store)

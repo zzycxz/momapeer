@@ -1071,6 +1071,7 @@ function makeMockApp(): AppBindings {
     cowork: {
       browserPath: "",
       embeddingModel: "",
+      ragEnabled: null,
       pptActiveTemplate: "",
       pptTemplates: [],
       pptTemplateDir: "",

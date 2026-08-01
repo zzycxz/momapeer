@@ -93,6 +93,10 @@ type App struct {
 	botGW       atomic.Pointer[bot.BotGateway] // nil when bot is disabled or not started; atomic for lock-free reads from Push/hotkey
 	hotkeyMgr   *hotkeyManager                 // screenshot hotkey manager; nil when feature off/stopped
 	estopMgr    *estopManager                  // emergency-stop hotkey manager; nil when feature off/stopped
+	// knownRemoteIDs 记录已回写过 SessionMappings 的远端 ID（"provider:remoteID"），
+	// 避免同一用户每发一条消息就 read-modify-write 整个 config 文件。goroutine 启
+	// 动时从已有 SessionMappings 预热，之后每条消息 LoadOrStore 命中即跳过。
+	knownRemoteIDs sync.Map
 
 	// sharedHosts shares one plugin.Host per workspace root across desktop tabs
 	// so opening N tabs on the same project spawns MCP subprocesses (CodeGraph,

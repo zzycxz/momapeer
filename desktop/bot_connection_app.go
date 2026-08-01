@@ -246,7 +246,7 @@ func (a *App) TestBotConnection(id, target string) (BotConnectionDiagnostic, err
 	if err != nil {
 		return BotConnectionDiagnostic{ID: conn.ID, Label: conn.Label, Status: "error", Message: err.Error()}, nil
 	}
-	_ = a.rememberBotConnectionRemote(conn.ID, target)
+	_ = a.rememberBotConnectionRemote(conn.ID, target, "")
 	msg := "测试消息已发送。"
 	if result.MessageID != "" {
 		msg += " Message ID: " + result.MessageID
@@ -388,9 +388,10 @@ func (a *App) upsertBotConnection(conn config.BotConnectionConfig, updateLegacy 
 	return botConnectionView(conn), err
 }
 
-func (a *App) rememberBotConnectionRemote(id, remoteID string) error {
+func (a *App) rememberBotConnectionRemote(id, remoteID, sessionPath string) error {
 	id = strings.TrimSpace(id)
 	remoteID = strings.TrimSpace(remoteID)
+	sessionPath = strings.TrimSpace(sessionPath)
 	if id == "" || remoteID == "" {
 		return nil
 	}
@@ -402,19 +403,19 @@ func (a *App) rememberBotConnectionRemote(id, remoteID string) error {
 			}
 			for j := range c.Bot.Connections[i].SessionMappings {
 				if c.Bot.Connections[i].SessionMappings[j].RemoteID == remoteID {
-					workspaceRoot := firstNonEmptyBot(c.Bot.Connections[i].SessionMappings[j].WorkspaceRoot, c.Bot.Connections[i].WorkspaceRoot)
-					scope := botMappingScope(c.Bot.Connections[i].SessionMappings[j].Scope, workspaceRoot)
-					c.Bot.Connections[i].SessionMappings[j].Scope = scope
-					c.Bot.Connections[i].SessionMappings[j].WorkspaceRoot = botMappingWorkspaceRoot(scope, workspaceRoot)
-					c.Bot.Connections[i].SessionMappings[j].UpdatedAt = now
-					c.Bot.Connections[i].UpdatedAt = now
+					// 已有该远端 ID 的映射：仅在拿到非空 sessionPath 且当前
+					// SessionID 为空时补填「本地话题」，避免反复写盘。
+					if sessionPath != "" && strings.TrimSpace(c.Bot.Connections[i].SessionMappings[j].SessionID) == "" {
+						c.Bot.Connections[i].SessionMappings[j].SessionID = "path:" + sessionPath
+						c.Bot.Connections[i].UpdatedAt = now
+					}
 					return nil
 				}
 			}
 			scope := botMappingScope("", c.Bot.Connections[i].WorkspaceRoot)
 			c.Bot.Connections[i].SessionMappings = append(c.Bot.Connections[i].SessionMappings, config.BotConnectionSessionMapping{
 				RemoteID:      remoteID,
-				SessionID:     "",
+				SessionID:     botMappingSessionID(sessionPath),
 				Scope:         scope,
 				WorkspaceRoot: botMappingWorkspaceRoot(scope, c.Bot.Connections[i].WorkspaceRoot),
 				UpdatedAt:     now,
@@ -424,6 +425,15 @@ func (a *App) rememberBotConnectionRemote(id, remoteID string) error {
 		}
 		return nil
 	})
+}
+
+// botMappingSessionID 把会话 transcript 路径转成 UI「本地话题」可识别的 SessionID。
+// mappedSessionTarget 认 "path:xxx" 前缀，点击「打开对应会话」会用 resumeSession 打开。
+func botMappingSessionID(sessionPath string) string {
+	if sessionPath == "" {
+		return ""
+	}
+	return "path:" + sessionPath
 }
 
 func firstSessionRemoteID(mappings []config.BotConnectionSessionMapping) string {
@@ -437,12 +447,11 @@ func firstSessionRemoteID(mappings []config.BotConnectionSessionMapping) string 
 
 // screenshotPushDest picks the best "platform:remoteID" push destination for a
 // screenshot-recognition result. It prefers a connected feishu or weixin
-// connection (qq can't be proactively messaged from the desktop) that has a
-// known conversation (a remembered SessionMappings remoteID), so the result
-// lands where the user actually talks to the bot. Returns "" when nothing
-// suitable is configured — callers should then skip the push (best-effort)
-// rather than fall back to a hard-coded "feishu:default" which never delivers
-// (the literal "default" is not a valid chatID).
+// connection that has a known conversation (a remembered SessionMappings
+// remoteID), so the result lands where the user actually talks to the bot.
+// Returns "" when nothing suitable is configured — callers should then skip
+// the push (best-effort). The im_send tool (builtin.defaultIMPushDest) uses the
+// same logic; both kept in sync.
 func (a *App) screenshotPushDest() string {
 	cfg, err := config.Load()
 	if err != nil {

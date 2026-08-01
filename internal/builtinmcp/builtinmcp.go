@@ -11,7 +11,6 @@ import (
 )
 
 const (
-	TimeName     = "time"
 	Context7Name = "context7"
 )
 
@@ -30,13 +29,6 @@ var executablePath = func() string {
 // the lazy tier so startup never blocks on package installation or network.
 func Entries() []config.PluginEntry {
 	return []config.PluginEntry{
-		{
-			Name:    TimeName,
-			Type:    "stdio",
-			Command: executablePath(),
-			Args:    []string{"builtin-mcp", TimeName},
-			Tier:    "lazy",
-		},
 		context7Entry(),
 	}
 }

@@ -32,6 +32,12 @@ type GatewayConfig struct {
 	// AllowlistSaver 当新用户被自动加入白名单时调用，用于持久化。
 	// 参数为更新后的完整 AllowlistConfig。nil 表示不持久化。
 	AllowlistSaver func(AllowlistConfig)
+	// OnTurnFinished 在一轮对话结束后调用（无论成功或出错），用于让上层（desktop）
+	// 把对话方的远端 ID（如飞书 open_id）和本次会话的本地 transcript 路径回写到
+	// BotConnection 的 SessionMappings —— 否则只有手动「测试连接」才记录 remoteID、
+	// 而 SessionID（本地话题）永远为空，UI 显示「等待首条消息」。放在 turn 结束后
+	// 是因为 sessionPath 要等首轮 RunTurn 才确定（prewarm 时为空）。nil 表示不回写。
+	OnTurnFinished func(plat Platform, remoteID, sessionPath string)
 }
 
 // ChannelConfig overrides gateway defaults for one IM channel.
@@ -434,8 +440,6 @@ func (gw *BotGateway) handleMessage(ctx context.Context, plat Platform, adapter 
 		return
 	}
 
-	gw.addPendingReaction(ctx, plat, adapter, msg)
-
 	// session 并发控制
 	acquired, merged := gw.sessions.TryAcquire(key, msg)
 	if merged {
@@ -448,28 +452,6 @@ func (gw *BotGateway) handleMessage(ctx context.Context, plat Platform, adapter 
 	}
 
 	gw.runTurn(ctx, adapter, key, msg)
-}
-
-func (gw *BotGateway) addPendingReaction(ctx context.Context, plat Platform, adapter Adapter, msg InboundMessage) {
-	if strings.TrimSpace(msg.MessageID) == "" {
-		return
-	}
-	reactor, ok := adapter.(pendingReactionAdapter)
-	if !ok {
-		return
-	}
-	// 异步打 emoji：这是纯视觉反馈，不应阻塞消息处理主流程。原同步实现会在
-	// runTurn 之前等待飞书 REST API 返回（最长 15s 超时），网络抖动时用户会感
-	// 到「发消息后很久没反应」。这里用独立 context，避免 turn 结束后父 ctx 被取
-	// 消导致请求中断。
-	messageID := msg.MessageID
-	go func() {
-		reactCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := reactor.AddPendingReaction(reactCtx, messageID); err != nil {
-			gw.logger.Warn("pending reaction failed", "platform", plat, "err", err)
-		}
-	}()
 }
 
 // autoAddToAllowlist 将用户自动加入内存白名单，并通过回调持久化。
@@ -666,7 +648,9 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 }
 
 func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, msg InboundMessage) {
+	turnStart := time.Now()
 	defer func() {
+		gw.logger.Info("turn finished", "session", key[:8], "total_ms", time.Since(turnStart).Milliseconds())
 		// 检查是否有等待队列中的消息
 		next := gw.sessions.Release(key)
 		if next != nil {
@@ -683,17 +667,17 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 
 	// 获取或创建 Controller
 	state := gw.getOrCreateSession(ctx, key, msg)
+	gw.logger.Info("session acquired", "session", key[:8], "acquire_ms", time.Since(turnStart).Milliseconds())
 	if state == nil || state.ctrl == nil {
 		gw.logger.Warn("failed to create session", "session", key[:8])
 		_ = gw.sendText(ctx, adapter, msg, "内部错误：无法创建会话。")
 		return
 	}
 
-	// 发送"正在输入"状态。多数 IM（含飞书）无原生 typing API，SendTyping 多为
-	// 空实现，故同步发一条轻量占位回复给用户即时反馈，避免模型冷启动/首 token
-	// 延迟期间用户以为「没收到」。异步的 pending reaction 也会先于这条发出。
+	// 多数 IM（含飞书）无原生 typing API，SendTyping 是空实现；曾在这里补一条
+	// 「思考中」占位文本作即时反馈，但实测它在真正的回答前先到达、且无信息量，
+	// 反成噪音，已移除。即时反馈改由 pending reaction（OnIt emoji，异步）承担。
 	_ = adapter.SendTyping(ctx, msg.ChatID)
-	_ = gw.sendText(ctx, adapter, msg, "🤔 收到，正在思考…")
 
 	// 创建事件渲染 sink
 	sink := newRenderSink(ctx, adapter, msg.ChatID, msg.ChatType, msg.MessageID, gw.logger, func(ask event.Ask) {
@@ -730,6 +714,14 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 			_ = gw.sendText(ctx, adapter, msg, "本轮对话超时（超过 10 分钟），已自动停止。可用 /new 重开会话。")
 		}
 		gw.logger.Warn("turn error", "session", key[:8], "err", err)
+	}
+
+	// 回写远端 ID 与本地会话路径到 SessionMappings。放 turn 之后是因为
+	// sessionPath 要等首轮 RunTurn 才确定（prewarm 时为空）。desktop 侧会用
+	// remoteID 填「远端 ID」、用 sessionPath 填「本地话题」，让 UI 不再显示
+	// 「等待首条消息」。只传非空值，desktop 侧自行去重落盘。
+	if gw.cfg.OnTurnFinished != nil && strings.TrimSpace(msg.UserID) != "" {
+		gw.cfg.OnTurnFinished(msg.Platform, msg.UserID, state.ctrl.SessionPath())
 	}
 }
 

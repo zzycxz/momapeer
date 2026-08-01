@@ -266,3 +266,43 @@ func TestReadSkillRejectsSubagent(t *testing.T) {
 		t.Fatalf("read_skill on a subagent skill should point to run_skill, got %v", err)
 	}
 }
+
+// TestRunSkillDisabledHint verifies that run_skill distinguishes "disabled"
+// from "unknown" when an allStore is wired: a skill the user turned off should
+// return a clear "disabled, enable it in Settings" error instead of the vague
+// "unknown skill", so the model tells the user rather than retrying.
+func TestRunSkillDisabledHint(t *testing.T) {
+	home := t.TempDir()
+	writeSkill(t, home, ".momapeer/skills/ppt-auto.md", "---\ndescription: ppt\n---\nbody")
+
+	// live store filters ppt-auto out (user disabled it); all store keeps it.
+	live := New(Options{HomeDir: home, DisableBuiltins: true, DisabledNames: []string{"ppt-auto"}})
+	all := New(Options{HomeDir: home, DisableBuiltins: true})
+
+	tl := NewRunSkillToolWithIndex(live, all, nil)
+	_, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"ppt-auto"}`))
+	if err == nil {
+		t.Fatal("disabled skill should still error (it's filtered from the live store)")
+	}
+	if !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("disabled skill should report a 'disabled' error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Settings") {
+		t.Fatalf("disabled error should guide the user to Settings, got: %v", err)
+	}
+}
+
+// TestRunSkillDisabledHintWithoutAllStore verifies that without an allStore,
+// a disabled skill falls back to the legacy "unknown skill" wording (so the
+// feature degrades gracefully when the host doesn't wire the index store).
+func TestRunSkillDisabledHintWithoutAllStore(t *testing.T) {
+	home := t.TempDir()
+	writeSkill(t, home, ".momapeer/skills/ppt-auto.md", "---\ndescription: ppt\n---\nbody")
+	live := New(Options{HomeDir: home, DisableBuiltins: true, DisabledNames: []string{"ppt-auto"}})
+
+	tl := NewRunSkillTool(live, nil) // no allStore
+	_, err := tl.Execute(context.Background(), json.RawMessage(`{"name":"ppt-auto"}`))
+	if err == nil || !strings.Contains(err.Error(), "unknown skill") {
+		t.Fatalf("without allStore a disabled skill should fall back to 'unknown skill', got %v", err)
+	}
+}

@@ -1179,6 +1179,10 @@ export interface BotSettingsView {
 export interface CoWorkSettingsView {
   browserPath: string;
   embeddingModel: string;
+  // Knowledge-base master switch. null = unset (default → enabled); true =
+  // enabled; false = fully disabled. Mirrors [cowork] rag_enabled. Distinct
+  // from embeddingModel (which only toggles semantic reranking on top of FTS5).
+  ragEnabled: boolean | null;
   // PPT template selection. pptTemplates lists available templates (id+name)
   // read from the templates dir; pptActiveTemplate is the selected id ("=" none).
   pptActiveTemplate: string;

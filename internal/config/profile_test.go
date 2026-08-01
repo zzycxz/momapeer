@@ -99,3 +99,35 @@ func TestProfileResolveSkillDisabled(t *testing.T) {
 		t.Fatal("non-whitelisted config-disabled skill should stay disabled")
 	}
 }
+
+// TestCoworkPromptAddonDropsDisabledRows verifies that disabling a skill removes
+// its routing row from the cowork prompt, so the model isn't instructed to call
+// a skill the user turned off. The historical bug: ppt-auto disabled → the
+// prompt still said `run_skill("ppt-auto", task)` → the model retried instead of
+// telling the user to re-enable it.
+func TestCoworkPromptAddonDropsDisabledRows(t *testing.T) {
+	// Baseline: the full add-on advertises every routing skill.
+	full := CoworkPromptAddon(nil)
+	for _, name := range []string{"ppt-auto", "email-auto", "browser-auto"} {
+		if !strings.Contains(full, `run_skill("`+name+`"`) {
+			t.Fatalf("full add-on missing routing row for %q", name)
+		}
+	}
+
+	// Disable ppt-auto: its row must be gone, but other rows must remain.
+	filtered := CoworkPromptAddon([]string{"ppt-auto"})
+	if strings.Contains(filtered, `run_skill("ppt-auto"`) {
+		t.Fatal("disabled skill ppt-auto still has a routing row in the filtered add-on")
+	}
+	for _, name := range []string{"email-auto", "browser-auto", "rag-auto"} {
+		if !strings.Contains(filtered, `run_skill("`+name+`"`) {
+			t.Fatalf("filtering ppt-auto wrongly removed unrelated routing row for %q", name)
+		}
+	}
+
+	// Name matching is case/whitespace-insensitive (SkillNameKey).
+	if got := CoworkPromptAddon([]string{" PPT-Auto "}); strings.Contains(got, `run_skill("ppt-auto"`) {
+		t.Fatal("SkillNameKey normalization failed: ' PPT-Auto ' did not match 'ppt-auto'")
+	}
+}
+

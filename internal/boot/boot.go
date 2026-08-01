@@ -352,8 +352,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Inject the current date/time so the model doesn't fall back to its training
 	// cutoff year when generating absolute timestamps (e.g. schedule_create with
 	// "at 2025-..." instead of the real 2026). This is the root-cause fix for the
-	// "AI created a task in the wrong year" bug; the get_current_time MCP tool is
-	// opt-in (the model must call it), so it can't be relied on. Built once per
+	// "AI created a task in the wrong year" bug. Built once per
 	// Build (cache-stable for the session).
 	now := time.Now()
 	weekdays := []string{"日", "一", "二", "三", "四", "五", "六"}
@@ -593,6 +592,19 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		for _, t := range builtin.CalendarTools() {
 			reg.Add(t)
 			reg.Hide(t.Name())
+		}
+		// IM push tool (im_send). The bot gateway is injected by the desktop app
+		// (bot_gateway_app.go) via builtin.SetIMPusher; boot registers the tool
+		// surface. Under the CLI/TUI or when the bot is off, the tool reports
+		// offline — the agent then explains instead of reaching for a browser.
+		//
+		// Deliberately NOT hidden: unlike browser/calendar tools (heavy, driven via
+		// run_skill subagents), im_send is a lightweight ~163-token tool users
+		// invoke directly in both profiles ("给飞书发条消息"). Keeping it visible in
+		// the main-loop schema means the model reaches for it instead of opening a
+		// browser to log into web IM.
+		for _, t := range builtin.IMTools() {
+			reg.Add(t)
 		}
 		// RAG knowledge-base tools. The store is injected by the desktop app
 		// (app.go) via builtin.SetRAGStore; boot registers the tool surface.

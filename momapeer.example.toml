@@ -273,6 +273,13 @@ bash_timeout_seconds = 120   # foreground safety cap; set 0 for no tool-local ca
 # username     = "you@your-company.com"
 # password_env = "MAIL_PWD_WORK"
 #
+# # RAG master switch. Unset/true = knowledge base enabled (the default). Set to
+# # false to fully disable the knowledge base: no auto-injection into messages,
+# # the rag_search/rag_import/... tools are not registered, and expert teams
+# # skip knowledge-base context. Distinct from embedding_model (which only
+# # toggles semantic reranking on top of FTS5).
+# rag_enabled = true
+#
 # # RAG semantic reranking (optional). When set, rag_search blends FTS5 BM25 with
 # # embedding cosine similarity for better recall. Empty = FTS5-only (offline).
 # embedding_model = ""

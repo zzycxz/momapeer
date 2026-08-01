@@ -2053,7 +2053,7 @@ function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) 
                 ]}
                 onChange={(vlm) => {
                   const base = s.cowork ?? {
-                    browserPath: "", embeddingModel: "",
+                    browserPath: "", embeddingModel: "", ragEnabled: null,
                     pptActiveTemplate: "", pptTemplates: [], pptTemplateDir: "",
                     smtpPassword: "", imapPassword: "", smtpPasswordSet: false, imapPasswordSet: false, detectedBrowser: "",
                     screenshotEnabled: false, screenshotHotkey: "Ctrl+Shift+S", screenshotVlmModel: "qwen/qwen3.6-27b",
@@ -4245,7 +4245,7 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
   const t = useT();
   const [draft, setDraft] = useState(() => {
     const base = s.cowork ?? {
-      browserPath: "", embeddingModel: "",
+      browserPath: "", embeddingModel: "", ragEnabled: null,
       pptActiveTemplate: "", pptTemplates: [], pptTemplateDir: "",
       smtpPassword: "", imapPassword: "", smtpPasswordSet: false, imapPasswordSet: false, detectedBrowser: "",
       screenshotEnabled: false, screenshotHotkey: "Ctrl+Shift+S", screenshotVlmModel: "qwen/qwen3.6-27b",
@@ -4400,7 +4400,14 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
   // or the legacy single-pair SMTP/IMAP has a host.
   const mailOn = (draft.emailAccounts?.some(a => a.smtp?.host || a.imap?.host))
     || !!(draft.smtp?.host) || !!(draft.imap?.host);
-  const ragOn = !!draft.embeddingModel;
+  // kbOn: knowledge-base MASTER switch. null/true = enabled (default, backward
+  // compatible); only explicit false disables. This governs whether RAG runs at
+  // all (auto-injection + rag_* tools + expert-team KB context). Distinct from
+  // ragOn below, which only toggles semantic reranking on top of FTS5.
+  const kbOn = draft.ragEnabled !== false;
+  // ragOn: semantic-reranking sub-option (embedding model). Off when the KB
+  // master switch is off too (reranking can't run without the KB).
+  const ragOn = kbOn && !!draft.embeddingModel;
 
   // Toggle helpers: disabling clears related fields so the backend treats them
   // as "not configured", and persists immediately (no save button). Enabling
@@ -4492,6 +4499,19 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
   };
   const toggleRag = (on: boolean) => {
     if (!on) setDraft(d => { const n = { ...d, embeddingModel: "" }; commitDraft(n); return n; });
+  };
+  // Knowledge-base master switch: persist rag_enabled immediately. When turning
+  // off, also clear embeddingModel (reranking can't run without the KB, and we
+  // don't want a stale model ref left behind). Turning on leaves embeddingModel
+  // alone — the user opts into reranking separately via the sub-toggle.
+  const toggleRagEnabled = (on: boolean) => {
+    setDraft(d => {
+      const n = on
+        ? { ...d, ragEnabled: true }
+        : { ...d, ragEnabled: false, embeddingModel: "" };
+      commitDraft(n);
+      return n;
+    });
   };
 
   return (
@@ -4797,25 +4817,43 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
           </div>
         </OptionalModule>
 
-        {/* ── RAG 语义检索 ── */}
-        <OptionalModule title={t("cowork.rag")} description={t("cowork.ragModDesc")} enabled={ragOn} onToggle={toggleRag}>
+        {/* ── 知识库（RAG 总开关）── */}
+        <OptionalModule title={t("cowork.knowledgeBase")} description={t("cowork.kbModDesc")} enabled={kbOn} onToggle={toggleRagEnabled}>
           <div className="optional-module__controls">
-            <span className="mem-hint">{t("cowork.ragHint")}</span>
-            <input
-              className="mem-input set-grow"
-              placeholder={t("cowork.ragModel")}
-              value={draft.embeddingModel}
-              onChange={e => setDraft({ ...draft, embeddingModel: e.target.value })}
-              onBlur={commitCurrent}
-              onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-            />
+            <span className="mem-hint">{t("cowork.kbHint")}</span>
           </div>
+          {/* 语义重排：可选的子选项，关掉仍用 FTS5 全文检索 */}
+          <OptionalModule title={t("cowork.rag")} description={t("cowork.ragModDesc")} enabled={ragOn} onToggle={toggleRag}>
+            <div className="optional-module__controls">
+              <span className="mem-hint">{t("cowork.ragHint")}</span>
+              <input
+                className="mem-input set-grow"
+                placeholder={t("cowork.ragModel")}
+                value={draft.embeddingModel}
+                onChange={e => setDraft({ ...draft, embeddingModel: e.target.value })}
+                onBlur={commitCurrent}
+                onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              />
+            </div>
+          </OptionalModule>
         </OptionalModule>
 
       </SettingsSection>
 
-      {/* --- 快捷截屏（全局热键 → VLM 识别 → IM 回复） --- */}
+      {/* --- 快捷截屏（全局热键 → 截屏 → AI 解题+联网搜索 → IM/弹窗） --- */}
       <SettingsSection title={t("settings.screenshotTitle")}>
+        <SettingsField label={t("settings.screenshotVlmLabel")} hint={t("settings.screenshotVlmHint")}>
+          <SimpleSelect
+            value={draft.screenshotVlmModel || "qwen/qwen3.5-397b-a17b"}
+            disabled={busy}
+            options={[
+              { value: "qwen/qwen3.6-27b", label: `qwen/qwen3.6-27b — ${t("settings.screenshotVlmLight")}` },
+              { value: "qwen/qwen3.5-397b-a17b", label: `qwen/qwen3.5-397b-a17b — ${t("settings.screenshotVlmStrong")}` },
+            ]}
+            onChange={(vlm) => { setDraft(d => { const n = { ...d, screenshotVlmModel: vlm }; commitDraft(n); return n; }); }}
+          />
+        </SettingsField>
+
         <SettingsField label={t("settings.screenshotEnableLabel")} hint={t("settings.screenshotEnableHint")}>
           <label className="cap-switch">
             <input

@@ -1,11 +1,13 @@
 package main
 
-// screenshot_hotkey_windows.go implements the global-hotkey screenshot-to-VLM
+// screenshot_hotkey_windows.go implements the global-hotkey screenshot solve
 // feature: when the user presses the configured hotkey (default Ctrl+Shift+S)
 // ANYWHERE on their desktop — even with MoMAPeer minimized — we:
 //   1. Capture the full screen via the existing Win32 BitBlt screen capture.
-//   2. Send the image to the configured VLM model (default qwen/qwen3.5-397b-a17b)
-//      for recognition, via a one-shot provider call (rate-limited, background).
+//   2. Run a tool-calling mini-agent (web_search + web_fetch) on the image to
+//      SOLVE whatever problem is on screen — it may search the web for fresh
+//      info, then reports the answer + reasoning. When no search backend is
+//      configured (or the agent errors) it degrades to a one-shot VLM solve.
 //   3. Reply with the result via the IM bot gateway (feishu/QQ/WeChat) AND
 //      surface an in-app toast so the user sees it without switching apps.
 //
@@ -21,6 +23,7 @@ import (
 	"fmt"
 	"image/png"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"syscall"
@@ -28,8 +31,10 @@ import (
 	"unsafe"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/zzycxz/momapeer/internal/agent"
 	"github.com/zzycxz/momapeer/internal/boot"
 	"github.com/zzycxz/momapeer/internal/config"
+	"github.com/zzycxz/momapeer/internal/event"
 	"github.com/zzycxz/momapeer/internal/netclient"
 	"github.com/zzycxz/momapeer/internal/provider"
 	"github.com/zzycxz/momapeer/internal/tool/builtin"
@@ -167,13 +172,15 @@ func (h *hotkeyManager) loop() {
 	}
 }
 
-// onHotkey fires when the global hotkey is pressed: capture → VLM → IM + toast.
+// onHotkey fires when the global hotkey is pressed: capture → solve → IM + toast.
 func (h *hotkeyManager) onHotkey() {
-	// Surface a "recognizing..." toast immediately so the user knows it fired.
-	h.app.emitScreenshotNotice("正在识别截图内容…", "")
+	// Surface a "solving..." toast immediately so the user knows it fired.
+	h.app.emitScreenshotNotice("正在解题中（可能联网搜索，请稍候）…", "")
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		// Solving may run several search → read → reason rounds, so it needs a
+		// longer budget than the old recognition call (60s).
+		ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 		defer cancel()
 
 		// 1. Capture screen → PNG bytes.
@@ -187,9 +194,10 @@ func (h *hotkeyManager) onHotkey() {
 			h.app.emitScreenshotNotice("截图编码失败", "")
 			return
 		}
-		b64 := base64.StdEncoding.EncodeToString(buf.Bytes())
+		dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 
-		// 2. Send to VLM for recognition.
+		// 2. Resolve the model + provider (shared by the agent path and the
+		// one-shot fallback).
 		cfg, err := config.Load()
 		if err != nil {
 			h.app.emitScreenshotNotice("配置读取失败", "")
@@ -199,13 +207,27 @@ func (h *hotkeyManager) onHotkey() {
 		if model == "" {
 			model = "qwen/qwen3.5-397b-a17b"
 		}
-		result, err := recognizeScreenshot(ctx, model, b64)
+		entry, err := resolveModelEntry(model)
 		if err != nil {
-			h.app.emitScreenshotNotice("识别失败: "+err.Error(), "")
+			h.app.emitScreenshotNotice("模型未找到: "+err.Error(), "")
+			return
+		}
+		prov, err := boot.NewProviderWithProxy(entry, netclient.ProxySpec{Mode: netclient.ModeAuto}, false, false)
+		if err != nil {
+			h.app.emitScreenshotNotice("模型初始化失败: "+err.Error(), "")
 			return
 		}
 
-		// 3. Reply via IM bot (if configured) + toast.
+		// 3. Solve whatever problem is on screen. Prefers a tool-calling
+		// mini-agent (web_search + web_fetch) when a search backend is keyed;
+		// degrades to a one-shot VLM solve otherwise or on agent failure.
+		result, err := solveScreenshot(ctx, prov, entry, dataURL)
+		if err != nil {
+			h.app.emitScreenshotNotice("解题失败: "+err.Error(), "")
+			return
+		}
+
+		// 4. Reply via IM bot (if configured) + toast.
 		h.app.emitScreenshotNotice(result, "")
 		// IM push is best-effort — the bot gateway may not be running yet. Pick
 		// a real destination (a connected feishu/weixin conversation) instead of
@@ -213,7 +235,7 @@ func (h *hotkeyManager) onHotkey() {
 		if gw := h.app.botGW.Load(); gw != nil {
 			if dest := h.app.screenshotPushDest(); dest != "" {
 				pushCtx, pushCancel := context.WithTimeout(context.Background(), 10*time.Second)
-				if err := gw.Push(pushCtx, dest, "📸 截图识别结果：\n\n"+result); err != nil {
+				if err := gw.Push(pushCtx, dest, "🧮 截图解题结果：\n\n"+result); err != nil {
 					slog.Warn("screenshot: IM push failed", "dest", dest, "err", err)
 				}
 				pushCancel()
@@ -363,25 +385,74 @@ func defWindowProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 	return ret
 }
 
-// recognizeScreenshot calls the VLM with a base64 image + "describe this" prompt.
-func recognizeScreenshot(ctx context.Context, modelRef, imageB64 string) (string, error) {
-	entry, err := resolveModelEntry(modelRef)
-	if err != nil {
-		return "", err
+// screenshotSolvePrompt is the instruction sent with the image when solving.
+const screenshotSolvePrompt = "请帮忙处理屏幕上遇到的问题，并将问题解决，你可以进行联网搜索，然后告诉我结果和过程。"
+
+// solveScreenshot solves whatever problem is on the captured screen. It runs a
+// tool-calling mini-agent (web_search + web_fetch) when a search backend is
+// configured, so the model can look up fresh information; otherwise — or if
+// the agent loop errors out — it degrades to a single one-shot VLM call.
+//
+// The image is passed as the FIRST user message via Run's polymorphic input
+// ([]provider.ContentPart with an image_url part) — the same path the main
+// controller uses for @image refs, so no agent-package change is needed.
+func solveScreenshot(ctx context.Context, prov provider.Provider, entry *config.ProviderEntry, imageDataURL string) (string, error) {
+	// Compose the multimodal first turn: image + solve prompt.
+	content := provider.ImageContent(screenshotSolvePrompt, imageDataURL)
+
+	// No search backend configured → one-shot solve with no tools. We check
+	// the keys explicitly (not just registry presence) because the web_search
+	// tool is always registered even when no key is set — without this guard
+	// the model would call web_search, get an error string back, and waste
+	// steps trying alternate queries before giving up.
+	if !webSearchKeyConfigured() {
+		return solveOneShot(ctx, prov, content)
 	}
-	prov, err := boot.NewProviderWithProxy(entry, netclient.ProxySpec{Mode: netclient.ModeAuto}, false, false)
-	if err != nil {
-		return "", fmt.Errorf("build VLM provider: %w", err)
+	reg := (&desktopExpertRunner{}).webSearchRegistry()
+	if reg == nil {
+		return solveOneShot(ctx, prov, content)
 	}
+
+	// Run the search mini-agent. The system prompt frames the assistant as a
+	// helpful problem-solver that reasons and verifies uncertain facts online.
+	sess := agent.NewSession("你是一个能看图的解题助手。请仔细阅读屏幕截图中的问题，逐步推理并用联网搜索核实不确定的信息，最后给出清晰的答案和过程。")
+	opts := agent.Options{
+		MaxSteps:      8, // roughly search → read → (re-search) → answer
+		ContextWindow: entry.ContextWindow, // 0 disables compaction — avoid for search loops
+	}
+	sink := event.FuncSink(func(e event.Event) {
+		// Progress surfacing is handled via toast in the caller; this sink is a
+		// no-op hook kept for symmetry with the expert path.
+		_ = e
+	})
+	sub := agent.New(prov, reg, sess, opts, sink)
+	runErr := sub.Run(ctx, content)
+	answer := lastAssistantText(sess)
+	// If the step cap fired (runErr is a "paused after N tool-call rounds"
+	// error), keep whatever partial answer we recovered rather than failing.
+	if runErr != nil {
+		if isMaxStepsPaused(runErr) && answer != "" {
+			return answer, nil
+		}
+		// Genuine failure — degrade to a one-shot solve so the user still gets
+		// an answer instead of an error (search may be flaky even when keyed).
+		slog.Warn("screenshot: search mini-agent failed, falling back to one-shot", "err", runErr)
+		return solveOneShot(ctx, prov, content)
+	}
+	if answer == "" {
+		// Loop finished without an answer — try a clean one-shot rather than
+		// returning an error to the user.
+		return solveOneShot(ctx, prov, content)
+	}
+	return answer, nil
+}
+
+// solveOneShot streams a single completion with the image+prompt content and
+// no tools — the degrade path when search is unavailable or the agent failed.
+func solveOneShot(ctx context.Context, prov provider.Provider, content any) (string, error) {
 	req := provider.Request{
 		Messages: []provider.Message{
-			{
-				Role: provider.RoleUser,
-				Content: []provider.ContentPart{
-					{Type: "image_url", ImageURL: &provider.ImageURL{URL: "data:image/png;base64," + imageB64}},
-					{Type: "text", Text: "请识别并描述这张截图的内容。如果是文字，请提取并整理；如果是图表，请描述关键信息；如果是界面，请说明是什么应用和操作。简洁回答。"},
-				},
-			},
+			{Role: provider.RoleUser, Content: content},
 		},
 	}
 	ch, err := prov.Stream(ctx, req)
@@ -398,6 +469,18 @@ func recognizeScreenshot(ctx context.Context, modelRef, imageB64 string) (string
 		}
 	}
 	return strings.TrimSpace(b.String()), nil
+}
+
+// webSearchKeyConfigured reports whether at least one web_search backend has
+// an API key set. When false we skip the tool-calling loop entirely and go
+// straight to a one-shot solve — running the agent without keys just makes
+// web_search return an error string each call, burning the step budget for
+// nothing. Mirrors the key checks in builtin/websearch.go.
+func webSearchKeyConfigured() bool {
+	return os.Getenv("BRAVE_API_KEY") != "" ||
+		os.Getenv("BRAVE_SEARCH_API_KEY") != "" ||
+		os.Getenv("EXA_API_KEY") != "" ||
+		os.Getenv("LINKUP_API_KEY") != ""
 }
 
 // resolveModelEntry finds the provider entry for a model ref like "qwen/qwen3.5-397b-a17b".

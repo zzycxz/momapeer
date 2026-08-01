@@ -23,7 +23,6 @@ import (
 
 	"github.com/zzycxz/momapeer/internal/agent"
 	"github.com/zzycxz/momapeer/internal/boot"
-	"github.com/zzycxz/momapeer/internal/builtinmcp"
 	"github.com/zzycxz/momapeer/internal/config"
 	"github.com/zzycxz/momapeer/internal/control"
 	"github.com/zzycxz/momapeer/internal/event"
@@ -50,9 +49,6 @@ func Run(args []string, version string) int {
 	}
 	if cmd == "--acp" {
 		cmd = "acp"
-	}
-	if cmd == "builtin-mcp" {
-		return builtinmcp.RunCommand(args[1:], os.Stdin, os.Stdout, os.Stderr, version)
 	}
 	if shouldMigrateLegacyConfigForCLI(cmd) {
 		migrateLegacyConfigForCLI()

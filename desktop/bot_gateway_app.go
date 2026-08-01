@@ -2,7 +2,6 @@ package main
 
 import (
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/zzycxz/momapeer/internal/bot/qq"
 	"github.com/zzycxz/momapeer/internal/bot/weixin"
 	"github.com/zzycxz/momapeer/internal/config"
+	"github.com/zzycxz/momapeer/internal/tool/builtin"
 )
 
 // startBotGateway 启动内嵌的 bot gateway。
@@ -20,7 +20,26 @@ func (a *App) startBotGateway(cfg *config.Config) {
 		return // already running
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	// 预热 knownRemoteIDs：启动时把已持久化的 SessionMappings 读进内存去重表，
+	// 这样已记录过的用户再发消息时直接命中、零 IO；只有新用户/新话题才落盘。
+	for _, conn := range cfg.Bot.Connections {
+		for _, m := range conn.SessionMappings {
+			if id := strings.TrimSpace(m.RemoteID); id != "" {
+				key := conn.Provider + ":" + id
+				a.knownRemoteIDs.Store(key, true)
+				// 已有 SessionID（本地话题）的，连 session key 一起预热，
+				// 避免重启后首轮 turn 重复回写 sessionPath。
+				if strings.TrimSpace(m.SessionID) != "" {
+					a.knownRemoteIDs.Store(key+":session", true)
+				}
+			}
+		}
+	}
+
+	// 桌面 GUI 模式下 stderr 不可见（见 app.go startup 注释），全局 slog 已被
+	// 重定向到配置目录的 app.log。复用全局默认 handler，让 bot 的连接/收发日志
+	//（含飞书 WebSocket 状态、消息接收时序）也写入 app.log，否则诊断信息全丢。
+	logger := slog.Default()
 
 	// 构建 adapter
 	adapters := make(map[bot.Platform]bot.Adapter)
@@ -82,6 +101,50 @@ func (a *App) startBotGateway(cfg *config.Config) {
 				logger.Warn("failed to persist allowlist", "err", err)
 			}
 		},
+		OnTurnFinished: func(plat bot.Platform, remoteID, sessionPath string) {
+			// 一轮对话结束后回写：remoteID 填「远端 ID」、sessionPath 填「本地话题」。
+			provider := botPlatformToProvider(plat)
+			if provider == "" {
+				return
+			}
+			// 内存级去重，避免每轮 turn 都 read-modify-write config.toml：
+			//  - "p:remote" 标记远端 ID 已记录（首次落盘后命中即跳过）
+			//  - "p:remote:session" 标记本地话题已记录（拿到非空 sessionPath 后落一次）
+			remoteKey := provider + ":" + remoteID
+			sessionKey := remoteKey + ":session"
+			needRemote := true
+			if _, loaded := a.knownRemoteIDs.LoadOrStore(remoteKey, true); loaded {
+				needRemote = false
+			}
+			needSession := false
+			if sessionPath != "" {
+				if _, loaded := a.knownRemoteIDs.LoadOrStore(sessionKey, true); !loaded {
+					needSession = true
+				}
+			}
+			if !needRemote && !needSession {
+				return // 都已记录，零 IO
+			}
+			// 异步落盘，不阻塞消息处理。
+			go func() {
+				conns, err := config.Load()
+				if err != nil {
+					if needRemote {
+						a.knownRemoteIDs.Delete(remoteKey)
+					}
+					if needSession {
+						a.knownRemoteIDs.Delete(sessionKey)
+					}
+					return
+				}
+				for _, conn := range conns.Bot.Connections {
+					if !conn.Enabled || conn.Provider != provider {
+						continue
+					}
+					_ = a.rememberBotConnectionRemote(conn.ID, remoteID, sessionPath)
+				}
+			}()
+		},
 	}
 
 	gw := bot.NewGateway(gwCfg, adapters, logger)
@@ -91,6 +154,13 @@ func (a *App) startBotGateway(cfg *config.Config) {
 	}
 
 	a.botGW.Store(gw)
+	// Inject the live gateway into the builtin tool package so im_send can push
+	// through it (mirrors SetRAGStore / SetScheduler). restartBotGateway calls
+	// stop (which clears this) then start, so the tool always reflects the
+	// current gateway state. im_send depends only on the imPusher interface
+	// (Push method) to avoid an import cycle, so the concrete *bot.BotGateway
+	// satisfies it implicitly.
+	builtin.SetIMPusher(gw)
 
 	logger.Info("bot gateway started", "model", modelName, "channels", len(adapters))
 }
@@ -101,6 +171,9 @@ func (a *App) stopBotGateway() {
 	if gw != nil {
 		gw.Stop()
 	}
+	// Clear the injected pusher so im_send reports offline cleanly instead of
+	// pushing through a stopped gateway.
+	builtin.SetIMPusher(nil)
 }
 
 // restartBotGateway 热重启 bot gateway（先停后启）。
@@ -181,6 +254,18 @@ func (a *App) BotDockStatus() BotDockStatusView {
 		Platforms:   platforms,
 		RecentCount: len(recent),
 	}
+}
+
+// botPlatformToProvider maps a bot.Platform to its connection Provider string
+// (they share the same lowercase identifier: feishu/weixin/qq). Returns "" for
+// unknown platforms so callers can skip. Used by the OnInboundMessage callback
+// to find the connection whose SessionMappings should record the remote ID.
+func botPlatformToProvider(plat bot.Platform) string {
+	switch plat {
+	case bot.PlatformFeishu, bot.PlatformWeixin, bot.PlatformQQ:
+		return string(plat)
+	}
+	return ""
 }
 
 // botChannelConfigsFromConnections 从 connections 配置中提取每个平台的覆盖参数。

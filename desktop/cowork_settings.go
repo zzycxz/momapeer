@@ -27,6 +27,11 @@ import (
 type CoWorkSettingsView struct {
 	BrowserPath    string `json:"browserPath"` // Chromium browser exe; "" = auto-detect
 	EmbeddingModel string `json:"embeddingModel"`
+	// RAGEnabled is the knowledge-base master switch. nil = enabled (default);
+	// explicit false = fully disabled (no auto-injection, no rag_* tools, expert
+	// teams skip KB context). Mirrors [cowork] rag_enabled. Distinct from
+	// EmbeddingModel (which only toggles semantic reranking on top of FTS5).
+	RAGEnabled *bool `json:"ragEnabled"`
 	// PPTActiveTemplate is the id of the active PPT template (or "" for none).
 	// PPTTemplates is the read-only list of available templates for the dropdown.
 	// PPTTemplateDir is the absolute path to the templates dir, shown so the user
@@ -129,6 +134,7 @@ func coworkSettingsView(c config.CoworkConfig) CoWorkSettingsView {
 	v := CoWorkSettingsView{
 		BrowserPath:        c.BrowserPath,
 		EmbeddingModel:     c.EmbeddingModel,
+		RAGEnabled:         c.RAGEnabled,
 		PPTActiveTemplate:  c.PPTActiveTemplate,
 		PPTTemplates:       templates,
 		PPTTemplateDir:     skillTplDir,
@@ -356,8 +362,20 @@ func (a *App) SetCoWorkSettings(v CoWorkSettingsView) (err error) {
 	if err := a.applyConfigOnly(func(c *config.Config) error {
 		c.Cowork.BrowserPath = strings.TrimSpace(v.BrowserPath)
 		c.Cowork.EmbeddingModel = strings.TrimSpace(v.EmbeddingModel)
+		// Knowledge-base master switch. The front-end always sends an explicit
+		// bool from its toggle, so we copy the pointer through; nil stays nil
+		// only when the panel never rendered the field (older clients).
+		c.Cowork.RAGEnabled = v.RAGEnabled
 		c.Cowork.PPTActiveTemplate = strings.TrimSpace(v.PPTActiveTemplate)
 		c.Cowork.PPTMode = strings.TrimSpace(v.PPTMode)
+		// PPT template ↔ ppt-auto skill linkage: clearing the template disables
+		// the ppt-auto skill so the user isn't routed to a skill with no template
+		// configured. Setting a template does NOT force-enable the skill — that
+		// would override an explicit user disable in Capabilities. (The reverse
+		// direction, disabling the skill, clears nothing; the template stays.)
+		if strings.TrimSpace(v.PPTActiveTemplate) == "" {
+			c.SetSkillEnabled("ppt-auto", false)
+		}
 		c.Cowork.ScreenshotEnabled = v.ScreenshotEnabled
 		c.Cowork.ScreenshotHotkey = strings.TrimSpace(v.ScreenshotHotkey)
 		c.Cowork.ScreenshotVLMModel = strings.TrimSpace(v.ScreenshotVLMModel)

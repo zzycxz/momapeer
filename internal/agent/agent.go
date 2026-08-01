@@ -1115,12 +1115,36 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 	})
 	// Build the context: the stored session messages, optionally projected by
 	// a read-side filter (e.g. expert-collab messages reduced to their synthesis
-	// so a multi-expert transcript never bloats the window). The session itself
-	// is never mutated — only this per-call copy.
-	msgs := a.session.Messages
+	// so a multi-expert transcript never bloats the window).
+	// We MUST clone the slice to avoid mutating the session's backing array.
+	msgs := append([]provider.Message(nil), a.session.Messages...)
 	if a.contextFilter != nil {
 		msgs = a.contextFilter(msgs)
 	}
+
+	// Inject real-time clock context into the final user message so the model
+	// never hallucinates its cutoff year even in long-running sessions.
+	if len(msgs) > 0 {
+		lastIdx := len(msgs) - 1
+		if msgs[lastIdx].Role == provider.RoleUser {
+			now := time.Now()
+			weekdays := []string{"日", "一", "二", "三", "四", "五", "六"}
+			timeNotice := fmt.Sprintf("\n\n<ADDITIONAL_METADATA>\n【系统通知】当前实时系统时间: %s 周%s\n</ADDITIONAL_METADATA>", 
+				now.Format("2006-01-02 15:04:05"), weekdays[int(now.Weekday())])
+			
+			lastMsg := msgs[lastIdx]
+			switch v := lastMsg.Content.(type) {
+			case string:
+				lastMsg.Content = v + timeNotice
+			case []provider.ContentPart:
+				blocks := append([]provider.ContentPart(nil), v...)
+				blocks = append(blocks, provider.ContentPart{Type: "text", Text: timeNotice})
+				lastMsg.Content = blocks
+			}
+			msgs[lastIdx] = lastMsg
+		}
+	}
+
 	ch, err := a.prov.Stream(ctx, provider.Request{
 		Messages:    msgs,
 		Tools:       a.tools.Schemas(),

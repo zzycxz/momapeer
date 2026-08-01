@@ -599,6 +599,7 @@ func (c *Controller) runGoalLoopWithRawDisplay(ctx context.Context, input any, r
 
 func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input any, raw, display string) error {
 	c.maybeSessionStart(ctx)
+	c.ensureSessionPath() // first turn: assign a transcript file so autosave & bot mapping work
 	c.touchActivity() // user is active; the idle-dream countdown restarts from now
 	c.maybeAutoPlan(ctx, raw)
 	ctx = agent.WithParentSession(ctx, c.parentSessionID())
@@ -2404,6 +2405,23 @@ func (c *Controller) SessionPath() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.sessionPath
+}
+
+// ensureSessionPath lazily assigns a transcript file the first time a turn
+// runs, so autosave (snapshot) and the bot gateway's session-mapping callback
+// see a non-empty path. NewSession() rotates to a fresh file on explicit
+// /new; this covers the common case where a controller is built without a
+// pinned SessionPath (bot gateway, CLI) and would otherwise never persist —
+// snapshot() bails on empty path, and the bot UI stayed on "等待首条消息".
+// No-op once a path is set. Idempotent under c.mu.
+func (c *Controller) ensureSessionPath() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sessionPath != "" || c.sessionDir == "" {
+		return
+	}
+	c.sessionPath = agent.NewSessionPath(c.sessionDir, c.label)
+	c.rebindCheckpoints(c.sessionPath)
 }
 
 func (c *Controller) parentSessionID() string {

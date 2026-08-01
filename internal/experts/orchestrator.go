@@ -105,6 +105,11 @@ type Orchestrator struct {
 	runner ExpertRunner
 	emit   func(CollabEvent)
 	rag    RAGSearcher // nil when RAG is not available
+	// ragEnabled is the RAG master switch (mirrors [cowork] rag_enabled). When
+	// false, knowledge-base injection is skipped even if a searcher is set and a
+	// team allows RAG — so the user can globally disable the knowledge base
+	// without editing each team's allow_rag. Defaults true (backward compatible).
+	ragEnabled bool
 	// onPartialResult, when set, is called after each expert completes so the
 	// caller can persist a partial result (e.g. if the run is cancelled mid-way,
 	// the already-completed expert answers survive). The partial has whatever
@@ -114,12 +119,18 @@ type Orchestrator struct {
 
 // NewOrchestrator builds an orchestrator. emit may be nil (events dropped).
 func NewOrchestrator(store *Store, runner ExpertRunner, emit func(CollabEvent)) *Orchestrator {
-	return &Orchestrator{store: store, runner: runner, emit: emit}
+	return &Orchestrator{store: store, runner: runner, emit: emit, ragEnabled: true}
 }
 
 // SetRAGSearcher injects a RAG searcher for knowledge-base integration.
 func (o *Orchestrator) SetRAGSearcher(rag RAGSearcher) {
 	o.rag = rag
+}
+
+// SetRAGEnabled toggles the RAG master switch. When false, RunTeam skips
+// knowledge-base injection regardless of team.AllowRAG or an injected searcher.
+func (o *Orchestrator) SetRAGEnabled(enabled bool) {
+	o.ragEnabled = enabled
 }
 
 // SetOnPartialResult installs a callback fired after each expert completes,
@@ -204,7 +215,7 @@ func (o *Orchestrator) Run(ctx context.Context, teamID, task string, mode string
 	// RAG integration: if the team allows RAG and a searcher is available,
 	// search the knowledge base and prepend relevant context to the task.
 	effectiveTask := task
-	if team.AllowRAG && o.rag != nil {
+	if team.AllowRAG && o.rag != nil && o.ragEnabled {
 		// Search across ALL configured collections (previously only the first
 		// was used, silently dropping the rest). When none are configured we
 		// pass "" which means "all collections" on the store side.
