@@ -357,7 +357,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Build (cache-stable for the session).
 	now := time.Now()
 	weekdays := []string{"日", "一", "二", "三", "四", "五", "六"}
-	sysPrompt += fmt.Sprintf("\n\n# 当前时间\n现在是 %s 周%s。在任何需要判断当前年份（例如搜索“最新”资讯）或生成具体日期/时间的任务中，都必须以当前时间为准，切勿使用你的旧训练年份（如 2023 或 2024）。",
+	sysPrompt += fmt.Sprintf("\n\n# 当前时间\n【重要】现在是 %s 周%s。在任何需要判断当前年份（例如搜索“最新”资讯）或生成具体日期/时间的任务中，都必须严格以此当前时间为准！",
 		now.Format("2006-01-02 15:04"), weekdays[int(now.Weekday())])
 	// Output style: fold the selected persona/tone block into the base prompt
 	// before language/memory/skills append, so a "replace" style (keep-coding
