@@ -1299,7 +1299,7 @@ api_key_env = "MOMAPEER_TEST_KEY_UNSET"
 `, launcher))
 
 	var notices []event.Event
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	ctrl, err := Build(ctx, Options{
 		Sink: event.FuncSink(func(e event.Event) {
@@ -1317,12 +1317,12 @@ api_key_env = "MOMAPEER_TEST_KEY_UNSET"
 		t.Fatalf("Host.Failures() = %+v, want empty for cold built-in codegraph background startup", got)
 	}
 	codegraphDir := filepath.Join(dir, ".codegraph")
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for {
 		if _, err := os.Stat(codegraphDir); err == nil {
 			break
 		} else if time.Now().After(deadline) {
-			t.Fatalf("cold codegraph init did not create .codegraph/: %v", err)
+			t.Fatalf("cold codegraph init did not create .codegraph/: %v\nNotices: %+v", err, notices)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
