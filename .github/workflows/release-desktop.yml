@@ -287,19 +287,14 @@ jobs:
           TAG="${{ github.ref_name }}"
           REPO="zzycxz/momapeer"
           
-          echo "Triggering Gitee mirror sync..."
-          curl -s -X POST "https://gitee.com/api/v5/repos/$REPO/action/sync" -d "access_token=$GITEE_TOKEN"
-          
-          echo "Waiting for Gitee to sync tag $TAG..."
-          for i in {1..20}; do
-            TAG_EXISTS=$(curl -s "https://gitee.com/api/v5/repos/$REPO/tags?access_token=$GITEE_TOKEN" | jq -r '.[].name' | grep -x "$TAG" || true)
-            if [ -n "$TAG_EXISTS" ]; then
-              echo "Tag $TAG synced to Gitee successfully!"
-              break
-            fi
-            echo "Waiting for tag $TAG to appear on Gitee... ($i/20)"
-            sleep 5
-          done
+          echo "Pushing directly to Gitee to sync..."
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add gitee "https://zzycxz:${GITEE_TOKEN}@gitee.com/$REPO.git" || true
+          export GIT_TERMINAL_PROMPT=0
+          export GIT_ASKPASS=/bin/echo
+          git -c credential.helper= push -f gitee HEAD:refs/heads/main || true
+          git -c credential.helper= push -f gitee $TAG || true
           
           echo "Checking if Gitee release exists..."
           EXISTING_ID=$(curl -s "https://gitee.com/api/v5/repos/$REPO/releases/tags/$TAG?access_token=$GITEE_TOKEN" | jq -r .id)
