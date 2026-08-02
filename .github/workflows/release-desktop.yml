@@ -270,6 +270,7 @@ jobs:
           tag_name: ${{ github.ref_name }}-sigs
           name: ${{ github.ref_name }} signatures
           prerelease: false
+          make_latest: false
           files: release-assets/*.minisig
 
       - name: Sync Release to Gitee
