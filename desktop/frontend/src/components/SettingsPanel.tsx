@@ -2056,7 +2056,7 @@ function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) 
                     browserPath: "", embeddingModel: "", ragEnabled: null,
                     pptActiveTemplate: "", pptTemplates: [], pptTemplateDir: "",
                     smtpPassword: "", imapPassword: "", smtpPasswordSet: false, imapPasswordSet: false, detectedBrowser: "",
-                    screenshotEnabled: false, screenshotHotkey: "Ctrl+Shift+S", screenshotVlmModel: "qwen/qwen3.6-27b",
+                    screenshotEnabled: false, screenshotHotkey: "Ctrl+Shift+Alt+W", screenshotVlmModel: "qwen/qwen3.6-27b", screenshotPrompt: "",
                     estopHotkey: "Ctrl+Shift+Pause",
                   };
                   void apply(() => app.SetCoWorkSettings({ ...base, screenshotVlmModel: vlm } as any));
@@ -4248,7 +4248,7 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
       browserPath: "", embeddingModel: "", ragEnabled: null,
       pptActiveTemplate: "", pptTemplates: [], pptTemplateDir: "",
       smtpPassword: "", imapPassword: "", smtpPasswordSet: false, imapPasswordSet: false, detectedBrowser: "",
-      screenshotEnabled: false, screenshotHotkey: "Ctrl+Shift+S", screenshotVlmModel: "qwen/qwen3.6-27b",
+      screenshotEnabled: false, screenshotHotkey: "Ctrl+Shift+Alt+W", screenshotVlmModel: "qwen/qwen3.6-27b", screenshotPrompt: "",
       estopHotkey: "Ctrl+Shift+Pause",
     };
     // Default mail provider = 139 (China Mobile). Only when the user hasn't
@@ -4868,9 +4868,9 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
           <div className="set-input-browse">
             <input
               className="mem-input"
-              value={recordingHotkey ? t("settings.hotkeyRecord") : (draft.screenshotHotkey ?? "Ctrl+Shift+S")}
+              value={recordingHotkey ? t("settings.hotkeyRecord") : (draft.screenshotHotkey ?? "Ctrl+Shift+Alt+W")}
               readOnly={recordingHotkey}
-              placeholder="Ctrl+Shift+S"
+              placeholder="Ctrl+Shift+Alt+W"
               onKeyDown={(e) => {
                 if (!recordingHotkey) return;
                 const modKeys = ["Control", "Alt", "Shift", "Meta"];
@@ -4896,6 +4896,34 @@ function CoWorkSection({ s, busy, apply }: SectionProps) {
             >
               {recordingHotkey ? "Esc" : t("settings.hotkeyRecordBtn")}
             </button>
+          </div>
+        </SettingsField>
+        <SettingsField label={t("settings.screenshotPromptLabel")} hint={t("settings.screenshotPromptHint")}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            <textarea
+              className="mem-input"
+              rows={3}
+              style={{ resize: "vertical", minHeight: "60px" }}
+              value={draft.screenshotPrompt ?? ""}
+              placeholder={t("settings.screenshotPromptPlaceholder")}
+              onChange={e => setDraft(d => { const n = { ...d, screenshotPrompt: e.target.value }; return n; })}
+            />
+            <div style={{ display: "flex", gap: "6px", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="btn btn--small"
+                onClick={() => setDraft(d => { const n = { ...d, screenshotPrompt: "" }; commitDraft(n); return n; })}
+              >
+                {t("settings.screenshotPromptReset")}
+              </button>
+              <button
+                type="button"
+                className="btn btn--small btn--primary"
+                onClick={() => commitCurrent()}
+              >
+                {t("settings.screenshotPromptSave")}
+              </button>
+            </div>
           </div>
         </SettingsField>
       </SettingsSection>

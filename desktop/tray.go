@@ -1,16 +1,20 @@
 package main
 
 import (
+	"log/slog"
 	"sync"
 
 	"fyne.io/systray"
+
+	"github.com/zzycxz/momapeer/internal/config"
 )
 
 type desktopTray struct {
-	end      func()
-	openItem *systray.MenuItem
-	quitItem *systray.MenuItem
-	once     sync.Once
+	end             func()
+	openItem        *systray.MenuItem
+	screenshotItem  *systray.MenuItem // nil when screenshot feature is off
+	quitItem        *systray.MenuItem
+	once            sync.Once
 }
 
 func (a *App) startTray() {
@@ -40,6 +44,15 @@ func (a *App) startTray() {
 
 		labels := trayMenuLabels(a.trayLocale())
 		t.openItem = systray.AddMenuItem(labels.openTitle, labels.openTooltip)
+
+		// Add screenshot solve menu item when the feature is enabled.
+		// This is the cross-platform reliable trigger — works on Windows,
+		// macOS, and Linux without depending on keyboard hooks.
+		if cfg, err := config.Load(); err == nil && cfg.Cowork.ScreenshotEnabled {
+			t.screenshotItem = systray.AddMenuItem(labels.screenshotTitle, labels.screenshotTooltip)
+			slog.Info("tray: screenshot menu item added (feature enabled)")
+		}
+
 		t.quitItem = systray.AddMenuItem(labels.quitTitle, labels.quitTooltip)
 
 		a.mu.Lock()
@@ -51,6 +64,16 @@ func (a *App) startTray() {
 				a.showFromTray()
 			}
 		}()
+		// Screenshot solve click handler — triggers the same flow as the
+		// keyboard hotkey. This is the cross-platform reliable trigger.
+		if t.screenshotItem != nil {
+			go func() {
+				for range t.screenshotItem.ClickedCh {
+					slog.Info("tray: screenshot menu item clicked")
+					a.triggerScreenshotSolve()
+				}
+			}()
+		}
 		go func() {
 			for range t.quitItem.ClickedCh {
 				a.quitFromTray()
@@ -76,9 +99,10 @@ func (a *App) stopTray() {
 func (a *App) updateTrayLocale(locale string) {
 	a.mu.RLock()
 	t := a.tray
-	var openItem, quitItem *systray.MenuItem
+	var openItem, screenshotItem, quitItem *systray.MenuItem
 	if t != nil {
 		openItem = t.openItem
+		screenshotItem = t.screenshotItem
 		quitItem = t.quitItem
 	}
 	a.mu.RUnlock()
@@ -88,6 +112,10 @@ func (a *App) updateTrayLocale(locale string) {
 	labels := trayMenuLabels(locale)
 	openItem.SetTitle(labels.openTitle)
 	openItem.SetTooltip(labels.openTooltip)
+	if screenshotItem != nil {
+		screenshotItem.SetTitle(labels.screenshotTitle)
+		screenshotItem.SetTooltip(labels.screenshotTooltip)
+	}
 	quitItem.SetTitle(labels.quitTitle)
 	quitItem.SetTooltip(labels.quitTooltip)
 }
@@ -109,25 +137,31 @@ func (a *App) quitFromTray() {
 }
 
 type trayLabels struct {
-	openTitle   string
-	openTooltip string
-	quitTitle   string
-	quitTooltip string
+	openTitle         string
+	openTooltip       string
+	screenshotTitle   string
+	screenshotTooltip string
+	quitTitle         string
+	quitTooltip       string
 }
 
 func trayMenuLabels(locale string) trayLabels {
 	if locale == "zh" {
 		return trayLabels{
-			openTitle:   "打开",
-			openTooltip: "打开 momapeer 窗口",
-			quitTitle:   "退出",
-			quitTooltip: "退出 momapeer",
+			openTitle:         "打开",
+			openTooltip:       "打开 momapeer 窗口",
+			screenshotTitle:   "📷 截图解题",
+			screenshotTooltip: "截取屏幕并 AI 解题，结果通过 IM 推送",
+			quitTitle:         "退出",
+			quitTooltip:       "退出 momapeer",
 		}
 	}
 	return trayLabels{
-		openTitle:   "Open",
-		openTooltip: "Open the momapeer window",
-		quitTitle:   "Quit",
-		quitTooltip: "Quit momapeer",
+		openTitle:         "Open",
+		openTooltip:       "Open the momapeer window",
+		screenshotTitle:   "📷 Screenshot Solve",
+		screenshotTooltip: "Capture screen and AI solve, push result via IM",
+		quitTitle:         "Quit",
+		quitTooltip:       "Quit momapeer",
 	}
 }

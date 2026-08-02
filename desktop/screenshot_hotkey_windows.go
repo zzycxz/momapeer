@@ -1,7 +1,7 @@
 package main
 
 // screenshot_hotkey_windows.go implements the global-hotkey screenshot solve
-// feature: when the user presses the configured hotkey (default Ctrl+Shift+S)
+// feature: when the user presses the configured hotkey (default Ctrl+Shift+Alt+W)
 // ANYWHERE on their desktop — even with MoMAPeer minimized — we:
 //   1. Capture the full screen via the existing Win32 BitBlt screen capture.
 //   2. Run a tool-calling mini-agent (web_search + web_fetch) on the image to
@@ -11,10 +11,11 @@ package main
 //   3. Reply with the result via the IM bot gateway (feishu/QQ/WeChat) AND
 //      surface an in-app toast so the user sees it without switching apps.
 //
-// The global hotkey uses Win32 RegisterHotKey (user32.dll syscall), the same
-// zero-CGO approach as our existing screen capture / mouse input. It registers
-// a hotkey id on a hidden message-only window, then a goroutine pumps the
-// Windows message loop to detect WM_HOTKEY and dispatch the capture.
+// Hotkey detection uses GetAsyncKeyState polling instead of RegisterHotKey +
+// WM_HOTKEY messages. RegisterHotKey relies on the Windows message queue, which
+// can be unreliable on some machines (e.g. bluetooth keyboards, ASUS ATK driver,
+// or other software consuming WM_HOTKEY). GetAsyncKeyState reads the keyboard
+// hardware state directly and works regardless of message queue issues.
 
 import (
 	"bytes"
@@ -28,9 +29,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unsafe"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/zzycxz/momapeer/internal/agent"
 	"github.com/zzycxz/momapeer/internal/boot"
 	"github.com/zzycxz/momapeer/internal/config"
@@ -40,65 +40,56 @@ import (
 	"github.com/zzycxz/momapeer/internal/tool/builtin"
 )
 
+// Win32 modifier key VK codes for hotkey matching.
 const (
-	hotkeyID   = 0x7A21 // arbitrary unique id for RegisterHotKey
-	wmHotkey   = 0x0312
-	modAlt     = 0x0001
-	modControl = 0x0002
-	modShift   = 0x0004
-	modWin     = 0x0008
-	vkS        = 0x53   // 'S'
-	pmNoRemove = 0x0000 // PeekMessage: leave message in queue
-	pmRemove   = 0x0001 // PeekMessage: remove after peek
+	vkControl = 0x11
+	vkShift   = 0x10
+	vkAlt     = 0x12
+	vkLWin    = 0x5B
+	vkRWin    = 0x5C
 )
 
+// Win32 API for keyboard state polling.
 var (
-	user32DLL            = syscall.NewLazyDLL("user32.dll")
-	procRegisterHotKey   = user32DLL.NewProc("RegisterHotKey")
-	procUnregisterHotKey = user32DLL.NewProc("UnregisterHotKey")
-	procCreateWindowEx   = user32DLL.NewProc("CreateWindowExW")
-	procDefWindowProc    = user32DLL.NewProc("DefWindowProcW")
-	procDestroyWindow    = user32DLL.NewProc("DestroyWindow")
-	procGetMessage       = user32DLL.NewProc("GetMessageW")
-	procPeekMessage      = user32DLL.NewProc("PeekMessageW")
-	procTranslateMessage = user32DLL.NewProc("TranslateMessage")
-	procDispatchMessage  = user32DLL.NewProc("DispatchMessageW")
-	procRegisterClassEx  = user32DLL.NewProc("RegisterClassExW")
+	user32DLL          = syscall.NewLazyDLL("user32.dll")
+	procGetAsyncKeyState = user32DLL.NewProc("GetAsyncKeyState")
 )
 
-// hotkeyManager owns the global hotkey registration + message loop.
+// hotkeyManager polls keyboard state via GetAsyncKeyState to detect the
+// configured hotkey combination. No message queue, no hidden window.
 type hotkeyManager struct {
 	app      *App
-	mu       sync.Mutex
 	stopCh   chan struct{}
 	stopOnce sync.Once
+	// Parsed hotkey: the main key VK code + required modifier VK codes.
+	mainVK uint16
+	ctrl   bool
+	shift  bool
+	alt    bool
+	win    bool
 }
 
-// StartScreenshotHotkey registers the global hotkey and begins pumping the
-// message loop. Called from app startup when screenshot_enabled=true. If the
-// hotkey is already registered by another app, RegisterHotKey fails and we log
-// a warning (the user must pick a different combination).
+// StartScreenshotHotkey begins polling for the configured hotkey. Called from
+// app startup when screenshot_enabled=true.
 func (a *App) StartScreenshotHotkey() {
 	cfg, err := config.Load()
 	if err != nil || !cfg.Cowork.ScreenshotEnabled {
 		return
 	}
-	hk := &hotkeyManager{app: a, stopCh: make(chan struct{})}
-	if err := hk.register(cfg.Cowork.ScreenshotHotkey); err != nil {
-		slog.Warn("screenshot: hotkey registration failed (combination may be in use by another app, or unsupported); screenshot hotkey unavailable",
-			"hotkey", cfg.Cowork.ScreenshotHotkey, "err", err)
+	hk, err := newHotkeyManager(a, cfg.Cowork.ScreenshotHotkey)
+	if err != nil {
+		slog.Warn("screenshot: invalid hotkey config", "hotkey", cfg.Cowork.ScreenshotHotkey, "err", err)
 		return
 	}
-	// Keep a handle so StopScreenshotHotkey can stop the loop on shutdown.
-	// Without this the goroutine (and its GetMessage block) leaked, since the
-	// manager was a local variable nothing could reach.
 	a.mu.Lock()
 	a.hotkeyMgr = hk
 	a.mu.Unlock()
+
+	slog.Info("screenshot: hotkey polling started", "hotkey", cfg.Cowork.ScreenshotHotkey)
 	go hk.loop()
 }
 
-// StopScreenshotHotkey tears down the hotkey + message loop at shutdown.
+// StopScreenshotHotkey stops the polling loop.
 func (a *App) StopScreenshotHotkey() {
 	a.mu.Lock()
 	hk := a.hotkeyMgr
@@ -109,73 +100,101 @@ func (a *App) StopScreenshotHotkey() {
 	}
 }
 
-// register creates a hidden message-only window, registers the hotkey against
-// it, and stores the manager for dispatch.
-func (h *hotkeyManager) register(hotkeyStr string) error {
-	hwnd := createMessageWindow()
-	if hwnd == 0 {
-		return fmt.Errorf("create message window failed")
-	}
+// newHotkeyManager parses a hotkey string like "Ctrl+Shift+Alt+W" into a polling
+// configuration.
+func newHotkeyManager(app *App, hotkeyStr string) (*hotkeyManager, error) {
 	mod, vk, err := parseHotkey(hotkeyStr)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	r1, _, _ := procRegisterHotKey.Call(
-		uintptr(hwnd),
-		uintptr(hotkeyID),
-		uintptr(mod),
-		uintptr(vk),
-	)
-	if r1 == 0 {
-		return fmt.Errorf("RegisterHotKey failed (combination may be in use)")
-	}
-	h.app.screenshotHwnd = hwnd
-	return nil
+	return &hotkeyManager{
+		app:    app,
+		stopCh: make(chan struct{}),
+		mainVK: uint16(vk),
+		ctrl:   (mod & 0x0002) != 0,
+		shift:  (mod & 0x0004) != 0,
+		alt:    (mod & 0x0001) != 0,
+		win:    (mod & 0x0008) != 0,
+	}, nil
 }
 
-// loop pumps the Windows message loop, dispatching WM_HOTKEY to onHotkey.
-//
-// It uses PeekMessage (non-blocking) instead of GetMessage: GetMessage blocks
-// until a message arrives, which means the stopCh check above it was only
-// reachable when no message was pending — once blocked, Stop() could never
-// interrupt it and the goroutine leaked until process kill. PeekMessage returns
-// immediately whether or not a message is present, so we drain any pending
-// messages then sleep on a ticker + stopCh, making Stop() responsive.
+// loop polls GetAsyncKeyState every 50ms to detect the hotkey combination.
+// When all required keys are pressed simultaneously, it triggers the screenshot
+// solve. A 500ms debounce prevents repeated triggers from key-repeat.
 func (h *hotkeyManager) loop() {
-	msg := make([]byte, 48) // MSG struct
-	ticker := time.NewTicker(100 * time.Millisecond)
+	slog.Warn("screenshot: polling loop STARTED", "mainVK", fmt.Sprintf("0x%X", h.mainVK), "ctrl", h.ctrl, "shift", h.shift, "alt", h.alt)
+	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
+
+	lastTrigger := time.Time{}
+	wasPressed := false
+	debugTick := time.NewTicker(5 * time.Second)
+	defer debugTick.Stop()
+
 	for {
-		// Drain all currently-queued messages (non-blocking).
-		for {
-			ret, _, _ := procPeekMessage.Call(
-				uintptr(unsafe.Pointer(&msg[0])),
-				0, // all windows owned by this thread
-				0, 0,
-				uintptr(pmRemove),
-			)
-			if ret == 0 {
-				break // no message available
-			}
-			msgID := *(*uint32)(unsafe.Pointer(&msg[4]))
-			if msgID == wmHotkey {
-				h.onHotkey()
-			}
-			_, _, _ = procTranslateMessage.Call(uintptr(unsafe.Pointer(&msg[0])))
-			_, _, _ = procDispatchMessage.Call(uintptr(unsafe.Pointer(&msg[0])))
-		}
 		select {
 		case <-h.stopCh:
 			return
 		case <-ticker.C:
+			pressed := h.checkKeys()
+			if pressed && !wasPressed && time.Since(lastTrigger) > 500*time.Millisecond {
+				lastTrigger = time.Now()
+				slog.Warn("screenshot: HOTKEY DETECTED via polling!")
+				h.app.triggerScreenshotSolve()
+			}
+			wasPressed = pressed
+		case <-debugTick.C:
+			// Periodic heartbeat to confirm loop is alive.
+			mainDown := isKeyDown(h.mainVK)
+			ctrlDown := isKeyDown(vkControl)
+			slog.Debug("screenshot: polling heartbeat", "main_key_down", mainDown, "ctrl_down", ctrlDown)
 		}
 	}
 }
 
-// onHotkey fires when the global hotkey is pressed: capture → solve → IM + toast.
-func (h *hotkeyManager) onHotkey() {
+// checkKeys returns true if the configured hotkey combination is currently held.
+func (h *hotkeyManager) checkKeys() bool {
+	// Check main key (must be pressed).
+	if !isKeyDown(h.mainVK) {
+		return false
+	}
+	// Check required modifiers.
+	if h.ctrl && !isKeyDown(vkControl) {
+		return false
+	}
+	if h.shift && !isKeyDown(vkShift) {
+		return false
+	}
+	if h.alt && !isKeyDown(vkAlt) {
+		return false
+	}
+	if h.win && !isKeyDown(vkLWin) && !isKeyDown(vkRWin) {
+		return false
+	}
+	return true
+}
+
+// isKeyDown checks if a virtual key is currently pressed via GetAsyncKeyState.
+// Bit 15 (0x8000) indicates the key is physically pressed.
+func isKeyDown(vk uint16) bool {
+	ret, _, _ := procGetAsyncKeyState.Call(uintptr(vk))
+	return (ret & 0x8000) != 0
+}
+
+// Stop stops the polling loop. Idempotent.
+func (h *hotkeyManager) Stop() {
+	h.stopOnce.Do(func() {
+		close(h.stopCh)
+	})
+}
+
+// triggerScreenshotSolve is the unified entry point for screenshot solving.
+// Called by both the global hotkey and the system tray menu item.
+// It captures the screen, runs the VLM agent (with optional web search),
+// and pushes the result via IM + toast.
+func (a *App) triggerScreenshotSolve() {
 	// Surface a "solving..." toast immediately so the user knows it fired.
-	h.app.emitScreenshotNotice("正在解题中（可能联网搜索，请稍候）…", "")
+	a.emitScreenshotNotice("正在解题中（可能联网搜索，请稍候）…", "")
 
 	go func() {
 		// Solving may run several search → read → reason rounds, so it needs a
@@ -186,12 +205,12 @@ func (h *hotkeyManager) onHotkey() {
 		// 1. Capture screen → PNG bytes.
 		img, err := builtin.CaptureFullScreen()
 		if err != nil || img == nil {
-			h.app.emitScreenshotNotice("截图失败", "")
+			a.emitScreenshotNotice("截图失败", "")
 			return
 		}
 		var buf bytes.Buffer
 		if err := png.Encode(&buf, img); err != nil {
-			h.app.emitScreenshotNotice("截图编码失败", "")
+			a.emitScreenshotNotice("截图编码失败", "")
 			return
 		}
 		dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
@@ -200,7 +219,7 @@ func (h *hotkeyManager) onHotkey() {
 		// one-shot fallback).
 		cfg, err := config.Load()
 		if err != nil {
-			h.app.emitScreenshotNotice("配置读取失败", "")
+			a.emitScreenshotNotice("配置读取失败", "")
 			return
 		}
 		model := cfg.Cowork.ScreenshotVLMModel
@@ -209,31 +228,35 @@ func (h *hotkeyManager) onHotkey() {
 		}
 		entry, err := resolveModelEntry(model)
 		if err != nil {
-			h.app.emitScreenshotNotice("模型未找到: "+err.Error(), "")
+			a.emitScreenshotNotice("模型未找到: "+err.Error(), "")
 			return
 		}
 		prov, err := boot.NewProviderWithProxy(entry, netclient.ProxySpec{Mode: netclient.ModeAuto}, false, false)
 		if err != nil {
-			h.app.emitScreenshotNotice("模型初始化失败: "+err.Error(), "")
+			a.emitScreenshotNotice("模型初始化失败: "+err.Error(), "")
 			return
 		}
 
 		// 3. Solve whatever problem is on screen. Prefers a tool-calling
 		// mini-agent (web_search + web_fetch) when a search backend is keyed;
 		// degrades to a one-shot VLM solve otherwise or on agent failure.
-		result, err := solveScreenshot(ctx, prov, entry, dataURL)
+		prompt := cfg.Cowork.ScreenshotPrompt
+		if strings.TrimSpace(prompt) == "" {
+			prompt = defaultSolvePrompt
+		}
+		result, err := solveScreenshot(ctx, prov, entry, dataURL, prompt)
 		if err != nil {
-			h.app.emitScreenshotNotice("解题失败: "+err.Error(), "")
+			a.emitScreenshotNotice("解题失败: "+err.Error(), "")
 			return
 		}
 
 		// 4. Reply via IM bot (if configured) + toast.
-		h.app.emitScreenshotNotice(result, "")
+		a.emitScreenshotNotice(result, "")
 		// IM push is best-effort — the bot gateway may not be running yet. Pick
 		// a real destination (a connected feishu/weixin conversation) instead of
 		// a hard-coded "feishu:default", which never delivers.
-		if gw := h.app.botGW.Load(); gw != nil {
-			if dest := h.app.screenshotPushDest(); dest != "" {
+		if gw := a.botGW.Load(); gw != nil {
+			if dest := a.screenshotPushDest(); dest != "" {
 				pushCtx, pushCancel := context.WithTimeout(context.Background(), 10*time.Second)
 				if err := gw.Push(pushCtx, dest, "🧮 截图解题结果：\n\n"+result); err != nil {
 					slog.Warn("screenshot: IM push failed", "dest", dest, "err", err)
@@ -246,22 +269,7 @@ func (h *hotkeyManager) onHotkey() {
 	}()
 }
 
-// Stop unregisters the hotkey and stops the message loop.
-func (h *hotkeyManager) Stop() {
-	h.stopOnce.Do(func() {
-		close(h.stopCh)
-		if h.app.screenshotHwnd != 0 {
-			procUnregisterHotKey.Call(uintptr(h.app.screenshotHwnd), uintptr(hotkeyID))
-			// Destroy the message-only window so repeated stop/start cycles don't
-			// leak HWNDs (the OS reclaims them at exit, but a long-lived process
-			// toggling the screenshot feature could accumulate many).
-			procDestroyWindow.Call(uintptr(h.app.screenshotHwnd))
-			h.app.screenshotHwnd = 0
-		}
-	})
-}
-
-// parseHotkey converts "Ctrl+Shift+S" → (MOD_CONTROL|MOD_SHIFT, VK_S).
+// parseHotkey converts "Ctrl+Shift+Alt+W" → (MOD_CONTROL|MOD_SHIFT|MOD_ALT, VK_W).
 func parseHotkey(s string) (mod, vk int, err error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -273,13 +281,13 @@ func parseHotkey(s string) (mod, vk int, err error) {
 		p = strings.TrimSpace(p)
 		switch strings.ToLower(p) {
 		case "ctrl", "control":
-			mod |= modControl
+			mod |= 0x0002
 		case "shift":
-			mod |= modShift
+			mod |= 0x0004
 		case "alt":
-			mod |= modAlt
+			mod |= 0x0001
 		case "win", "super", "meta":
-			mod |= modWin
+			mod |= 0x0008
 		default:
 			// Last part is the key itself.
 			if vk != 0 {
@@ -346,65 +354,20 @@ func keyToVK(key string) int {
 	return 0
 }
 
-// createMessageWindow creates a hidden message-only window for receiving
-// WM_HOTKEY. Uses CreateWindowEx with the "Message" window class.
-func createMessageWindow() uintptr {
-	className, _ := syscall.UTF16PtrFromString("MoMAPeerHotkey")
-	var wc struct {
-		Size       uint32
-		Style      uint32
-		WndProc    uintptr
-		ClsExtra   int32
-		WndExtra   int32
-		Instance   uintptr
-		Icon       uintptr
-		Cursor     uintptr
-		Background uintptr
-		MenuName   *uint16
-		ClassName  *uint16
-	}
-	wc.Size = uint32(unsafe.Sizeof(wc))
-	wc.WndProc = syscall.NewCallback(defWindowProc)
-	wc.ClassName = className
-	procRegisterClassEx.Call(uintptr(unsafe.Pointer(&wc)))
-	windowName, _ := syscall.UTF16PtrFromString("")
-	hwnd, _, _ := procCreateWindowEx.Call(
-		0,
-		uintptr(unsafe.Pointer(className)),
-		uintptr(unsafe.Pointer(windowName)),
-		0,
-		0, 0, 0, 0,
-		0, 0, 0, 0,
-	)
-	return hwnd
-}
+// defaultSolvePrompt is the default instruction sent with the screenshot image.
+// Users can override this via [cowork].screenshot_prompt in config.toml.
+const defaultSolvePrompt = "请从屏幕截图中找到用户当前遇到的问题或题目，然后逐步推理并给出答案。完成后自行验证答案是否正确，如不确定请联网搜索核实。最终给出：1）识别到的题目 2）答案 3）解题过程 4）验证结果。"
 
-// defWindowProc is the default window procedure — just calls DefWindowProc.
-func defWindowProc(hwnd, msg, wParam, lParam uintptr) uintptr {
-	ret, _, _ := procDefWindowProc.Call(hwnd, msg, wParam, lParam)
-	return ret
-}
-
-// screenshotSolvePrompt is the instruction sent with the image when solving.
-const screenshotSolvePrompt = "请帮忙处理屏幕上遇到的问题，并将问题解决，你可以进行联网搜索，然后告诉我结果和过程。"
+// defaultSolveSystemPrompt is the system prompt for the search mini-agent.
+const defaultSolveSystemPrompt = "你是一个能看图的解题助手。首先从截图中准确识别出用户正在处理的题目或问题，然后逐步推理。遇到不确定的信息，主动使用联网搜索核实。给出答案后，用逆向推理或代入法验证答案的正确性。如果发现错误，自行纠正后再给出最终答案。"
 
 // solveScreenshot solves whatever problem is on the captured screen. It runs a
 // tool-calling mini-agent (web_search + web_fetch) when a search backend is
 // configured, so the model can look up fresh information; otherwise — or if
 // the agent loop errors out — it degrades to a single one-shot VLM call.
-//
-// The image is passed as the FIRST user message via Run's polymorphic input
-// ([]provider.ContentPart with an image_url part) — the same path the main
-// controller uses for @image refs, so no agent-package change is needed.
-func solveScreenshot(ctx context.Context, prov provider.Provider, entry *config.ProviderEntry, imageDataURL string) (string, error) {
-	// Compose the multimodal first turn: image + solve prompt.
-	content := provider.ImageContent(screenshotSolvePrompt, imageDataURL)
+func solveScreenshot(ctx context.Context, prov provider.Provider, entry *config.ProviderEntry, imageDataURL string, prompt string) (string, error) {
+	content := provider.ImageContent(prompt, imageDataURL)
 
-	// No search backend configured → one-shot solve with no tools. We check
-	// the keys explicitly (not just registry presence) because the web_search
-	// tool is always registered even when no key is set — without this guard
-	// the model would call web_search, get an error string back, and waste
-	// steps trying alternate queries before giving up.
 	if !webSearchKeyConfigured() {
 		return solveOneShot(ctx, prov, content)
 	}
@@ -413,35 +376,23 @@ func solveScreenshot(ctx context.Context, prov provider.Provider, entry *config.
 		return solveOneShot(ctx, prov, content)
 	}
 
-	// Run the search mini-agent. The system prompt frames the assistant as a
-	// helpful problem-solver that reasons and verifies uncertain facts online.
-	sess := agent.NewSession("你是一个能看图的解题助手。请仔细阅读屏幕截图中的问题，逐步推理并用联网搜索核实不确定的信息，最后给出清晰的答案和过程。")
+	sess := agent.NewSession(defaultSolveSystemPrompt)
 	opts := agent.Options{
-		MaxSteps:      8,                   // roughly search → read → (re-search) → answer
-		ContextWindow: entry.ContextWindow, // 0 disables compaction — avoid for search loops
+		MaxSteps:      8,
+		ContextWindow: entry.ContextWindow,
 	}
-	sink := event.FuncSink(func(e event.Event) {
-		// Progress surfacing is handled via toast in the caller; this sink is a
-		// no-op hook kept for symmetry with the expert path.
-		_ = e
-	})
+	sink := event.FuncSink(func(e event.Event) { _ = e })
 	sub := agent.New(prov, reg, sess, opts, sink)
 	runErr := sub.Run(ctx, content)
 	answer := lastAssistantText(sess)
-	// If the step cap fired (runErr is a "paused after N tool-call rounds"
-	// error), keep whatever partial answer we recovered rather than failing.
 	if runErr != nil {
 		if isMaxStepsPaused(runErr) && answer != "" {
 			return answer, nil
 		}
-		// Genuine failure — degrade to a one-shot solve so the user still gets
-		// an answer instead of an error (search may be flaky even when keyed).
 		slog.Warn("screenshot: search mini-agent failed, falling back to one-shot", "err", runErr)
 		return solveOneShot(ctx, prov, content)
 	}
 	if answer == "" {
-		// Loop finished without an answer — try a clean one-shot rather than
-		// returning an error to the user.
 		return solveOneShot(ctx, prov, content)
 	}
 	return answer, nil
@@ -472,10 +423,7 @@ func solveOneShot(ctx context.Context, prov provider.Provider, content any) (str
 }
 
 // webSearchKeyConfigured reports whether at least one web_search backend has
-// an API key set. When false we skip the tool-calling loop entirely and go
-// straight to a one-shot solve — running the agent without keys just makes
-// web_search return an error string each call, burning the step budget for
-// nothing. Mirrors the key checks in builtin/websearch.go.
+// an API key set.
 func webSearchKeyConfigured() bool {
 	return os.Getenv("BRAVE_API_KEY") != "" ||
 		os.Getenv("BRAVE_SEARCH_API_KEY") != "" ||
@@ -501,7 +449,7 @@ func (a *App) emitScreenshotNotice(message, detail string) {
 	if a.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, "screenshot:notice", map[string]string{
+	wailsruntime.EventsEmit(a.ctx, "screenshot:notice", map[string]string{
 		"message": message,
 		"detail":  detail,
 	})

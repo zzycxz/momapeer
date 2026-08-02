@@ -66,6 +66,7 @@ type CoWorkSettingsView struct {
 	ScreenshotEnabled  bool   `json:"screenshotEnabled"`
 	ScreenshotHotkey   string `json:"screenshotHotkey"`
 	ScreenshotVLMModel string `json:"screenshotVlmModel"`
+	ScreenshotPrompt   string `json:"screenshotPrompt"`
 	// EStopHotkey is the global emergency-stop combo for desktop automation.
 	EStopHotkey string `json:"estopHotkey"`
 	// EmailAccounts is the multi-mailbox list. When non-empty it is the source of
@@ -142,6 +143,7 @@ func coworkSettingsView(c config.CoworkConfig) CoWorkSettingsView {
 		ScreenshotEnabled:  c.ScreenshotEnabled,
 		ScreenshotHotkey:   c.ScreenshotHotkey,
 		ScreenshotVLMModel: c.ScreenshotVLMModel,
+		ScreenshotPrompt:   c.ScreenshotPrompt,
 		EStopHotkey:        c.EStopHotkey,
 		SMTP: SMTPSettings{
 			Host:           smtp.Host,
@@ -379,6 +381,7 @@ func (a *App) SetCoWorkSettings(v CoWorkSettingsView) (err error) {
 		c.Cowork.ScreenshotEnabled = v.ScreenshotEnabled
 		c.Cowork.ScreenshotHotkey = strings.TrimSpace(v.ScreenshotHotkey)
 		c.Cowork.ScreenshotVLMModel = strings.TrimSpace(v.ScreenshotVLMModel)
+		c.Cowork.ScreenshotPrompt = v.ScreenshotPrompt
 		c.Cowork.EStopHotkey = strings.TrimSpace(v.EStopHotkey)
 		smtp := config.SMTPConfig{
 			Host:           strings.TrimSpace(v.SMTP.Host),

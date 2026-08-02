@@ -26,13 +26,13 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unsafe"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/zzycxz/momapeer/internal/config"
 )
@@ -72,17 +72,25 @@ func (a *App) StartEStopHotkey() {
 	if hotkeyStr == "" {
 		return // feature disabled by empty config
 	}
-	if err := em.register(hotkeyStr); err != nil {
-		// Non-fatal: log and move on. The user can reconfigure.
-		slog.Warn("estop: hotkey registration failed (combination may be in use by another app); emergency stop unavailable",
-			"hotkey", hotkeyStr, "err", err)
-		return
-	}
+	// Register the manager BEFORE starting the goroutine (same rationale as
+	// StartScreenshotHotkey).
 	a.mu.Lock()
 	a.estopMgr = em
 	a.mu.Unlock()
-	go em.loop()
-	slog.Info("estop: global emergency-stop hotkey registered", "hotkey", hotkeyStr)
+	go func() {
+		// Pin to one OS thread: RegisterHotKey + PeekMessage must share a
+		// thread or WM_HOTKEY won't be delivered (see screenshot_hotkey for
+		// the full explanation).
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		if err := em.register(hotkeyStr); err != nil {
+			slog.Warn("estop: hotkey registration failed (combination may be in use by another app); emergency stop unavailable",
+				"hotkey", hotkeyStr, "err", err)
+			return
+		}
+		slog.Info("estop: global emergency-stop hotkey registered", "hotkey", hotkeyStr)
+		em.loop()
+	}()
 }
 
 // StopEStopHotkey tears down the hotkey + message loop at shutdown.
@@ -158,7 +166,10 @@ func (e *estopManager) loop() {
 			if ret == 0 {
 				break
 			}
-			msgID := *(*uint32)(unsafe.Pointer(&msg[4]))
+			// MSG.message is at offset 8 on amd64 (hwnd uintptr = 8 bytes),
+			// not 4 (32-bit assumption). See screenshot_hotkey_windows.go for
+			// the full explanation — same bug, same fix.
+			msgID := *(*uint32)(unsafe.Pointer(&msg[8]))
 			if msgID == wmHotkey {
 				e.onHotkey()
 			}
@@ -201,109 +212,14 @@ func (e *estopManager) Stop() {
 	})
 }
 
-// parseEStopHotkey converts "Ctrl+Shift+Pause" → (MOD_CONTROL|MOD_SHIFT, VK_PAUSE).
-// Reuses the modifier parsing from parseHotkey (screenshot) but adds the Pause
-// key, which the screenshot parser doesn't know about.
-func parseEStopHotkey(s string) (mod, vk int, err error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, 0, fmt.Errorf("empty hotkey")
-	}
-	parts := strings.Split(s, "+")
-	vk = 0
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		switch strings.ToLower(p) {
-		case "ctrl", "control":
-			mod |= modControl
-		case "shift":
-			mod |= modShift
-		case "alt":
-			mod |= modAlt
-		case "win", "super", "meta":
-			mod |= modWin
-		default:
-			if vk != 0 {
-				return 0, 0, fmt.Errorf("multiple keys in hotkey %q", s)
-			}
-			vk = estopKeyToVK(p)
-			if vk == 0 {
-				return 0, 0, fmt.Errorf("unknown key %q in hotkey", p)
-			}
-		}
-	}
-	if vk == 0 {
-		return 0, 0, fmt.Errorf("no key in hotkey %q", s)
-	}
-	return mod, vk, nil
-}
-
-// estopKeyToVK maps a single key name to its Windows virtual-key code. Supports
-// the full set the emergency-stop combo is likely to use (letters, digits,
-// function keys, Pause/Break, Esc, Space, Enter).
-func estopKeyToVK(key string) int {
-	if len(key) == 1 {
-		c := key[0]
-		if c >= 'A' && c <= 'Z' {
-			return int(c)
-		}
-		if c >= 'a' && c <= 'z' {
-			return int(c - 32)
-		}
-		if c >= '0' && c <= '9' {
-			return int(c)
-		}
-	}
-	switch strings.ToUpper(key) {
-	case "PAUSE", "BREAK":
-		return vkPause
-	case "ESC", "ESCAPE":
-		return 0x1B
-	case "SPACE":
-		return 0x20
-	case "ENTER":
-		return 0x0D
-	case "TAB":
-		return 0x09
-	case "F1":
-		return 0x70
-	case "F2":
-		return 0x71
-	case "F3":
-		return 0x72
-	case "F4":
-		return 0x73
-	case "F5":
-		return 0x74
-	case "F6":
-		return 0x75
-	case "F7":
-		return 0x76
-	case "F8":
-		return 0x77
-	case "F9":
-		return 0x78
-	case "F10":
-		return 0x79
-	case "F11":
-		return 0x7A
-	case "F12":
-		return 0x7B
-	}
-	return 0
-}
-
 // emitEStopNotice pushes a stop-confirmation toast to the frontend. The frontend
 // renders this as a prominent red banner so the user sees the kill landed.
 func (a *App) emitEStopNotice() {
 	if a.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, "estop:fired", map[string]string{
+	wailsruntime.EventsEmit(a.ctx, "estop:fired", map[string]string{
 		"message": "已紧急停止 AI 操作",
 		"detail":  "全局热键触发的紧急停止已生效，进行中的任务被中断。",
 	})
 }
-
-// ensure unused-import guard doesn't trip on syscall when only used transitively.
-var _ = syscall.NewLazyDLL

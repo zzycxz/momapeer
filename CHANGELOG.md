@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.5.15] — 2026-08-02
+
+**快捷截屏功能全面修复：热键检测从 RegisterHotKey 改为 GetAsyncKeyState 轮询（解决键盘事件到不了的问题），提示词升级为「先定位题目→给答案→解题过程→验证」四步结构，新增用户可自定义提示词，系统托盘加「截图解题」菜单项，全局热键改为 Ctrl+Shift+Alt+W 避免冲突。**
+
+---
+
+### Fixed — 热键检测：RegisterHotKey → GetAsyncKeyState 轮询
+
+`RegisterHotKey` + `WM_HOTKEY` 消息队列方案在特定机器上失效（注册成功但按键消息到不了）。经诊断发现 `GetAsyncKeyState` 能正常读取键盘硬件状态，因此将热键检测改为 50ms 轮询 `GetAsyncKeyState`，不再依赖 Windows 消息队列。
+
+- **`desktop/screenshot_hotkey_windows.go`**：
+  - 删除 `RegisterHotKey` + `createMessageWindow` + `GetMessage` 消息循环整套方案。
+  - 改为 `hotkeyManager.loop()`：每 50ms 调用 `GetAsyncKeyState` 检测目标键是否按下，500ms 防抖。
+  - `parseHotkey()` 解析配置的组合键（如 `Ctrl+Shift+Alt+W`）为 modifier + VK 码，`checkKeys()` 同时检查主键和所有修饰键。
+  - 不再需要 `LockOSThread`、隐藏窗口、消息泵，代码量减少约 60%。
+  - 新增 5 秒一次的 debug heartbeat 日志，方便确认轮询是否在运行。
+
+### Changed — 全局热键默认值：Ctrl+Shift+S → Ctrl+Shift+Alt+W
+
+`Ctrl+Shift+S` 太常见，容易和其他软件冲突。改为 `Ctrl+Shift+Alt+W`（四键组合，极少冲突）。
+
+- **涉及文件**：`config.go`、`SettingsPanel.tsx`、`bridge.ts`、`zh.ts`、`en.ts`、`screenshot_hotkey_windows.go`
+
+### Changed — 提示词升级：四步结构 + 用户可自定义
+
+提示词从简单的「请帮忙处理屏幕上的问题」升级为结构化四步流程，并支持用户在设置中自定义。
+
+- **默认提示词（用户 prompt）**：`请从屏幕截图中找到用户当前遇到的问题或题目，然后逐步推理并给出答案。完成后自行验证答案是否正确，如不确定请联网搜索核实。最终给出：1）识别到的题目 2）答案 3）解题过程 4）验证结果。`
+- **系统提示词（mini-agent）**：`你是一个能看图的解题助手。首先从截图中准确识别出用户正在处理的题目或问题，然后逐步推理。遇到不确定的信息，主动使用联网搜索核实。给出答案后，用逆向推理或代入法验证答案的正确性。如果发现错误，自行纠正后再给出最终答案。`
+- **用户可自定义**：`[cowork].screenshot_prompt` 配置项 + 设置 → 办公 → 快捷截屏 → 「解题提示词」文本框。留空使用默认值。
+
+### Added — 系统托盘「截图解题」菜单项
+
+在系统托盘右键菜单中新增「📷 截图解题」项，点击即触发完整的截屏→解题→IM 推送流程。作为键盘热键的跨平台保底方案，不依赖任何键盘机制。
+
+- **`desktop/tray.go`**：新增 `screenshotItem` 菜单项（仅当 `screenshot_enabled=true` 时显示），点击调用 `triggerScreenshotSolve()`。中英文双语 locale。
+- **`desktop/screenshot_hotkey_windows.go`**：提取 `triggerScreenshotSolve()` 为 `*App` 的公开方法，热键和托盘菜单共用。
+
+### Added — `hotkey_win32_shared.go`：共享 Win32 热键声明
+
+将 estop 热键需要的 Win32 API 声明（`RegisterHotKey`、`CreateWindowEx`、`RegisterClassEx` 等）和解析函数（`parseEStopHotkey`、`estopKeyToVK`）从 `screenshot_hotkey_windows.go` 拆到独立文件，screenshot 改用轮询后不再需要这些声明，但 estop 仍依赖。
+
+---
+
 ## [0.5.14] — 2026-08-01
 
 **一条主线：把「快捷截屏」从单纯的内容识别升级为真正的「截图解题」（联网搜索 + 答案过程），并新增 `im_send` 工具让 AI 在对话中能主动给 IM bot 推送消息——堵住之前 AI 听到「给飞书发消息」就乱开浏览器登录网页版的错误路径。** 两条链路复用同一个已连接的飞书/微信 bot 网关，互不重复建连。

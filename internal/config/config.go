@@ -539,15 +539,20 @@ type CoworkConfig struct {
 	// recognition, and replies via IM bot + in-app toast. Default false — the
 	// user opts in via the cowork settings tab.
 	ScreenshotEnabled bool `toml:"screenshot_enabled"`
-	// ScreenshotHotkey is the global hotkey combination (e.g. "Ctrl+Shift+S").
-	// Registered via Win32 RegisterHotKey so it fires even when MoMAPeer isn't
-	// focused. Default "Ctrl+Shift+S".
+	// ScreenshotHotkey is the global hotkey combination (e.g. "Ctrl+Shift+Alt+W").
+	// Detected via GetAsyncKeyState polling so it fires even when MoMAPeer isn't
+	// focused. Default "Ctrl+Shift+Alt+W".
 	ScreenshotHotkey string `toml:"screenshot_hotkey"`
 	// ScreenshotVLMModel is the model used for screenshot recognition. Default
 	// "qwen/qwen3.5-397b-a17b" (heavy multimodal). Alternative: "qwen/qwen3.6-
 	// 27b" (lightweight). This is the SINGLE place all image-recognition config
 	// lives — set it once in the cowork settings page.
 	ScreenshotVLMModel string `toml:"screenshot_vlm_model"`
+	// ScreenshotPrompt is the user prompt sent with the screenshot image to the
+	// VLM model. Users can customize this to change the solving behavior (e.g.
+	// focus on specific subjects, require verification, etc.). Empty means use
+	// the built-in default.
+	ScreenshotPrompt string `toml:"screenshot_prompt"`
 
 	// EStopHotkey is the global EMERGENCY-STOP hotkey for coWork desktop
 	// automation. Pressing it anywhere (even with MoMAPeer minimized) cancels
@@ -1608,7 +1613,7 @@ func normalizeCoworkDefaults(c *Config) {
 		c.Cowork.ScreenshotVLMModel = "qwen/qwen3.5-397b-a17b"
 	}
 	if strings.TrimSpace(c.Cowork.ScreenshotHotkey) == "" {
-		c.Cowork.ScreenshotHotkey = "Ctrl+Shift+S"
+		c.Cowork.ScreenshotHotkey = "Ctrl+Shift+Alt+W"
 	}
 	if strings.TrimSpace(c.Cowork.EStopHotkey) == "" {
 		c.Cowork.EStopHotkey = "Ctrl+Shift+Pause"

@@ -93,7 +93,7 @@ var (
 		{name: "linen", mode: "light", accent: cliColor{"#bd5d4d", 167}, description: "muted coral light accent"},
 		{name: "glacier", mode: "light", accent: cliColor{"#357fa8", 74}, description: "cool blue light accent"},
 	}
-	activeCLITheme                  = applyCLIThemeStyle(cliDarkTheme, cliThemeStyles[0])
+	activeCLITheme                  = applyCLIThemeStyle(cliLightTheme, cliThemeStyles[4])
 	queryTerminalBackgroundForTheme = queryTerminalBackground
 )
 
@@ -150,9 +150,9 @@ func resolveCLIThemeMode(mode string) string {
 		if colorFGBGLooksLight() {
 			return "light"
 		}
-		return "dark"
+		return "light"
 	default:
-		return "dark"
+		return "light"
 	}
 }
 

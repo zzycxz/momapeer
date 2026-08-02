@@ -346,6 +346,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	if c.Cowork.ScreenshotVLMModel != "" {
 		fmt.Fprintf(&b, "screenshot_vlm_model = %q\n", c.Cowork.ScreenshotVLMModel)
 	}
+	if c.Cowork.ScreenshotPrompt != "" {
+		fmt.Fprintf(&b, "screenshot_prompt = %q\n", c.Cowork.ScreenshotPrompt)
+	}
 	if c.Cowork.EStopHotkey != "" {
 		fmt.Fprintf(&b, "estop_hotkey = %q   # emergency-stop hotkey; \"off\" disables\n", c.Cowork.EStopHotkey)
 	}
