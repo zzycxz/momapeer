@@ -284,10 +284,12 @@ jobs:
           TAG="${{ github.ref_name }}"
           REPO="zzycxz/momapeer"
           
-          echo "Triggering Gitee mirror sync..."
-          curl -s -X POST "https://gitee.com/api/v5/repos/$REPO/action/sync" -d "access_token=$GITEE_TOKEN"
-          echo "Waiting 15 seconds for sync to complete..."
-          sleep 15
+          echo "Pushing directly to Gitee to sync..."
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add gitee "https://zzycxz:${GITEE_TOKEN}@gitee.com/$REPO.git" || true
+          git push gitee HEAD:refs/heads/main || true
+          git push gitee $TAG || true
           
           echo "Checking if Gitee release exists..."
           EXISTING_ID=$(curl -s "https://gitee.com/api/v5/repos/$REPO/releases/tags/$TAG?access_token=$GITEE_TOKEN" | jq -r .id)
