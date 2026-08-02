@@ -1,3 +1,5 @@
+//go:build windows
+
 package main
 
 // hotkey_win32_shared.go contains Win32 API declarations and helpers shared
