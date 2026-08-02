@@ -27,9 +27,9 @@ type screenshotTool struct {
 
 // linuxScreenshotTools is the ordered list of tools to try.
 var linuxScreenshotTools = []screenshotTool{
-	{"scrot", []string{"-o"}},                        // -o overwrite output file
-	{"gnome-screenshot", []string{"-f"}},              // -f output file
-	{"grim", []string{}},                              // Wayland, no extra flags
+	{"scrot", []string{"-o"}},            // -o overwrite output file
+	{"gnome-screenshot", []string{"-f"}}, // -f output file
+	{"grim", []string{}},                 // Wayland, no extra flags
 }
 
 // CaptureFullScreen captures the full primary screen on Linux. Tries scrot,
