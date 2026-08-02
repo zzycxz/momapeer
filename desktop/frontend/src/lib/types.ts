@@ -1202,6 +1202,7 @@ export interface CoWorkSettingsView {
   screenshotEnabled: boolean;
   screenshotHotkey: string;
   screenshotVlmModel: string;
+  screenshotPrompt: string;
   // Emergency-stop hotkey for desktop automation (always on by default; set
   // "off" to disable). Cancels the in-flight turn globally.
   estopHotkey: string;
