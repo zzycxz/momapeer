@@ -290,8 +290,8 @@ jobs:
           git remote add gitee "https://oauth2:${GITEE_TOKEN}@gitee.com/$REPO.git" || true
           export GIT_TERMINAL_PROMPT=0
           export GIT_ASKPASS=/bin/echo
-          git push gitee HEAD:refs/heads/main || true
-          git push gitee $TAG || true
+          git push -f gitee HEAD:refs/heads/main || true
+          git push -f gitee $TAG || true
           
           echo "Checking if Gitee release exists..."
           EXISTING_ID=$(curl -s "https://gitee.com/api/v5/repos/$REPO/releases/tags/$TAG?access_token=$GITEE_TOKEN" | jq -r .id)
