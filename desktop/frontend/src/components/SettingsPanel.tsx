@@ -20,7 +20,7 @@ import {
 import { TEXT_SIZES, applyTextSize, getTextSize, type TextSize } from "../lib/textSize";
 import { FONT_FAMILIES, applyFontFamily, getFontFamily, type FontFamily } from "../lib/fontFamily";
 import { getDisplayMode, onDisplayModeChange, setDisplayMode as setLocalDisplayMode } from "../lib/displayMode";
-import type { BotConnectionView, BotInstallStartResult, BotSettingsView, HookConfigView, HooksSettingsView, MailProbeResult, NetworkView, ProviderView, SettingsTab, SettingsView } from "../lib/types";
+import type { BotConnectionView, BotInstallStartResult, BotSettingsView, CoWorkSettingsView, HookConfigView, HooksSettingsView, MailProbeResult, NetworkView, ProviderView, SettingsTab, SettingsView } from "../lib/types";
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { Tooltip } from "./Tooltip";
 import { AnchoredPopover } from "./AnchoredPopover";
@@ -4243,7 +4243,7 @@ function browserDisplayName(path: string): string {
 
 function CoWorkSection({ s, busy, apply }: SectionProps) {
   const t = useT();
-  const [draft, setDraft] = useState(() => {
+  const [draft, setDraft] = useState<CoWorkSettingsView>(() => {
     const base = s.cowork ?? {
       browserPath: "", embeddingModel: "", ragEnabled: null,
       pptActiveTemplate: "", pptTemplates: [], pptTemplateDir: "",
