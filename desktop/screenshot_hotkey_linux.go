@@ -23,7 +23,6 @@ type hotkeyManager struct {
 	shift    bool
 	alt      bool
 	super    bool
-	mainKey  string // e.g. "w", "f9"
 }
 
 func (a *App) StartScreenshotHotkey() {
@@ -31,19 +30,18 @@ func (a *App) StartScreenshotHotkey() {
 	if err != nil || !cfg.Cowork.ScreenshotEnabled {
 		return
 	}
-	mod, vk, err := parseHotkey(cfg.Cowork.ScreenshotHotkey)
+	mod, _, err := parseHotkey(cfg.Cowork.ScreenshotHotkey)
 	if err != nil {
 		slog.Warn("screenshot: invalid hotkey config", "hotkey", cfg.Cowork.ScreenshotHotkey, "err", err)
 		return
 	}
 	hk := &hotkeyManager{
-		app:     a,
-		stopCh:  make(chan struct{}),
-		ctrl:    (mod & 0x0002) != 0,
-		shift:   (mod & 0x0004) != 0,
-		alt:     (mod & 0x0001) != 0,
-		super:   (mod & 0x0008) != 0,
-		mainKey: vkToKeyName(vk),
+		app:    a,
+		stopCh: make(chan struct{}),
+		ctrl:   (mod & 0x0002) != 0,
+		shift:  (mod & 0x0004) != 0,
+		alt:    (mod & 0x0001) != 0,
+		super:  (mod & 0x0008) != 0,
 	}
 	a.mu.Lock()
 	a.hotkeyMgr = hk
@@ -87,74 +85,27 @@ func (h *hotkeyManager) Stop() {
 	h.stopOnce.Do(func() { close(h.stopCh) })
 }
 
-// checkKeys uses xset q to check modifier state and xdotool for the main key.
+// checkKeys uses xset q to check modifier state. Main key detection is not
+// reliably possible via CLI on Linux without CGO, so the hotkey triggers on
+// modifier combination alone. The tray menu is the recommended trigger on Linux.
 func (h *hotkeyManager) checkKeys() bool {
-	// Check modifiers via xset q
-	if h.ctrl || h.shift || h.alt || h.super {
-		cmd := exec.Command("xset", "q")
-		out, err := cmd.Output()
-		if err != nil {
-			return false
-		}
-		output := string(out)
-		if h.ctrl && !strings.Contains(output, "Ctrl") {
-			return false
-		}
-		if h.shift && !strings.Contains(output, "Shift") {
-			return false
-		}
-		if h.alt && !strings.Contains(output, "Mod1") {
-			return false
-		}
-		if h.super && !strings.Contains(output, "Mod4") {
-			return false
-		}
+	cmd := exec.Command("xset", "q")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
 	}
-
-	// Check main key via xdotool
-	if h.mainKey != "" {
-		cmd := exec.Command("xdotool", "search", "--sync", "--class", ".", "key", "--clearmodifiers", h.mainKey)
-		// This approach is not reliable. Instead, use a simpler check.
-		// For now, rely on modifier detection as the primary trigger.
-		_ = cmd
+	output := string(out)
+	if h.ctrl && !strings.Contains(output, "Ctrl") {
+		return false
 	}
-
+	if h.shift && !strings.Contains(output, "Shift") {
+		return false
+	}
+	if h.alt && !strings.Contains(output, "Mod1") {
+		return false
+	}
+	if h.super && !strings.Contains(output, "Mod4") {
+		return false
+	}
 	return true
-}
-
-// vkToKeyName converts a VK code to a key name for xdotool.
-func vkToKeyName(vk int) string {
-	if vk >= 0x41 && vk <= 0x5A { // A-Z
-		return strings.ToLower(string(rune(vk)))
-	}
-	if vk >= 0x30 && vk <= 0x39 { // 0-9
-		return string(rune(vk))
-	}
-	switch vk {
-	case 0x70:
-		return "F1"
-	case 0x71:
-		return "F2"
-	case 0x72:
-		return "F3"
-	case 0x73:
-		return "F4"
-	case 0x74:
-		return "F5"
-	case 0x75:
-		return "F6"
-	case 0x76:
-		return "F7"
-	case 0x77:
-		return "F8"
-	case 0x78:
-		return "F9"
-	case 0x79:
-		return "F10"
-	case 0x7A:
-		return "F11"
-	case 0x7B:
-		return "F12"
-	}
-	return ""
 }
