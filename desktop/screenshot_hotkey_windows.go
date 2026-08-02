@@ -51,7 +51,7 @@ const (
 
 // Win32 API for keyboard state polling.
 var (
-	user32DLL          = syscall.NewLazyDLL("user32.dll")
+	user32DLL            = syscall.NewLazyDLL("user32.dll")
 	procGetAsyncKeyState = user32DLL.NewProc("GetAsyncKeyState")
 )
 

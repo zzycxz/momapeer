@@ -10,11 +10,11 @@ import (
 )
 
 type desktopTray struct {
-	end             func()
-	openItem        *systray.MenuItem
-	screenshotItem  *systray.MenuItem // nil when screenshot feature is off
-	quitItem        *systray.MenuItem
-	once            sync.Once
+	end            func()
+	openItem       *systray.MenuItem
+	screenshotItem *systray.MenuItem // nil when screenshot feature is off
+	quitItem       *systray.MenuItem
+	once           sync.Once
 }
 
 func (a *App) startTray() {
