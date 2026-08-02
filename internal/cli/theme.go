@@ -147,8 +147,11 @@ func resolveCLIThemeMode(mode string) string {
 			}
 			return "dark"
 		}
-		if colorFGBGLooksLight() {
-			return "light"
+		if os.Getenv("COLORFGBG") != "" {
+			if colorFGBGLooksLight() {
+				return "light"
+			}
+			return "dark"
 		}
 		return "light"
 	default:
