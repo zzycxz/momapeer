@@ -37,7 +37,8 @@ const (
 	httpTimeout    = 15 * time.Second
 )
 
-// manifestEndpoints returns the manifest URLs for the running build's channel.
+// manifestEndpoints returns the manifest URLs for GitHub (the fallback).
+// We fetch Gitee first via its API, and use these as fallbacks.
 func manifestEndpoints() []string {
 	if channel == "canary" {
 		return []string{
@@ -111,24 +112,58 @@ func normalizeVersion(v string) (string, bool) {
 	return semver.Canonical(v), true
 }
 
-// fetchManifest pulls latest.json from the primary endpoint, then the fallback,
-// and decodes it.
+// fetchManifest pulls latest.json from Gitee API first, then GitHub endpoints, and decodes it.
 func fetchManifest(ctx context.Context, c *http.Client) (*update.Manifest, error) {
-	var lastErr error
+	var errs []string
+
+	// 1. Try Gitee API first
+	if channel != "canary" {
+		apiURL := "https://gitee.com/api/v5/repos/zzycxz/momapeer/releases/latest"
+		if b, err := fetchBytes(ctx, c, apiURL); err == nil {
+			var res struct {
+				TagName string `json:"tag_name"`
+			}
+			if err := json.Unmarshal(b, &res); err == nil && res.TagName != "" {
+				dlURL := fmt.Sprintf("https://gitee.com/zzycxz/momapeer/releases/download/%s/latest.json", res.TagName)
+				if b2, err := fetchBytes(ctx, c, dlURL); err == nil {
+					var m update.Manifest
+					if err := json.Unmarshal(b2, &m); err == nil {
+						// Rewrite binary URLs to point to Gitee for faster download
+						for k, v := range m.Platforms {
+							v.URL = strings.ReplaceAll(v.URL, "github.com", "gitee.com")
+							v.Sig = strings.ReplaceAll(v.Sig, "github.com", "gitee.com")
+							m.Platforms[k] = v
+						}
+						return &m, nil
+					} else {
+						errs = append(errs, fmt.Sprintf("gitee parse manifest: %v", err))
+					}
+				} else {
+					errs = append(errs, fmt.Sprintf("gitee fetch manifest: %v", err))
+				}
+			} else {
+				errs = append(errs, fmt.Sprintf("gitee parse api: %v", err))
+			}
+		} else {
+			errs = append(errs, fmt.Sprintf("gitee fetch api: %v", err))
+		}
+	}
+
+	// 2. Try GitHub endpoints
 	for _, url := range manifestEndpoints() {
 		b, err := fetchBytes(ctx, c, url)
 		if err != nil {
-			lastErr = err
+			errs = append(errs, fmt.Sprintf("%s: %v", url, err))
 			continue
 		}
 		var m update.Manifest
 		if err := json.Unmarshal(b, &m); err != nil {
-			lastErr = err
+			errs = append(errs, fmt.Sprintf("%s decode: %v", url, err))
 			continue
 		}
 		return &m, nil
 	}
-	return nil, fmt.Errorf("update: fetch manifest: %w", lastErr)
+	return nil, fmt.Errorf("update: fetch manifest failed: %s", strings.Join(errs, "; "))
 }
 
 // evaluate compares the running version against the manifest and builds the
