@@ -49,14 +49,14 @@ jobs:
             platform: linux/amd64
             artifact: momapeer-linux-amd64
             binary_name: momapeer
-            apt_deps: 'libgtk-3-dev libwebkit2gtk-4.0-dev'
+            apt_deps: 'libgtk-3-dev libwebkit2gtk-4.0-dev x11-utils scrot'
             build_args: ''
 
           - os: ubuntu-24.04-arm
             platform: linux/arm64
             artifact: momapeer-linux-arm64
             binary_name: momapeer
-            apt_deps: 'libgtk-3-dev libwebkit2gtk-4.1-dev'
+            apt_deps: 'libgtk-3-dev libwebkit2gtk-4.1-dev x11-utils scrot'
             build_args: '-tags webkit2_41'
 
     runs-on: ${{ matrix.os }}
