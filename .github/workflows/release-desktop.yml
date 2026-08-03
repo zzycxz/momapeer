@@ -287,28 +287,12 @@ jobs:
           TAG="${{ github.ref_name }}"
           REPO="zzycxz/momapeer"
           
-          echo "Configuring Gitee credentials..."
+          echo "Pushing directly to Gitee to sync..."
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global http.postBuffer 524288000
-          
-          # Force credential store to avoid any interactive prompts or helper conflicts
-          git config --global credential.helper store
-          echo "https://oauth2:${GITEE_TOKEN}@gitee.com" > ~/.git-credentials
-          echo "https://zzycxz:${GITEE_TOKEN}@gitee.com" >> ~/.git-credentials
-          
-          git remote remove gitee || true
-          git remote add gitee "https://gitee.com/$REPO.git"
-          
-          export GIT_TERMINAL_PROMPT=0
-          export GIT_ASKPASS=/bin/echo
-          export GIT_TRACE=1
-          export GIT_CURL_VERBOSE=1
-          
-          echo "Pushing main branch to Gitee..."
-          git push -v -f gitee HEAD:refs/heads/main || echo "Failed to push main to Gitee"
-          echo "Pushing tag to Gitee..."
-          git push -v -f gitee $TAG || echo "Failed to push tag to Gitee"
+          git remote add gitee "https://zzycxz:${GITEE_TOKEN}@gitee.com/$REPO.git" || true
+          git push gitee HEAD:refs/heads/main || true
+          git push gitee $TAG || true
           
           echo "Checking if Gitee release exists..."
           EXISTING_ID=$(curl -s "https://gitee.com/api/v5/repos/$REPO/releases/tags/$TAG?access_token=$GITEE_TOKEN" | jq -r .id)
