@@ -287,26 +287,28 @@ jobs:
           TAG="${{ github.ref_name }}"
           REPO="zzycxz/momapeer"
           
-          echo "Triggering Gitee mirror sync..."
-          SYNC_RES=$(curl -s -X POST "https://gitee.com/api/v5/repos/$REPO/action/sync" -d "access_token=$GITEE_TOKEN")
-          echo "Sync response: $SYNC_RES"
+          echo "Configuring Gitee credentials..."
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global http.postBuffer 524288000
           
-          echo "Waiting for Gitee to sync tag $TAG..."
-          SYNC_SUCCESS=false
-          for i in {1..30}; do
-            TAG_EXISTS=$(curl -s "https://gitee.com/api/v5/repos/$REPO/tags?access_token=$GITEE_TOKEN" | jq -r '.[].name' | grep -x "$TAG" || true)
-            if [ -n "$TAG_EXISTS" ]; then
-              echo "Tag $TAG synced to Gitee successfully!"
-              SYNC_SUCCESS=true
-              break
-            fi
-            echo "Waiting for tag $TAG to appear on Gitee... ($i/30)"
-            sleep 10
-          done
+          # Force credential store to avoid any interactive prompts or helper conflicts
+          git config --global credential.helper store
+          echo "https://oauth2:${GITEE_TOKEN}@gitee.com" > ~/.git-credentials
+          echo "https://zzycxz:${GITEE_TOKEN}@gitee.com" >> ~/.git-credentials
           
-          if [ "$SYNC_SUCCESS" = false ]; then
-            echo "Warning: Tag $TAG did not appear on Gitee after 5 minutes. Release creation might fail."
-          fi
+          git remote remove gitee || true
+          git remote add gitee "https://gitee.com/$REPO.git"
+          
+          export GIT_TERMINAL_PROMPT=0
+          export GIT_ASKPASS=/bin/echo
+          export GIT_TRACE=1
+          export GIT_CURL_VERBOSE=1
+          
+          echo "Pushing main branch to Gitee..."
+          git push -v -f gitee HEAD:refs/heads/main || echo "Failed to push main to Gitee"
+          echo "Pushing tag to Gitee..."
+          git push -v -f gitee $TAG || echo "Failed to push tag to Gitee"
           
           echo "Checking if Gitee release exists..."
           EXISTING_ID=$(curl -s "https://gitee.com/api/v5/repos/$REPO/releases/tags/$TAG?access_token=$GITEE_TOKEN" | jq -r .id)
