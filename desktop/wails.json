@@ -12,7 +12,7 @@
   "info": {
     "companyName": "momapeer",
     "productName": "momapeer",
-    "productVersion": "0.5.32",
+    "productVersion": "0.5.33",
     "copyright": "Copyright © 2026 momapeer Contributors",
     "comments": "momapeer desktop — a Wails shell around the Go kernel."
   }
