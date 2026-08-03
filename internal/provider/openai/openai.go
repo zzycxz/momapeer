@@ -37,10 +37,10 @@ import (
 // (client.idleTimeout) so a test can shorten it without a shared global that
 // would race other streams' watchdogs.
 // NOTE: Increased from 120s to 180s to accommodate slower models (e.g. glm-5.1)
-// internal stream error to unblock the client. Wait up to 10m by default, since
+// internal stream error to unblock the client. Wait up to 30m by default, since
 // large context tasks (e.g. RAG, office doc analysis) and reasoning models can
 // stall for a long time before emitting the first token.
-const defaultStreamIdleTimeout = 600 * time.Second
+const defaultStreamIdleTimeout = 1800 * time.Second
 
 func init() {
 	provider.Register("openai", New)

@@ -33,11 +33,11 @@ import (
 )
 
 // defaultStreamIdleTimeout caps how long a started SSE stream may go silent before
-// the connection is deemed dead. Wait up to 10m by default, to accommodate large
+// the connection is deemed dead. Wait up to 30m by default, to accommodate large
 // context tasks or slow reasoning periods before the first token. Stored
 // per-client (client.idleTimeout) so a test can shorten it without a shared
 // global that races other watchdogs.
-const defaultStreamIdleTimeout = 600 * time.Second
+const defaultStreamIdleTimeout = 1800 * time.Second
 
 const (
 	// anthropicVersion is the required API version header value.
