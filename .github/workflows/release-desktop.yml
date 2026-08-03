@@ -290,11 +290,21 @@ jobs:
           echo "Pushing directly to Gitee to sync..."
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git remote add gitee "https://oauth2:${GITEE_TOKEN}@gitee.com/$REPO.git" || true
+          git config --global http.postBuffer 524288000
+          
+          # Use specific username to avoid auth prompts, and update remote if it exists
+          git remote add gitee "https://zzycxz:${GITEE_TOKEN}@gitee.com/$REPO.git" || git remote set-url gitee "https://zzycxz:${GITEE_TOKEN}@gitee.com/$REPO.git"
+          
           export GIT_TERMINAL_PROMPT=0
-          export GIT_ASKPASS=/bin/echo
-          git -c credential.helper= push -f gitee HEAD:refs/heads/main || true
-          git -c credential.helper= push -f gitee $TAG || true
+          unset GIT_ASKPASS
+          
+          git lfs install --local --skip-smudge --skip-repo
+          export GIT_LFS_SKIP_PUSH=1
+          
+          echo "Pushing main branch to Gitee..."
+          timeout 10m git -c credential.helper= push -f gitee HEAD:refs/heads/main || echo "Failed to push main to Gitee"
+          echo "Pushing tag to Gitee..."
+          timeout 5m git -c credential.helper= push -f gitee $TAG || echo "Failed to push tag to Gitee"
           
           echo "Checking if Gitee release exists..."
           EXISTING_ID=$(curl -s "https://gitee.com/api/v5/repos/$REPO/releases/tags/$TAG?access_token=$GITEE_TOKEN" | jq -r .id)
