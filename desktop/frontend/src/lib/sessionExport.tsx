@@ -299,7 +299,16 @@ function serializeSurface(surface: HTMLElement, width: number, height: number): 
   clone.style.width = `${width}px`;
   clone.style.minHeight = `${height}px`;
   const style = document.createElement("style");
-  style.textContent = EXPORT_STYLES;
+  // Strip @font-face url() declarations before inlining into the SVG
+  // foreignObject. KaTeX's CSS references dozens of woff2/ttf font files via
+  // RELATIVE url(fonts/...) paths. Inside an SVG Blob URL there is no base
+  // path to resolve against, so WebView2 fails to load them and the whole
+  // Image load rejects (export silently does nothing). Dropping the font
+  // sources keeps the layout/spacing CSS intact while falling back to system
+  // serif fonts for math glyphs — acceptable for a PNG/PDF snapshot.
+  style.textContent = EXPORT_STYLES.replace(/@font-face\s*{[^}]*}/g, (face) =>
+    /src\s*:\s*url\(/i.test(face) ? "" : face
+  );
   clone.insertBefore(style, clone.firstChild);
   return new XMLSerializer().serializeToString(clone);
 }
