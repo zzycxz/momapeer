@@ -271,7 +271,16 @@ func (w docWrite) Execute(ctx context.Context, args json.RawMessage) (string, er
 	case "csv":
 		var rows [][]string
 		if err := json.Unmarshal(p.Content, &rows); err != nil {
-			return "", fmt.Errorf("csv content must be an array of arrays: %w", err)
+			// Not an array of arrays — try plain string (raw CSV text).
+			var s string
+			if err2 := json.Unmarshal(p.Content, &s); err2 != nil {
+				return "", fmt.Errorf("csv content must be an array of arrays or a CSV string: %w", err)
+			}
+			r := csv.NewReader(strings.NewReader(s))
+			rows, err = r.ReadAll()
+			if err != nil {
+				return "", fmt.Errorf("csv string parse error: %w", err)
+			}
 		}
 		var b strings.Builder
 		w := csv.NewWriter(&b)
